@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 4
+PARSER_VERSION = 5
 
 
 # ---------------------------------------------------------------------------
@@ -295,35 +295,6 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
 
     freeze_rows = sorted(_rows(freeze_ends), key=lambda r: r.get("tick", 0))
 
-    # ---- Detect real-match start boundary ----------------------------------
-    # CS2 fires ``begin_new_match`` after warmup / knife / side-selection,
-    # right before the first competitive round.  Everything before it is
-    # pre-match and must be excluded.
-    match_start_tick = 0
-    for event_name in ("begin_new_match", "round_announce_match_start"):
-        try:
-            df = parser.parse_event(event_name, other=["tick"])
-            rows = _rows(df)
-            if rows:
-                match_start_tick = max(int(r.get("tick", 0)) for r in rows)
-                logger.info("Match-start marker: %s → tick %d", event_name, match_start_tick)
-                break
-        except Exception:
-            continue
-
-    # ---- Detect halftime / phase-end boundaries ----------------------------
-    phase_end_ticks: list[int] = []
-    for event_name in ("announce_phase_end", "cs_intermission"):
-        try:
-            df = parser.parse_event(event_name, other=["tick"])
-            rows = _rows(df)
-            if rows:
-                phase_end_ticks = sorted(int(r.get("tick", 0)) for r in rows)
-                logger.info("Phase-end markers (%s): %s", event_name, phase_end_ticks)
-                break
-        except Exception:
-            continue
-
     logger.info(
         "Raw events: %d round_start, %d round_end, %d freeze_end",
         len(start_rows), len(end_rows), len(freeze_rows),
@@ -361,44 +332,21 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
             i, s, e, e - s, (e - s) / tick_rate, w or "--", rsn or "--",
         )
 
-    # ---- Filter 1: pre-match rounds (before begin_new_match) ---------------
-    if match_start_tick > 0:
-        before = len(pairs)
-        pairs = [(s, e, w, r) for s, e, w, r in pairs if s >= match_start_tick]
-        removed = before - len(pairs)
-        if removed:
-            logger.info("Removed %d pre-match round(s) (before tick %d)", removed, match_start_tick)
+    # ---- Filter 1: reason-code filter ----------------------------------------
+    # CS2 uses RoundEndReason_GameStart (reason=16) for rounds that end because
+    # the game is transitioning (warmup→match, first half→second half).
+    # These are not real competitive rounds and must be discarded.
+    TRANSITION_REASONS = {"16"}
+    transition = [(s, e, w, r) for s, e, w, r in pairs if r in TRANSITION_REASONS]
+    pairs      = [(s, e, w, r) for s, e, w, r in pairs if r not in TRANSITION_REASONS]
+    if transition:
+        logger.info(
+            "Removed %d transition round(s) by reason=16 (GameStart): %s",
+            len(transition),
+            [(s, e, rsn) for s, e, _, rsn in transition],
+        )
 
-    # ---- Filter 2: halftime transition rounds ------------------------------
-    # Rounds starting between a phase-end tick and the NEXT round_freeze_end
-    # are server transitions (side-swap intermission), not real game rounds.
-    if phase_end_ticks:
-        freeze_tick_set = set(int(r.get("tick", 0)) for r in freeze_rows)
-
-        def _is_halftime_transition(start_tick: int, end_tick: int) -> bool:
-            for pet in phase_end_ticks:
-                if start_tick > pet:
-                    # Is there a freeze_end inside this round?  If yes it's a
-                    # real round that happens to follow a phase_end.  If there's
-                    # NO freeze_end event inside this round, it's likely a
-                    # transition/intermission round.
-                    has_freeze = any(
-                        start_tick < ft <= end_tick for ft in freeze_tick_set
-                    )
-                    if not has_freeze:
-                        return True
-            return False
-
-        before = len(pairs)
-        pairs = [
-            (s, e, w, r) for s, e, w, r in pairs
-            if not _is_halftime_transition(s, e)
-        ]
-        removed = before - len(pairs)
-        if removed:
-            logger.info("Removed %d halftime-transition round(s)", removed)
-
-    # ---- Filter 3: short-duration fallback ---------------------------------
+    # ---- Filter 2: short-duration fallback ---------------------------------
     short = [(s, e, w, r) for s, e, w, r in pairs if e - s < MIN_ROUND_TICKS]
     pairs = [(s, e, w, r) for s, e, w, r in pairs if e - s >= MIN_ROUND_TICKS]
     if short:
