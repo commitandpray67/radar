@@ -96,11 +96,19 @@ call :log "      [OK] Frontend packages ready."
 :: -------------------------------------------------------
 call :log "[5/5] Starting servers..."
 
-:: Free ports if something is already using them
+:: Free ports if something is already using them.
+:: netstat output looks like:  TCP  0.0.0.0:8000  ...  LISTENING  1234
+:: We match ":8000 " (no leading space) so 0.0.0.0:8000 and [::]:8000 both match.
 call :log "      Freeing ports 8000 and 5173..."
-for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr " :8000 "') do taskkill /F /PID %%p >nul 2>&1
-for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr " :5173 "') do taskkill /F /PID %%p >nul 2>&1
-timeout /t 1 /nobreak >nul
+for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":8000 "') do (
+    if not "%%p"=="" taskkill /F /PID %%p >nul 2>&1
+)
+for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":5173 "') do (
+    if not "%%p"=="" taskkill /F /PID %%p >nul 2>&1
+)
+:: Also kill any stray python/uvicorn processes holding these ports
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000,5173 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+timeout /t 2 /nobreak >nul
 
 :: Start backend using the helper batch file (avoids all quoting/space issues)
 call :log "      Launching backend window..."
