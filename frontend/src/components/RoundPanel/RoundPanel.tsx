@@ -84,7 +84,8 @@ const RoundPanel: React.FC = () => {
         <span className={styles.count}>{displayRounds.length}</span>
       </div>
       <div className={styles.list}>
-        {displayRounds.map((r) => {
+        {displayRounds.map((r, idx) => {
+          const displayNum = idx + 1;
           const isActive = r.round_number === activeRound && !isHeatmapMode;
           const isHeatmapSelected =
             isHeatmapMode && heatmapRounds.includes(r.round_number);
@@ -104,10 +105,10 @@ const RoundPanel: React.FC = () => {
                 isHeatmapSelected ? styles.heatmapSelected : '',
               ].join(' ')}
               onClick={() => handleClick(r)}
-              title={`Round ${r.round_number} — ${winReasonLabel(r.win_reason)}`}
+              title={`Round ${displayNum} — ${winReasonLabel(r.win_reason)}`}
             >
-              {/* Round number */}
-              <span className={styles.number}>{r.round_number}</span>
+              {/* Round number (re-indexed, knife rounds excluded) */}
+              <span className={styles.number}>{displayNum}</span>
 
               {/* Winner badge */}
               <span

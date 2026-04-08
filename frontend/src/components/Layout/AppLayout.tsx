@@ -23,6 +23,12 @@ const AppLayout: React.FC = () => {
   const rounds      = useAppStore((s) => s.rounds);
   const positions   = useAppStore((s) => s.positions);
   const activeRound = useAppStore((s) => s.activeRound);
+
+  // Display rounds (knife excluded) for sequential numbering
+  const displayRounds = useMemo(
+    () => rounds.filter((r) => !r.is_knife_round),
+    [rounds],
+  );
   const selectedIds = useAppStore((s) => s.selectedPlayerIds);
   const clearSelected = useAppStore((s) => s.clearSelectedPlayers);
 
@@ -42,6 +48,8 @@ const AppLayout: React.FC = () => {
   const [sideTab, setSideTab] = useState<SideTab>('rounds');
 
   const roundInfo = rounds.find((r) => r.round_number === activeRound);
+  const displayRoundNumber =
+    displayRounds.findIndex((r) => r.round_number === activeRound) + 1 || null;
 
   return (
     <div className={styles.root}>
@@ -54,9 +62,9 @@ const AppLayout: React.FC = () => {
           )}
         </div>
         <div className={styles.topCenter}>
-          {roundInfo && (
+          {roundInfo && displayRoundNumber && (
             <span className={styles.roundMeta}>
-              Round {roundInfo.round_number}
+              Round {displayRoundNumber}
               {roundInfo.winner_team && (
                 <span
                   className={styles.winnerBadge}
