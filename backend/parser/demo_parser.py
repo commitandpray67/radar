@@ -223,50 +223,87 @@ def parse_demo(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _parse_winner(raw) -> str:
+    """Normalise the winner field from any round-end event to 'CT', 'T', or ''."""
+    s = str(raw or "").strip().upper()
+    if s in ("2", "T", "TERRORIST"):
+        return "T"
+    if s in ("3", "CT", "COUNTERTERRORIST"):
+        return "CT"
+    return ""
+
+
 def _extract_rounds(parser) -> list[RoundInfo]:
-    """Build RoundInfo list from round_start / round_officially_ended events."""
+    """
+    Build RoundInfo list from round events.
+
+    Strategy (demoparser2 v0.41 / CS2):
+      • round_start        — mandatory; defines each round boundary
+      • round_end          — preferred end event; carries winner + reason
+      • round_officially_ended — fallback end timing; no winner field in v0.41
+      • round_freeze_end   — freeze phase end tick
+      • bomb_planted/defused/exploded — bomb timeline; also used to infer winner
+    """
+    # ---- round_start (required) --------------------------------------------
     try:
-        round_starts = parser.parse_event("round_start", other=["tick"])
-        round_ends   = parser.parse_event(
-            "round_officially_ended",
-            other=["tick", "winner", "reason", "ct_score", "t_score"],
-        )
-        freeze_ends  = parser.parse_event("round_freeze_end", other=["tick"])
-        bomb_plants  = parser.parse_event("bomb_planted",   other=["tick"])
-        bomb_defuses = parser.parse_event("bomb_defused",   other=["tick"])
-        bomb_explodes= parser.parse_event("bomb_exploded",  other=["tick"])
+        round_starts_raw = parser.parse_event("round_start", other=["tick"])
     except Exception as exc:
-        logger.warning("Could not parse round events: %s", exc)
+        logger.warning("Could not parse round_start: %s", exc)
         return []
 
-    start_rows  = sorted(_rows(round_starts),  key=lambda r: r["tick"])
-    end_rows    = sorted(_rows(round_ends),    key=lambda r: r["tick"])
-    freeze_rows = sorted(_rows(freeze_ends),   key=lambda r: r["tick"])
+    start_rows = sorted(_rows(round_starts_raw), key=lambda r: r.get("tick", 0))
+    if not start_rows:
+        return []
 
+    # ---- round end events (try round_end first, then round_officially_ended)
+    end_rows: list[dict] = []
+    for event_name in ("round_end", "round_officially_ended"):
+        try:
+            df = parser.parse_event(
+                event_name, other=["tick", "winner", "reason"]
+            )
+            rows = _rows(df)
+            if rows:
+                end_rows = sorted(rows, key=lambda r: r.get("tick", 0))
+                logger.debug("Round-end source: %s (%d events)", event_name, len(rows))
+                break
+        except Exception as exc:
+            logger.debug("Event %s unavailable: %s", event_name, exc)
+
+    # ---- freeze-end and bomb events ----------------------------------------
+    def _safe_event(name, other):
+        try:
+            return parser.parse_event(name, other=other)
+        except Exception:
+            return []
+
+    freeze_ends  = _safe_event("round_freeze_end", ["tick"])
+    bomb_plants  = _safe_event("bomb_planted",      ["tick"])
+    bomb_defuses = _safe_event("bomb_defused",      ["tick"])
+    bomb_explodes= _safe_event("bomb_exploded",     ["tick"])
+
+    freeze_rows = sorted(_rows(freeze_ends), key=lambda r: r.get("tick", 0))
+
+    # ---- Build round list --------------------------------------------------
     rounds: list[RoundInfo] = []
     for i, start_row in enumerate(start_rows):
-        start_tick = int(start_row["tick"])
+        start_tick = int(start_row.get("tick", 0))
         round_num  = i + 1
 
-        matching_ends = [r for r in end_rows if r["tick"] > start_tick]
+        matching_ends = [r for r in end_rows if r.get("tick", 0) > start_tick]
         if matching_ends:
-            end_row  = matching_ends[0]
-            end_tick = int(end_row["tick"])
-            winner   = str(end_row.get("winner", "") or "").upper()
-            if winner == "2":
-                winner = "T"
-            elif winner == "3":
-                winner = "CT"
+            end_row    = matching_ends[0]
+            end_tick   = int(end_row.get("tick", 0))
+            winner     = _parse_winner(end_row.get("winner", ""))
             win_reason = str(end_row.get("reason", "") or "")
-            ct_score   = int(end_row.get("ct_score", 0) or 0)
-            t_score    = int(end_row.get("t_score",  0) or 0)
         else:
-            end_tick = start_tick
-            winner = win_reason = ""
-            ct_score = t_score = 0
+            end_tick   = start_tick
+            winner     = ""
+            win_reason = ""
 
         matching_freezes = [
-            r for r in freeze_rows if start_tick <= r["tick"] <= end_tick
+            r for r in freeze_rows
+            if start_tick <= r.get("tick", 0) <= end_tick
         ]
         freeze_end_tick = (
             int(matching_freezes[0]["tick"]) if matching_freezes else start_tick
@@ -279,30 +316,37 @@ def _extract_rounds(parser) -> list[RoundInfo]:
             freeze_end_tick=freeze_end_tick,
             winner_team=winner,
             win_reason=win_reason,
-            ct_score=ct_score,
-            t_score=t_score,
+            ct_score=0,
+            t_score=0,
         ))
 
-    # Assign bomb events to rounds
+    # ---- Assign bomb ticks to rounds ---------------------------------------
     for df, attr in [
         (bomb_plants,   "bomb_planted_tick"),
         (bomb_defuses,  "bomb_defused_tick"),
         (bomb_explodes, "bomb_exploded_tick"),
     ]:
-        if _is_empty(df):
-            continue
         for bomb_row in _rows(df):
-            tick = int(bomb_row["tick"])
+            tick = int(bomb_row.get("tick", 0))
             for r in rounds:
                 if r.start_tick <= tick <= r.end_tick:
                     setattr(r, attr, tick)
                     break
 
+    # ---- Infer winner from bomb events where event data was missing ---------
+    for r in rounds:
+        if r.winner_team:
+            continue
+        if r.bomb_exploded_tick is not None:
+            r.winner_team = "T"
+            r.win_reason  = "1"   # target bombed
+        elif r.bomb_defused_tick is not None:
+            r.winner_team = "CT"
+            r.win_reason  = "7"   # bomb defused
+
     # ---- Detect knife rounds -----------------------------------------------
-    # A round is a knife round when EVERY kill in it was made with a knife.
-    # This catches overtime side-selection rounds and any knife-only warmup.
     try:
-        deaths_df = parser.parse_event("player_death", other=["tick", "weapon"])
+        deaths_df  = parser.parse_event("player_death", other=["tick", "weapon"])
         death_rows = _rows(deaths_df)
     except Exception as exc:
         logger.warning("Could not parse player_death for knife detection: %s", exc)
@@ -320,21 +364,25 @@ def _extract_rounds(parser) -> list[RoundInfo]:
         ):
             r.is_knife_round = True
 
-    # ---- Compute cumulative scores -----------------------------------------
-    # demoparser2 v0.41 does not populate ct_score/t_score in
-    # round_officially_ended, so we compute them from winner_team instead.
-    if all(r.ct_score == 0 and r.t_score == 0 for r in rounds):
-        ct_wins = 0
-        t_wins = 0
-        for r in rounds:
-            if not r.is_knife_round:
-                if r.winner_team == "CT":
-                    ct_wins += 1
-                elif r.winner_team == "T":
-                    t_wins += 1
-            r.ct_score = ct_wins
-            r.t_score = t_wins
+    # ---- Cumulative scores (always computed from winner; event fields unreliable)
+    ct_wins = 0
+    t_wins  = 0
+    for r in rounds:
+        if not r.is_knife_round:
+            if r.winner_team == "CT":
+                ct_wins += 1
+            elif r.winner_team == "T":
+                t_wins += 1
+        r.ct_score = ct_wins
+        r.t_score  = t_wins
 
+    logger.info(
+        "Extracted %d rounds (%d knife); winner data: %d/%d rounds",
+        len(rounds),
+        sum(1 for r in rounds if r.is_knife_round),
+        sum(1 for r in rounds if r.winner_team),
+        len(rounds),
+    )
     return rounds
 
 

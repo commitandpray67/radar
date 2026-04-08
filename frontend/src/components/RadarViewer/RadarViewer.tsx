@@ -26,6 +26,7 @@ import React, {
 import { useAppStore } from '../../store/demoStore';
 import type { TickSnapshot } from '../../types';
 import { TEAM_COLORS } from '../../types';
+import Killfeed from '../Killfeed/Killfeed';
 import {
   worldToCanvas,
   type CalibrationParams,
@@ -399,6 +400,7 @@ const RadarViewer: React.FC = () => {
         onClick={handleCanvasClick}
         title="Click a player marker to select/deselect"
       />
+      {demo && !isHeatmapMode && <Killfeed />}
       {heatmapLoading && (
         <div className={styles.loadingOverlay}>
           <span>Generating heatmap…</span>

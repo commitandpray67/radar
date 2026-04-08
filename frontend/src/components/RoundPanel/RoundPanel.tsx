@@ -3,7 +3,7 @@
  * Supports single-click (jump to round) and multi-select for heatmap.
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import type { RoundInfo } from '../../types';
 import styles from './RoundPanel.module.css';
@@ -55,8 +55,15 @@ const RoundPanel: React.FC = () => {
   }
 
   // Exclude knife rounds (side-selection rounds in overtime / start of match).
-  // They have no weapon kills other than knives and shouldn't appear in the list.
   const displayRounds = rounds.filter((r) => !r.is_knife_round);
+
+  // Detect halftime: the round after which the score sum first hits 12 (MR12).
+  const halftimeAfter = useMemo(() => {
+    for (const r of displayRounds) {
+      if ((r.ct_score ?? 0) + (r.t_score ?? 0) === 12) return r.round_number;
+    }
+    return null;
+  }, [displayRounds]);
 
   return (
     <div className={styles.root}>
@@ -73,6 +80,12 @@ const RoundPanel: React.FC = () => {
             isHeatmapMode && heatmapRounds.includes(r.round_number);
 
           return (
+            <React.Fragment key={r.round_number}>
+            {r.round_number === halftimeAfter && (
+              <div className={styles.halftimeDivider}>
+                <span className={styles.halftimeLabel}>halftime · sides swap</span>
+              </div>
+            )}
             <button
               key={r.round_number}
               className={[
@@ -109,6 +122,7 @@ const RoundPanel: React.FC = () => {
                 {r.bomb_exploded_tick !== null && <span title="Bomb exploded">💥</span>}
               </span>
             </button>
+            </React.Fragment>
           );
         })}
       </div>

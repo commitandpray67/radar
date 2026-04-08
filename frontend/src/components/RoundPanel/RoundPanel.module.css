@@ -121,6 +121,30 @@
   font-size: 10px;
 }
 
+.halftimeDivider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  margin: 2px 0;
+}
+.halftimeDivider::before,
+.halftimeDivider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #2a3a52;
+}
+.halftimeLabel {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #4a5a6a;
+  text-transform: uppercase;
+  font-family: 'Inter', sans-serif;
+  white-space: nowrap;
+}
+
 .empty {
   display: flex;
   align-items: center;
