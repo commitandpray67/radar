@@ -442,43 +442,54 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
     except ValueError as exc:
         raise HTTPException(422, str(exc))
 
-    # Fetch positions as numpy array
-    clauses = ["demo_id = ?", "round_number IN ({})".format(
-        ",".join("?" * len(payload.round_numbers))
-    )]
-    params: list = [demo_id, *payload.round_numbers]
-
+    # Resolve DB row IDs → SteamID64s.  The frontend sends small integer DB IDs
+    # because SteamID64s exceed JS Number.MAX_SAFE_INTEGER and lose precision
+    # when serialised through JSON.
+    steam_ids: list = []
     if payload.player_ids:
-        # payload.player_ids are the DB row IDs from the players table (small
-        # integers), NOT SteamID64s.  SteamID64s exceed JS Number.MAX_SAFE_INTEGER
-        # and lose precision when round-tripped through JSON.  We look up the
-        # exact SteamID64 values here before querying positions.
-        id_placeholders = ",".join("?" * len(payload.player_ids))
+        id_ph = ",".join("?" * len(payload.player_ids))
         async with get_connection() as conn:
             cursor = await conn.execute(
                 f"SELECT player_id FROM players "
-                f"WHERE demo_id = ? AND id IN ({id_placeholders})",
+                f"WHERE demo_id = ? AND id IN ({id_ph})",
                 [demo_id, *payload.player_ids],
             )
-            steam_rows = await cursor.fetchall()
-        steam_ids = [row["player_id"] for row in steam_rows]
-        if steam_ids:
-            placeholders = ",".join("?" * len(steam_ids))
-            clauses.append(f"player_id IN ({placeholders})")
-            params.extend(steam_ids)
+            steam_ids = [row["player_id"] for row in await cursor.fetchall()]
+
+    # Build position query.  When excluding freeze time, JOIN with rounds so we
+    # can filter pp.tick >= r.freeze_end_tick in a single DB round-trip.
+    round_ph = ",".join("?" * len(payload.round_numbers))
 
     if payload.exclude_freeze_time:
-        # freeze filtering is applied client-side after numpy load (MVP approach)
-        pass
-
-    where = " AND ".join(clauses)
+        conds = [
+            "pp.demo_id = ?",
+            f"pp.round_number IN ({round_ph})",
+        ]
+        q_params: list = [demo_id, *payload.round_numbers]
+        if steam_ids:
+            player_ph = ",".join("?" * len(steam_ids))
+            conds.append(f"pp.player_id IN ({player_ph})")
+            q_params.extend(steam_ids)
+        query = (
+            "SELECT pp.tick, pp.round_number, pp.player_id, pp.x, pp.y, pp.z, pp.team_num "
+            "FROM player_positions pp "
+            "JOIN rounds r ON r.demo_id = pp.demo_id AND r.round_number = pp.round_number "
+            f"WHERE {' AND '.join(conds)} AND pp.tick >= r.freeze_end_tick"
+        )
+    else:
+        conds = ["demo_id = ?", f"round_number IN ({round_ph})"]
+        q_params = [demo_id, *payload.round_numbers]
+        if steam_ids:
+            player_ph = ",".join("?" * len(steam_ids))
+            conds.append(f"player_id IN ({player_ph})")
+            q_params.extend(steam_ids)
+        query = (
+            f"SELECT tick, round_number, player_id, x, y, z, team_num "
+            f"FROM player_positions WHERE {' AND '.join(conds)}"
+        )
 
     async with get_connection() as conn:
-        cursor = await conn.execute(
-            f"SELECT tick, round_number, player_id, x, y, z, team_num "
-            f"FROM player_positions WHERE {where}",
-            params,
-        )
+        cursor = await conn.execute(query, q_params)
         rows = await cursor.fetchall()
 
     if not rows:
@@ -492,7 +503,7 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
     )
 
     request = HeatmapRequest(
-        player_ids=payload.player_ids,
+        player_ids=steam_ids,          # SteamID64s, not DB row IDs
         round_numbers=payload.round_numbers,
         map_name=map_name,
         layer_label=payload.layer_label,
