@@ -162,7 +162,15 @@ def compute_heatmap(
     if request.blur_sigma > 0:
         density_grid = gaussian_filter(density_grid, sigma=request.blur_sigma)
 
-    # ---- 9. Normalise to [0, 1] -------------------------------------------
+    # ---- 9. Power transform then normalise --------------------------------
+    # Apply sqrt before normalising so that cells visited briefly (movement
+    # paths, off-angles) are not crushed to near-zero by a single camp spot.
+    # Without this, a player camping one cell for 60 s produces a raw count
+    # ~100× higher than any path cell, and after linear normalisation those
+    # path cells become invisible.  sqrt compresses the dynamic range while
+    # preserving the relative ordering of hot spots.
+    density_grid = np.sqrt(density_grid)
+
     max_val = density_grid.max()
     if max_val > 0:
         density_grid = density_grid / max_val
@@ -178,8 +186,8 @@ def compute_heatmap(
 
 def heatmap_to_rgba(
     result: HeatmapResult,
-    colormap: str = "jet",
-    alpha_scale: float = 0.75,
+    colormap: str = "inferno",
+    alpha_scale: float = 0.88,
     image_size: int = RADAR_IMAGE_SIZE,
 ) -> np.ndarray:
     """
@@ -188,27 +196,30 @@ def heatmap_to_rgba(
     Returns shape (image_size, image_size, 4) uint8 array suitable for
     encoding to PNG or passing to the frontend as raw bytes.
 
-    colormap: "jet" (default, classic heatmap) or "inferno"
-    alpha_scale: maximum alpha for the hottest cell (0-1)
+    colormap: "inferno" (dark→red→orange→yellow) gives warm, intuitive heat.
+    alpha_scale: maximum alpha for the hottest cell (0-1).
     """
     import matplotlib.cm as cm  # only imported when rendering; lightweight dep
 
     cmap = cm.get_cmap(colormap)
 
-    # Upscale density grid to full image_size using nearest-neighbour
+    # Upscale density grid to full image_size using bilinear for smooth edges
     from PIL import Image as PILImage
 
     grid_img = PILImage.fromarray((result.density * 255).astype(np.uint8), mode="L")
     grid_img = grid_img.resize(
-        (image_size, image_size), resample=PILImage.NEAREST
+        (image_size, image_size), resample=PILImage.BILINEAR
     )
     density_full = np.array(grid_img) / 255.0  # shape (H, W), [0, 1]
 
     # Apply colormap → shape (H, W, 4) with float [0, 1]
     rgba = cmap(density_full)  # type: ignore[attr-defined]
 
-    # Replace alpha channel: proportional to density, scaled by alpha_scale
-    rgba[:, :, 3] = density_full * alpha_scale
+    # Alpha: use a mild power curve so medium-density areas (movement paths)
+    # are clearly visible rather than nearly transparent.
+    # density^0.6 compresses the transparency falloff: a cell with density=0.2
+    # gets alpha 0.2^0.6 ≈ 0.34 instead of linear 0.2, making paths visible.
+    rgba[:, :, 3] = (density_full ** 0.6) * alpha_scale
 
     # Convert to uint8
     return (rgba * 255).astype(np.uint8)

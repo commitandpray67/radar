@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 6
+PARSER_VERSION = 7
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +211,23 @@ def parse_demo(
     # ---- Game events ---------------------------------------------------
     _progress(0.90, "Extracting game events")
     events = _extract_events(parser, rounds)
+
+    # ---- Correct initial_team from live position data ------------------
+    # parse_player_info() reflects the CURRENT state which, after halftime,
+    # means every player's team is the SWAPPED side.  We override initial_team
+    # by examining team_num in the first non-knife round's positions — those
+    # ticks are well past warmup and pre-halftime, so they reflect the actual
+    # match-start side assignment.
+    _progress(0.95, "Correcting initial team assignments")
+    initial_teams = _infer_initial_teams(positions, rounds)
+    players = [
+        PlayerInfo(
+            player_id=p.player_id,
+            name=p.name,
+            initial_team=initial_teams.get(p.player_id, p.initial_team),
+        )
+        for p in players
+    ]
 
     _progress(1.0, "Parsing complete")
     return ParsedDemo(
@@ -479,6 +496,38 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
         )
 
     return rounds
+
+
+def _infer_initial_teams(
+    positions: list,
+    rounds: list[RoundInfo],
+) -> dict[int, str]:
+    """
+    Return {player_id: initial_team} derived from position data in the first
+    non-knife round.
+
+    parse_player_info() returns the state at the END of the demo, which is
+    AFTER halftime – so all teams are the opposite of their starting side.
+    Position data carries team_num (2=T, 3=CT) at each sampled tick, which
+    correctly reflects the in-game state at that moment.  The first non-knife
+    round happens before any side-swap, so its team_num values are canonical.
+    """
+    if not positions or not rounds:
+        return {}
+
+    non_knife = [r for r in rounds if not r.is_knife_round]
+    if not non_knife:
+        return {}
+    first_round = min(r.round_number for r in non_knife)
+
+    team_map = {2: "T", 3: "CT"}
+    result: dict[int, str] = {}
+    for pos in positions:
+        if pos.round_number == first_round and pos.player_id not in result:
+            team = team_map.get(pos.team_num)
+            if team:
+                result[pos.player_id] = team
+    return result
 
 
 def _extract_players(parser) -> list[PlayerInfo]:

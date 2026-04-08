@@ -148,7 +148,7 @@ const HeatmapControls: React.FC = () => {
         // team_filter intentionally omitted (null = both sides).
         // Round selection already encodes the relevant side.
         exclude_freeze_time: true,
-        blur_sigma: 3.0,
+        blur_sigma: 6.0,
       });
       setHeatmapResult(result);
     } catch (err) {
