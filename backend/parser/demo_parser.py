@@ -36,6 +36,9 @@ from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
+# Bump this when round-extraction logic changes so cached demos get re-parsed.
+PARSER_VERSION = 4
+
 
 # ---------------------------------------------------------------------------
 # Polars helper: convert any DataFrame (Polars or Pandas) to list[dict]
@@ -238,20 +241,18 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
     Build RoundInfo list from round events.
 
     Strategy (demoparser2 v0.41 / CS2):
-      • round_start        — mandatory; defines each round boundary
-      • round_end          — preferred end event; carries winner + reason
-      • round_officially_ended — fallback end timing; no winner field in v0.41
-      • round_freeze_end   — freeze phase end tick
-      • bomb_planted/defused/exploded — bomb timeline; also used to infer winner
-
-    Duration filter:
-      Real competitive rounds always include at least 15 s of freeze time, so
-      any paired (start, end) whose duration is below that threshold is a
-      server-generated transition round (halftime intermission, warmup reset,
-      etc.) and is discarded.
+      1. Pair every round_end with its immediately-preceding round_start
+         (each event consumed at most once → orphaned starts are discarded).
+      2. Detect real-match boundaries via ``begin_new_match`` /
+         ``round_announce_match_start`` events and discard any rounds whose
+         start_tick falls before the match-start marker.
+      3. Detect halftime transition rounds via ``announce_phase_end`` events:
+         any round whose start_tick is between a phase-end tick and the next
+         real-match round_freeze_end is a server-generated transition round
+         and is discarded.
+      4. Fallback: short-duration filter (< 13 s) catches any remaining
+         non-game rounds.
     """
-    # Minimum ticks for a real game round: freeze time = 15 s.
-    # We use 13 s as the cutoff to give a small safety margin.
     MIN_ROUND_TICKS = int(13 * tick_rate)
 
     # ---- round_start (required) --------------------------------------------
@@ -275,7 +276,7 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
             rows = _rows(df)
             if rows:
                 end_rows = sorted(rows, key=lambda r: r.get("tick", 0))
-                logger.debug("Round-end source: %s (%d events)", event_name, len(rows))
+                logger.info("Round-end source: %s (%d events)", event_name, len(rows))
                 break
         except Exception as exc:
             logger.debug("Event %s unavailable: %s", event_name, exc)
@@ -294,29 +295,51 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
 
     freeze_rows = sorted(_rows(freeze_ends), key=lambda r: r.get("tick", 0))
 
-    # ---- Pair each round_end with its latest preceding unused round_start ----
-    #
-    # The naive approach (for each start, take first end after it) breaks when
-    # there are extra round_start events: warmup resets, post-match cleanup,
-    # or tech-pause restarts all fire round_start without a matching round_end.
-    # Those orphaned starts would still "consume" the same end event as the
-    # real preceding start, creating ghost rounds.
-    #
-    # Correct strategy: iterate round_end events in order; for each one, find
-    # the LATEST round_start that precedes it and hasn't been claimed yet.
-    # Orphaned round_starts (no matching end) are silently discarded.
+    # ---- Detect real-match start boundary ----------------------------------
+    # CS2 fires ``begin_new_match`` after warmup / knife / side-selection,
+    # right before the first competitive round.  Everything before it is
+    # pre-match and must be excluded.
+    match_start_tick = 0
+    for event_name in ("begin_new_match", "round_announce_match_start"):
+        try:
+            df = parser.parse_event(event_name, other=["tick"])
+            rows = _rows(df)
+            if rows:
+                match_start_tick = max(int(r.get("tick", 0)) for r in rows)
+                logger.info("Match-start marker: %s → tick %d", event_name, match_start_tick)
+                break
+        except Exception:
+            continue
 
+    # ---- Detect halftime / phase-end boundaries ----------------------------
+    phase_end_ticks: list[int] = []
+    for event_name in ("announce_phase_end", "cs_intermission"):
+        try:
+            df = parser.parse_event(event_name, other=["tick"])
+            rows = _rows(df)
+            if rows:
+                phase_end_ticks = sorted(int(r.get("tick", 0)) for r in rows)
+                logger.info("Phase-end markers (%s): %s", event_name, phase_end_ticks)
+                break
+        except Exception:
+            continue
+
+    logger.info(
+        "Raw events: %d round_start, %d round_end, %d freeze_end",
+        len(start_rows), len(end_rows), len(freeze_rows),
+    )
+
+    # ---- Pair each round_end with its latest preceding unused round_start --
     start_ticks_sorted = sorted(int(r.get("tick", 0)) for r in start_rows)
     used_start_ticks: set[int] = set()
 
-    pairs: list[tuple[int, int, str, str]] = []  # (start_tick, end_tick, winner, reason)
+    pairs: list[tuple[int, int, str, str]] = []  # (start, end, winner, reason)
 
     for end_row in end_rows:
         end_tick = int(end_row.get("tick", 0))
         winner   = _parse_winner(end_row.get("winner", ""))
         reason   = str(end_row.get("reason", "") or "")
 
-        # Find latest unused start that strictly precedes this end
         best_start: int | None = None
         for st in reversed(start_ticks_sorted):
             if st < end_tick and st not in used_start_ticks:
@@ -324,7 +347,6 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
                 break
 
         if best_start is None:
-            logger.debug("Skipping round_end at tick %d: no preceding start", end_tick)
             continue
 
         used_start_ticks.add(best_start)
@@ -332,30 +354,63 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
 
     pairs.sort(key=lambda x: x[0])
 
-    # ---- Duration filter: drop transition/warmup rounds --------------------
-    # Real rounds always contain the full freeze period (≥ 15 s).
-    # Server-generated transition rounds (halftime intermission, warmup resets)
-    # are much shorter. Any paired round shorter than MIN_ROUND_TICKS is
-    # discarded as a non-game round.
-    short = [(s, e, w, r) for s, e, w, r in pairs if e - s < MIN_ROUND_TICKS]
-    pairs  = [(s, e, w, r) for s, e, w, r in pairs if e - s >= MIN_ROUND_TICKS]
+    # Log every paired round BEFORE filtering (crucial for diagnosis)
+    for i, (s, e, w, rsn) in enumerate(pairs, 1):
+        logger.info(
+            "  raw R%02d  ticks %d–%d  dur=%d (%.1fs)  winner=%-2s  reason=%s",
+            i, s, e, e - s, (e - s) / tick_rate, w or "--", rsn or "--",
+        )
 
+    # ---- Filter 1: pre-match rounds (before begin_new_match) ---------------
+    if match_start_tick > 0:
+        before = len(pairs)
+        pairs = [(s, e, w, r) for s, e, w, r in pairs if s >= match_start_tick]
+        removed = before - len(pairs)
+        if removed:
+            logger.info("Removed %d pre-match round(s) (before tick %d)", removed, match_start_tick)
+
+    # ---- Filter 2: halftime transition rounds ------------------------------
+    # Rounds starting between a phase-end tick and the NEXT round_freeze_end
+    # are server transitions (side-swap intermission), not real game rounds.
+    if phase_end_ticks:
+        freeze_tick_set = set(int(r.get("tick", 0)) for r in freeze_rows)
+
+        def _is_halftime_transition(start_tick: int, end_tick: int) -> bool:
+            for pet in phase_end_ticks:
+                if start_tick > pet:
+                    # Is there a freeze_end inside this round?  If yes it's a
+                    # real round that happens to follow a phase_end.  If there's
+                    # NO freeze_end event inside this round, it's likely a
+                    # transition/intermission round.
+                    has_freeze = any(
+                        start_tick < ft <= end_tick for ft in freeze_tick_set
+                    )
+                    if not has_freeze:
+                        return True
+            return False
+
+        before = len(pairs)
+        pairs = [
+            (s, e, w, r) for s, e, w, r in pairs
+            if not _is_halftime_transition(s, e)
+        ]
+        removed = before - len(pairs)
+        if removed:
+            logger.info("Removed %d halftime-transition round(s)", removed)
+
+    # ---- Filter 3: short-duration fallback ---------------------------------
+    short = [(s, e, w, r) for s, e, w, r in pairs if e - s < MIN_ROUND_TICKS]
+    pairs = [(s, e, w, r) for s, e, w, r in pairs if e - s >= MIN_ROUND_TICKS]
     if short:
         logger.info(
-            "Discarded %d short transition round(s) (< %d ticks / 13 s): %s",
-            len(short),
-            MIN_ROUND_TICKS,
+            "Removed %d short round(s) (< %d ticks): %s",
+            len(short), MIN_ROUND_TICKS,
             [(s, e, e - s) for s, e, _, _ in short],
         )
 
-    logger.debug(
-        "Round pairing: %d starts, %d ends → %d valid rounds "
-        "(%d orphaned starts, %d short/transition)",
-        len(start_ticks_sorted),
-        len(end_rows),
-        len(pairs),
-        len(start_ticks_sorted) - len(pairs) - len(short),
-        len(short),
+    logger.info(
+        "After filtering: %d rounds from %d starts / %d ends",
+        len(pairs), len(start_ticks_sorted), len(end_rows),
     )
 
     # ---- Build round list --------------------------------------------------
@@ -447,21 +502,17 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
         len(rounds),
     )
 
-    # Per-round detail at DEBUG level — useful for diagnosing extra rounds
+    # Per-round detail — helps diagnose extra/missing rounds
     for r in rounds:
-        duration_ticks = r.end_tick - r.start_tick
-        logger.debug(
-            "  R%02d  ticks %d–%d  dur=%d  winner=%-2s  reason=%-3s  "
-            "knife=%s  ct=%d  t=%d",
-            r.round_number,
-            r.start_tick,
-            r.end_tick,
-            duration_ticks,
-            r.winner_team or "--",
-            r.win_reason or "--",
+        logger.info(
+            "  final R%02d  ticks %d–%d  dur=%d (%.1fs)  winner=%-2s  "
+            "reason=%-3s  knife=%s  score=%d:%d",
+            r.round_number, r.start_tick, r.end_tick,
+            r.end_tick - r.start_tick,
+            (r.end_tick - r.start_tick) / tick_rate,
+            r.winner_team or "--", r.win_reason or "--",
             "Y" if r.is_knife_round else "N",
-            r.ct_score,
-            r.t_score,
+            r.ct_score, r.t_score,
         )
 
     return rounds

@@ -150,15 +150,16 @@ async def demo_exists(demo_id: str) -> bool:
 
 async def store_demo(parsed, demo_id: str, filename: str) -> None:
     """Persist a ParsedDemo into the database."""
-    from parser.demo_parser import ParsedDemo
+    from parser.demo_parser import ParsedDemo, PARSER_VERSION
     from datetime import datetime, timezone
+    import json as _json
 
     async with get_connection() as conn:
-        # demos
+        # demos — store parser_version in meta_json so stale caches are detected
         await conn.execute(
             """INSERT OR REPLACE INTO demos
-               (id, filename, map_name, tick_rate, total_ticks, parsed_at)
-               VALUES (?,?,?,?,?,?)""",
+               (id, filename, map_name, tick_rate, total_ticks, parsed_at, meta_json)
+               VALUES (?,?,?,?,?,?,?)""",
             (
                 demo_id,
                 filename,
@@ -166,6 +167,7 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
                 parsed.match_info.tick_rate,
                 parsed.match_info.total_ticks,
                 datetime.now(timezone.utc).isoformat(),
+                _json.dumps({"parser_version": PARSER_VERSION}),
             ),
         )
 

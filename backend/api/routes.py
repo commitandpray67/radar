@@ -127,18 +127,31 @@ async def upload_demo(
     }
 
     # Check cache (skipped when force=True).
-    # Also verify data quality: if all rounds have no winner the cache is from
-    # an old broken parse → re-parse automatically.
+    # Re-parse when: (a) parser version changed, or (b) no winner data.
     if not force and await demo_exists(demo_id):
+        from parser.demo_parser import PARSER_VERSION
+        import json as _json
+
+        cache_valid = False
         async with get_connection() as conn:
             cur = await conn.execute(
-                "SELECT COUNT(*) FROM rounds WHERE demo_id = ? AND winner_team != ''",
-                (demo_id,),
+                "SELECT meta_json FROM demos WHERE id = ?", (demo_id,),
             )
-            row = await cur.fetchone()
-            has_valid_data = bool(row and row[0] > 0)
+            demo_row = await cur.fetchone()
+            cached_version = 0
+            if demo_row:
+                meta = _json.loads(demo_row["meta_json"] or "{}")
+                cached_version = meta.get("parser_version", 0)
 
-        if has_valid_data:
+            if cached_version == PARSER_VERSION:
+                cur2 = await conn.execute(
+                    "SELECT COUNT(*) FROM rounds WHERE demo_id = ? AND winner_team != ''",
+                    (demo_id,),
+                )
+                row = await cur2.fetchone()
+                cache_valid = bool(row and row[0] > 0)
+
+        if cache_valid:
             _parse_jobs[job_id] = {
                 "status": "complete",
                 "progress": 1.0,
@@ -149,7 +162,10 @@ async def upload_demo(
             tmp_path.unlink(missing_ok=True)
             return {"job_id": job_id, "demo_id": demo_id, "cached": True}
 
-        logger.info("Cached demo %s has stale data (no winners) — re-parsing", demo_id)
+        logger.info(
+            "Re-parsing demo %s (cached v%d, current v%d)",
+            demo_id, cached_version, PARSER_VERSION,
+        )
 
     # Start background parse
     asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename))
