@@ -1,0 +1,141 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #151c26;
+  border-top: 1px solid #2a3a52;
+  flex-wrap: wrap;
+}
+
+.roundNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.roundLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c0cfe0;
+  min-width: 72px;
+  text-align: center;
+  font-family: 'Inter', sans-serif;
+}
+
+.iconBtn {
+  background: #1e2d3f;
+  border: 1px solid #2a3a52;
+  color: #8090a0;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.iconBtn:hover:not(:disabled) {
+  background: #2a3a52;
+  color: #c0cfe0;
+}
+.iconBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.playBtn {
+  background: #1e4d8c;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.playBtn:hover:not(:disabled) {
+  background: #2a6abf;
+}
+.playBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.sliderWrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.timeLabel {
+  font-size: 11px;
+  color: #8090a0;
+  font-family: 'JetBrains Mono', monospace;
+  flex-shrink: 0;
+}
+
+.slider {
+  flex: 1;
+  height: 4px;
+  accent-color: #1e4d8c;
+  cursor: pointer;
+}
+.slider:disabled {
+  opacity: 0.35;
+}
+
+.speedGroup {
+  display: flex;
+  gap: 2px;
+}
+
+.speedBtn {
+  background: #1e2d3f;
+  border: 1px solid #2a3a52;
+  color: #8090a0;
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  transition: background 0.12s;
+}
+.speedBtn:hover:not(:disabled) {
+  background: #2a3a52;
+  color: #c0cfe0;
+}
+.speedBtn.active {
+  background: #1e4d8c;
+  border-color: #2a6abf;
+  color: #fff;
+}
+.speedBtn:disabled {
+  opacity: 0.35;
+}
+
+.toggleGroup {
+  display: flex;
+  gap: 4px;
+}
+
+.toggleBtn {
+  background: #1e2d3f;
+  border: 1px solid #2a3a52;
+  font-size: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.toggleBtn:hover {
+  background: #2a3a52;
+}
+.toggleBtn.on {
+  background: #1a3d5c;
+  border-color: #2a6abf;
+}

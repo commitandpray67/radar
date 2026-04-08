@@ -1,0 +1,222 @@
+.root {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modeLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8090a0;
+  font-family: 'Inter', sans-serif;
+}
+
+.toggleSwitch {
+  background: #1e2d3f;
+  border: 1px solid #2a3a52;
+  color: #4a5a6a;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.toggleSwitch.on {
+  background: #1a4a2a;
+  border-color: #2a8a4a;
+  color: #4ae07a;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6a7a8a;
+  font-family: 'Inter', sans-serif;
+}
+
+.playerList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.playerList::-webkit-scrollbar { width: 3px; }
+.playerList::-webkit-scrollbar-thumb { background: #2a3a52; border-radius: 2px; }
+
+.playerChip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  background: #1e2d3f;
+  border: 1px solid #2a3a52;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.playerChip:hover {
+  background: #243344;
+}
+.playerChip.selected.ct {
+  background: #1a3d5c;
+  border-color: #2a6abf;
+}
+.playerChip.selected.t {
+  background: #3d2210;
+  border-color: #c06020;
+}
+
+.playerName {
+  font-size: 12px;
+  color: #c0cfe0;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
+}
+
+.playerTeam {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'Inter', sans-serif;
+  color: #8090a0;
+  flex-shrink: 0;
+}
+
+.hint {
+  font-size: 11px;
+  color: #4a5a6a;
+  font-style: italic;
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+}
+
+.roundsSummary {
+  font-size: 11px;
+  color: #c0cfe0;
+  font-family: 'JetBrains Mono', monospace;
+  word-break: break-all;
+  margin: 0;
+}
+
+.pill {
+  background: #1e4d8c;
+  color: #c0d8f0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 8px;
+}
+
+.btnGroup {
+  display: flex;
+  gap: 4px;
+}
+
+.filterBtn {
+  background: #1e2d3f;
+  border: 1px solid #2a3a52;
+  color: #8090a0;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.1s;
+}
+.filterBtn:hover { background: #2a3a52; }
+.filterBtn.active {
+  background: #1e4d8c;
+  border-color: #2a6abf;
+  color: #fff;
+}
+
+.smallBtn {
+  background: none;
+  border: none;
+  color: #4a5a6a;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+  font-family: 'Inter', sans-serif;
+}
+.smallBtn:hover { color: #c0cfe0; }
+
+.error {
+  background: #3d1010;
+  border: 1px solid #8a2020;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #e08080;
+  font-family: 'Inter', sans-serif;
+}
+
+.resultMeta {
+  font-size: 11px;
+  color: #6a7a8a;
+  font-family: 'JetBrains Mono', monospace;
+  margin: 0;
+}
+
+.actionRow {
+  display: flex;
+  gap: 8px;
+}
+
+.generateBtn {
+  flex: 1;
+  background: #1e4d8c;
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.15s;
+}
+.generateBtn:hover:not(:disabled) { background: #2a6abf; }
+.generateBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.clearBtn {
+  background: #2a2020;
+  border: 1px solid #4a3a3a;
+  color: #c08080;
+  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.12s;
+}
+.clearBtn:hover { background: #3d2020; }

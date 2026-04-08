@@ -1,0 +1,432 @@
+"""
+FastAPI route definitions for the CS2 Radar backend.
+
+Endpoints
+---------
+POST /api/demos/upload          – upload and parse a .dem file
+GET  /api/demos                 – list cached demos
+GET  /api/demos/{demo_id}       – demo metadata
+GET  /api/demos/{demo_id}/rounds
+GET  /api/demos/{demo_id}/players
+GET  /api/demos/{demo_id}/positions
+GET  /api/demos/{demo_id}/events
+POST /api/demos/{demo_id}/heatmap
+GET  /api/maps                  – list all maps with calibration info
+GET  /api/parse-status/{job_id} – SSE stream for parse progress
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import uuid
+from pathlib import Path
+from typing import Optional, AsyncIterator
+
+import numpy as np
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
+
+from db.database import (
+    demo_exists, file_hash, get_connection, init_db, store_demo
+)
+from maps.calibration import MAP_CALIBRATIONS, get_calibration
+from analytics.coordinates import get_calibration_or_raise
+from analytics.heatmap import HeatmapRequest, compute_heatmap, heatmap_to_base64_png
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# In-memory parse job status store (MVP; replace with Redis for production)
+_parse_jobs: dict[str, dict] = {}
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
+
+class HeatmapPayload(BaseModel):
+    player_ids: list[int]
+    round_numbers: list[int]
+    layer_label: Optional[str] = None
+    exclude_freeze_time: bool = True
+    team_filter: Optional[str] = None
+    sample_every: int = 1
+    blur_sigma: float = 3.0
+
+
+# ---------------------------------------------------------------------------
+# Map metadata
+# ---------------------------------------------------------------------------
+
+@router.get("/maps")
+async def list_maps():
+    """Return all known maps with their calibration metadata."""
+    result = []
+    import math
+
+    def _json_float(v: float) -> float | None:
+        """Convert ±inf to None for JSON compatibility."""
+        if math.isinf(v):
+            return None
+        return v
+
+    for name, cal in MAP_CALIBRATIONS.items():
+        entry = {
+            "name": name,
+            "is_multilevel": cal.is_multilevel,
+            "layers": (
+                [{"label": la.label, "image": la.image,
+                  "z_min": _json_float(la.z_min), "z_max": _json_float(la.z_max)}
+                 for la in cal.layers]
+                if cal.is_multilevel
+                else []
+            ),
+            "image": cal.image if not cal.is_multilevel else "",
+        }
+        result.append(entry)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Demo upload & parse
+# ---------------------------------------------------------------------------
+
+@router.post("/demos/upload")
+async def upload_demo(file: UploadFile = File(...)):
+    """
+    Accept a .dem file upload, hash it, and start async parsing.
+    Returns a job_id the client can poll via /parse-status/{job_id}.
+    """
+    if not file.filename or not file.filename.lower().endswith(".dem"):
+        raise HTTPException(400, "File must be a .dem demo file")
+
+    # Write upload to temp dir
+    tmp_dir = Path("/tmp/cs2radar_uploads")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = tmp_dir / f"{uuid.uuid4().hex}_{file.filename}"
+
+    content = await file.read()
+    tmp_path.write_bytes(content)
+
+    demo_id = file_hash(tmp_path)
+    job_id = str(uuid.uuid4())
+
+    _parse_jobs[job_id] = {
+        "status": "pending",
+        "progress": 0.0,
+        "message": "Queued",
+        "demo_id": demo_id,
+        "filename": file.filename,
+    }
+
+    # Check cache
+    if await demo_exists(demo_id):
+        _parse_jobs[job_id] = {
+            "status": "complete",
+            "progress": 1.0,
+            "message": "Loaded from cache",
+            "demo_id": demo_id,
+            "filename": file.filename,
+        }
+        tmp_path.unlink(missing_ok=True)
+        return {"job_id": job_id, "demo_id": demo_id, "cached": True}
+
+    # Start background parse
+    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename))
+
+    return {"job_id": job_id, "demo_id": demo_id, "cached": False}
+
+
+async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str) -> None:
+    """Background task: parse demo and store results."""
+    import concurrent.futures
+
+    def _progress(frac: float, msg: str) -> None:
+        _parse_jobs[job_id]["progress"] = frac
+        _parse_jobs[job_id]["message"] = msg
+        _parse_jobs[job_id]["status"] = "running"
+
+    try:
+        _progress(0.0, "Starting parse")
+
+        # Run the blocking parse in a thread pool so we don't block the event loop
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            from parser.demo_parser import parse_demo
+            parsed = await loop.run_in_executor(
+                pool,
+                lambda: parse_demo(str(tmp_path), progress_callback=_progress),
+            )
+
+        _progress(0.95, "Storing to database")
+        await store_demo(parsed, demo_id, filename)
+
+        _parse_jobs[job_id] = {
+            "status": "complete",
+            "progress": 1.0,
+            "message": "Done",
+            "demo_id": demo_id,
+            "filename": filename,
+            "map_name": parsed.match_info.map_name,
+        }
+    except Exception as exc:
+        logger.exception("Parse failed for job %s", job_id)
+        _parse_jobs[job_id] = {
+            "status": "error",
+            "progress": 0.0,
+            "message": str(exc),
+            "demo_id": demo_id,
+            "filename": filename,
+        }
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@router.get("/parse-status/{job_id}")
+async def parse_status_stream(job_id: str):
+    """
+    Server-Sent Events stream that pushes parse progress to the client.
+    The client closes the connection once status == 'complete' or 'error'.
+    """
+    async def _event_generator() -> AsyncIterator[str]:
+        while True:
+            job = _parse_jobs.get(job_id)
+            if job is None:
+                yield f"data: {json.dumps({'error': 'unknown job'})}\n\n"
+                return
+            yield f"data: {json.dumps(job)}\n\n"
+            if job["status"] in ("complete", "error"):
+                return
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Demo list / metadata
+# ---------------------------------------------------------------------------
+
+@router.get("/demos")
+async def list_demos():
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at FROM demos"
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/demos/{demo_id}")
+async def get_demo(demo_id: str):
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM demos WHERE id = ?", (demo_id,)
+        )
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "Demo not found")
+    return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Rounds
+# ---------------------------------------------------------------------------
+
+@router.get("/demos/{demo_id}/rounds")
+async def get_rounds(demo_id: str):
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM rounds WHERE demo_id = ? ORDER BY round_number",
+            (demo_id,),
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Players
+# ---------------------------------------------------------------------------
+
+@router.get("/demos/{demo_id}/players")
+async def get_players(demo_id: str):
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM players WHERE demo_id = ?", (demo_id,)
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Positions
+# ---------------------------------------------------------------------------
+
+@router.get("/demos/{demo_id}/positions")
+async def get_positions(
+    demo_id: str,
+    round_number: Optional[int] = Query(None),
+    player_ids: Optional[str] = Query(None),  # comma-separated SteamIDs
+    tick_min: Optional[int] = Query(None),
+    tick_max: Optional[int] = Query(None),
+):
+    """
+    Return player positions for a demo, optionally filtered.
+    For large demos this may return many rows; use round_number to narrow.
+    """
+    clauses = ["demo_id = ?"]
+    params: list = [demo_id]
+
+    if round_number is not None:
+        clauses.append("round_number = ?")
+        params.append(round_number)
+
+    if player_ids:
+        ids = [int(x.strip()) for x in player_ids.split(",") if x.strip().isdigit()]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            clauses.append(f"player_id IN ({placeholders})")
+            params.extend(ids)
+
+    if tick_min is not None:
+        clauses.append("tick >= ?")
+        params.append(tick_min)
+
+    if tick_max is not None:
+        clauses.append("tick <= ?")
+        params.append(tick_max)
+
+    where = " AND ".join(clauses)
+
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT tick, round_number, player_id, x, y, z, team_num, is_alive "
+            f"FROM player_positions WHERE {where} ORDER BY tick, player_id",
+            params,
+        )
+        rows = await cursor.fetchall()
+
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+@router.get("/demos/{demo_id}/events")
+async def get_events(
+    demo_id: str,
+    round_number: Optional[int] = Query(None),
+    event_type: Optional[str] = Query(None),
+):
+    clauses = ["demo_id = ?"]
+    params: list = [demo_id]
+
+    if round_number is not None:
+        clauses.append("round_number = ?")
+        params.append(round_number)
+
+    if event_type:
+        clauses.append("event_type = ?")
+        params.append(event_type)
+
+    where = " AND ".join(clauses)
+
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT * FROM events WHERE {where} ORDER BY tick",
+            params,
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Heatmap
+# ---------------------------------------------------------------------------
+
+@router.post("/demos/{demo_id}/heatmap")
+async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
+    """
+    Generate a heatmap PNG for the given player(s) and rounds.
+    Returns a base64-encoded PNG data URL.
+    """
+    # Fetch demo map name
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT map_name FROM demos WHERE id = ?", (demo_id,)
+        )
+        demo_row = await cursor.fetchone()
+    if not demo_row:
+        raise HTTPException(404, "Demo not found")
+
+    map_name: str = demo_row["map_name"]
+
+    try:
+        calibration = get_calibration_or_raise(map_name)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+    # Fetch positions as numpy array
+    clauses = ["demo_id = ?", "round_number IN ({})".format(
+        ",".join("?" * len(payload.round_numbers))
+    )]
+    params: list = [demo_id, *payload.round_numbers]
+
+    if payload.player_ids:
+        placeholders = ",".join("?" * len(payload.player_ids))
+        clauses.append(f"player_id IN ({placeholders})")
+        params.extend(payload.player_ids)
+
+    if payload.exclude_freeze_time:
+        # freeze filtering is applied client-side after numpy load (MVP approach)
+        pass
+
+    where = " AND ".join(clauses)
+
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT tick, round_number, player_id, x, y, z, team_num "
+            f"FROM player_positions WHERE {where}",
+            params,
+        )
+        rows = await cursor.fetchall()
+
+    if not rows:
+        raise HTTPException(404, "No position data found for the given filters")
+
+    # Convert to numpy: columns [tick, round, player_id, x, y, z, team_num]
+    positions_np = np.array(
+        [[r["tick"], r["round_number"], r["player_id"], r["x"], r["y"], r["z"], r["team_num"]]
+         for r in rows],
+        dtype=np.float64,
+    )
+
+    request = HeatmapRequest(
+        player_ids=payload.player_ids,
+        round_numbers=payload.round_numbers,
+        map_name=map_name,
+        layer_label=payload.layer_label,
+        exclude_freeze_time=payload.exclude_freeze_time,
+        team_filter=payload.team_filter,
+        sample_every=payload.sample_every,
+        blur_sigma=payload.blur_sigma,
+    )
+
+    result = compute_heatmap(positions_np, request, calibration)
+    png_b64 = heatmap_to_base64_png(result)
+
+    return {
+        "image": f"data:image/png;base64,{png_b64}",
+        "sample_count": result.sample_count,
+        "layer_label": result.layer_label,
+    }
