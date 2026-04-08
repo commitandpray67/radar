@@ -42,18 +42,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _rows(df) -> list[dict]:
-    """Return rows as a list of dicts, supporting both Polars and Pandas."""
+    """
+    Return rows as a list of dicts.
+    Handles Polars DataFrames, Pandas DataFrames, and plain Python lists
+    (demoparser2 v0.41 returns a list for some events with no data).
+    """
+    if isinstance(df, list):
+        return df                           # already a list (possibly of dicts)
     try:
-        return df.rows(named=True)          # Polars API (demoparser2 >= 0.14)
+        return df.rows(named=True)          # Polars DataFrame
     except AttributeError:
-        return df.to_dict("records")        # Pandas fallback
+        return df.to_dict("records")        # Pandas DataFrame
+
 
 def _is_empty(df) -> bool:
-    """Return True if the DataFrame has no rows."""
+    """Return True if the result has no rows."""
+    if isinstance(df, list):
+        return len(df) == 0
     try:
         return df.is_empty()                # Polars
     except AttributeError:
-        return df.empty                     # Pandas
+        return len(df) == 0                 # Pandas / anything with len()
 
 
 # ---------------------------------------------------------------------------
@@ -164,10 +173,17 @@ def parse_demo(
     # ---- Header / match info -------------------------------------------
     _progress(0.02, "Reading header")
     header = parser.parse_header()
+    # parse_header() in demoparser2 >= 0.41 returns the "header message"
+    # which contains map_name but NOT playback_ticks / playback_time.
+    # CS2 live-service demos run at 64 tick; FACEIT at 128 tick.
+    # We default to 64 and refine below from actual tick data if possible.
     map_name: str = header.get("map_name", "unknown")
     playback_ticks = int(header.get("playback_ticks", 0))
-    playback_time = float(header.get("playback_time", 1) or 1)
-    tick_rate = round(playback_ticks / playback_time, 2) if playback_time > 0 else 64.0
+    playback_time  = float(header.get("playback_time", 1) or 1)
+    if playback_ticks > 0 and playback_time > 0:
+        tick_rate = round(playback_ticks / playback_time, 2)
+    else:
+        tick_rate = 64.0  # safe default for CS2
 
     match_info = MatchInfo(
         map_name=map_name,
