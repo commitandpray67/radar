@@ -90,6 +90,7 @@ class RoundInfo:
     bomb_planted_tick: Optional[int] = None
     bomb_defused_tick: Optional[int] = None
     bomb_exploded_tick: Optional[int] = None
+    is_knife_round: bool = False
 
 
 @dataclass
@@ -296,6 +297,43 @@ def _extract_rounds(parser) -> list[RoundInfo]:
                 if r.start_tick <= tick <= r.end_tick:
                     setattr(r, attr, tick)
                     break
+
+    # ---- Detect knife rounds -----------------------------------------------
+    # A round is a knife round when EVERY kill in it was made with a knife.
+    # This catches overtime side-selection rounds and any knife-only warmup.
+    try:
+        deaths_df = parser.parse_event("player_death", other=["tick", "weapon"])
+        death_rows = _rows(deaths_df)
+    except Exception as exc:
+        logger.warning("Could not parse player_death for knife detection: %s", exc)
+        death_rows = []
+
+    for r in rounds:
+        kills = [
+            d for d in death_rows
+            if r.start_tick <= int(d.get("tick", 0)) <= r.end_tick
+        ]
+        if kills and all(
+            str(d.get("weapon", "")).lower().startswith("knife")
+            or str(d.get("weapon", "")).lower() == "knifegg"
+            for d in kills
+        ):
+            r.is_knife_round = True
+
+    # ---- Compute cumulative scores -----------------------------------------
+    # demoparser2 v0.41 does not populate ct_score/t_score in
+    # round_officially_ended, so we compute them from winner_team instead.
+    if all(r.ct_score == 0 and r.t_score == 0 for r in rounds):
+        ct_wins = 0
+        t_wins = 0
+        for r in rounds:
+            if not r.is_knife_round:
+                if r.winner_team == "CT":
+                    ct_wins += 1
+                elif r.winner_team == "T":
+                    t_wins += 1
+            r.ct_score = ct_wins
+            r.t_score = t_wins
 
     return rounds
 

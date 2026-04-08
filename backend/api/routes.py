@@ -416,9 +416,23 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
     params: list = [demo_id, *payload.round_numbers]
 
     if payload.player_ids:
-        placeholders = ",".join("?" * len(payload.player_ids))
-        clauses.append(f"player_id IN ({placeholders})")
-        params.extend(payload.player_ids)
+        # payload.player_ids are the DB row IDs from the players table (small
+        # integers), NOT SteamID64s.  SteamID64s exceed JS Number.MAX_SAFE_INTEGER
+        # and lose precision when round-tripped through JSON.  We look up the
+        # exact SteamID64 values here before querying positions.
+        id_placeholders = ",".join("?" * len(payload.player_ids))
+        async with get_connection() as conn:
+            cursor = await conn.execute(
+                f"SELECT player_id FROM players "
+                f"WHERE demo_id = ? AND id IN ({id_placeholders})",
+                [demo_id, *payload.player_ids],
+            )
+            steam_rows = await cursor.fetchall()
+        steam_ids = [row["player_id"] for row in steam_rows]
+        if steam_ids:
+            placeholders = ",".join("?" * len(steam_ids))
+            clauses.append(f"player_id IN ({placeholders})")
+            params.extend(steam_ids)
 
     if payload.exclude_freeze_time:
         # freeze filtering is applied client-side after numpy load (MVP approach)

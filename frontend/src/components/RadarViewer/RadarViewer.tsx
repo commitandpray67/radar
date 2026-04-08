@@ -110,13 +110,13 @@ function drawPlayerMarker(
     ctx.stroke();
   }
 
-  // Label
+  // Label (player number, e.g. "1"–"10")
   ctx.globalAlpha = isAlive ? 1 : DEAD_ALPHA;
   ctx.font = `bold ${FONT_SIZE}px 'JetBrains Mono', monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(label.slice(0, 3).toUpperCase(), cx, cy + 0.5);
+  ctx.fillText(label, cx, cy + 0.5);
 
   ctx.restore();
 }
@@ -226,12 +226,12 @@ const RadarViewer: React.FC = () => {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Player name abbreviation helper
+  // Player number helper — returns "1"–"10" based on position in players array
   // ---------------------------------------------------------------------------
   const playerLabel = useCallback(
     (playerId: number): string => {
-      const p = players.find((pl) => pl.player_id === playerId);
-      return p ? p.name.slice(0, 3).toUpperCase() : '???';
+      const idx = players.findIndex((pl) => pl.player_id === playerId);
+      return idx >= 0 ? String(idx + 1) : '?';
     },
     [players],
   );

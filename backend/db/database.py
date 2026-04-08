@@ -73,7 +73,8 @@ async def init_db() -> None:
                 t_score             INTEGER,
                 bomb_planted_tick   INTEGER,
                 bomb_defused_tick   INTEGER,
-                bomb_exploded_tick  INTEGER
+                bomb_exploded_tick  INTEGER,
+                is_knife_round      INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS players (
@@ -116,6 +117,14 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_events_demo
                 ON events(demo_id, round_number);
         """)
+        # Migration: add is_knife_round if an older DB doesn't have it yet
+        try:
+            await conn.execute(
+                "ALTER TABLE rounds ADD COLUMN is_knife_round INTEGER DEFAULT 0"
+            )
+            await conn.commit()
+        except Exception:
+            pass  # Column already exists — ignore
         await conn.commit()
     logger.info("Database initialised at %s", await get_db_path())
 
@@ -166,14 +175,16 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
             """INSERT INTO rounds
                (demo_id, round_number, start_tick, end_tick, freeze_end_tick,
                 winner_team, win_reason, ct_score, t_score,
-                bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick,
+                is_knife_round)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
                 (
                     demo_id, r.round_number, r.start_tick, r.end_tick,
                     r.freeze_end_tick, r.winner_team, r.win_reason,
                     r.ct_score, r.t_score,
                     r.bomb_planted_tick, r.bomb_defused_tick, r.bomb_exploded_tick,
+                    int(r.is_knife_round),
                 )
                 for r in parsed.rounds
             ],

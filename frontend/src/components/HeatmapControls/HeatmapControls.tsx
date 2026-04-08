@@ -49,8 +49,13 @@ const HeatmapControls: React.FC = () => {
     setHeatmapLoading(true);
     setHeatmapError(null);
     try {
+      // Send DB row IDs (small integers), not SteamID64s.
+      // SteamID64s > Number.MAX_SAFE_INTEGER lose precision in JS JSON.
+      const playerDbIds = players
+        .filter((p) => selectedPlayers.has(p.player_id))
+        .map((p) => p.id);
       const result = await generateHeatmap(demo.id, {
-        player_ids: Array.from(selectedPlayers),
+        player_ids: playerDbIds,
         round_numbers: heatmapRounds,
         layer_label: activeLayer || undefined,
         team_filter: teamFilter,
@@ -101,7 +106,7 @@ const HeatmapControls: React.FC = () => {
               </button>
             </div>
             <div className={styles.playerList}>
-              {players.map((p) => (
+              {players.map((p, idx) => (
                 <button
                   key={p.player_id}
                   className={`${styles.playerChip} ${
@@ -109,6 +114,7 @@ const HeatmapControls: React.FC = () => {
                   } ${p.initial_team === 'CT' ? styles.ct : styles.t}`}
                   onClick={() => togglePlayerSel(p.player_id)}
                 >
+                  <span className={styles.playerNum}>{idx + 1}</span>
                   <span className={styles.playerName}>{p.name}</span>
                   <span className={styles.playerTeam}>{p.initial_team}</span>
                 </button>

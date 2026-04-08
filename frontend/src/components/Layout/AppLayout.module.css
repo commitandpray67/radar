@@ -204,6 +204,16 @@
 .playerRow:hover { background: #1e2d3f; }
 .playerRow.playerSelected { background: #1a2a40; }
 
+.playerNum {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #4a5a6a;
+  font-weight: 700;
+  min-width: 14px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .teamDot {
   width: 8px;
   height: 8px;

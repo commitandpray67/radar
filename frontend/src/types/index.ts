@@ -25,6 +25,7 @@ export interface RoundInfo {
   bomb_planted_tick: number | null;
   bomb_defused_tick: number | null;
   bomb_exploded_tick: number | null;
+  is_knife_round?: boolean;
 }
 
 export interface PlayerInfo {

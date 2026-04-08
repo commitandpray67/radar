@@ -89,6 +89,15 @@
   border-color: #c06020;
 }
 
+.playerNum {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #4a5a6a;
+  font-weight: 700;
+  min-width: 14px;
+  flex-shrink: 0;
+}
+
 .playerName {
   font-size: 12px;
   color: #c0cfe0;
@@ -97,7 +106,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 110px;
+  flex: 1;
 }
 
 .playerTeam {

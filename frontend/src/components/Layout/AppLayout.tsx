@@ -6,7 +6,7 @@
  *   Right sidebar : Player info / selection
  */
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import RadarViewer from '../RadarViewer/RadarViewer';
 import RoundPanel from '../RoundPanel/RoundPanel';
@@ -21,9 +21,23 @@ const AppLayout: React.FC = () => {
   const demo        = useAppStore((s) => s.demo);
   const players     = useAppStore((s) => s.players);
   const rounds      = useAppStore((s) => s.rounds);
+  const positions   = useAppStore((s) => s.positions);
   const activeRound = useAppStore((s) => s.activeRound);
   const selectedIds = useAppStore((s) => s.selectedPlayerIds);
   const clearSelected = useAppStore((s) => s.clearSelectedPlayers);
+
+  // Build player_id → team_num map from the first position sample in the
+  // active round so the right-panel dot reflects the current side, not the
+  // initial side (teams swap at halftime).
+  const playerTeamMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const pos of positions) {
+      if (pos.round_number === activeRound && !map.has(pos.player_id)) {
+        map.set(pos.player_id, pos.team_num);
+      }
+    }
+    return map;
+  }, [positions, activeRound]);
 
   const [sideTab, setSideTab] = useState<SideTab>('rounds');
 
@@ -115,26 +129,29 @@ const AppLayout: React.FC = () => {
             )}
           </div>
           <div className={styles.playerList}>
-            {players.map((p) => (
-              <div
-                key={p.player_id}
-                className={`${styles.playerRow} ${
-                  selectedIds.has(p.player_id) ? styles.playerSelected : ''
-                }`}
-              >
-                <span
-                  className={styles.teamDot}
-                  style={{
-                    background:
-                      p.initial_team === 'CT'
-                        ? TEAM_COLORS.CT
-                        : TEAM_COLORS.T,
-                  }}
-                />
-                <span className={styles.playerName}>{p.name}</span>
-                <span className={styles.playerTeam}>{p.initial_team}</span>
-              </div>
-            ))}
+            {players.map((p, idx) => {
+              // Prefer live team_num from position data; fall back to initial_team
+              const teamNum = playerTeamMap.get(p.player_id)
+                ?? (p.initial_team === 'CT' ? 3 : 2);
+              const teamColor = teamNum === 3 ? TEAM_COLORS.CT : TEAM_COLORS.T;
+              const teamLabel = teamNum === 3 ? 'CT' : 'T';
+              return (
+                <div
+                  key={p.player_id}
+                  className={`${styles.playerRow} ${
+                    selectedIds.has(p.player_id) ? styles.playerSelected : ''
+                  }`}
+                >
+                  <span className={styles.playerNum}>{idx + 1}</span>
+                  <span
+                    className={styles.teamDot}
+                    style={{ background: teamColor }}
+                  />
+                  <span className={styles.playerName}>{p.name}</span>
+                  <span className={styles.playerTeam}>{teamLabel}</span>
+                </div>
+              );
+            })}
             {players.length === 0 && (
               <p className={styles.emptyPlayers}>—</p>
             )}

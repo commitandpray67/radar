@@ -54,16 +54,20 @@ const RoundPanel: React.FC = () => {
     );
   }
 
+  // Exclude knife rounds (side-selection rounds in overtime / start of match).
+  // They have no weapon kills other than knives and shouldn't appear in the list.
+  const displayRounds = rounds.filter((r) => !r.is_knife_round);
+
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         <span className={styles.headerText}>
           {isHeatmapMode ? 'Select rounds for heatmap' : 'Rounds'}
         </span>
-        <span className={styles.count}>{rounds.length}</span>
+        <span className={styles.count}>{displayRounds.length}</span>
       </div>
       <div className={styles.list}>
-        {rounds.map((r) => {
+        {displayRounds.map((r) => {
           const isActive = r.round_number === activeRound && !isHeatmapMode;
           const isHeatmapSelected =
             isHeatmapMode && heatmapRounds.includes(r.round_number);
