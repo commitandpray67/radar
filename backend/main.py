@@ -3,6 +3,7 @@ CS2 Demo Radar — FastAPI application entry point.
 """
 
 import logging
+import logging.handlers
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,9 +14,22 @@ from fastapi.staticfiles import StaticFiles
 from api.routes import router
 from db.database import init_db
 
+# Write logs to both console and a rotating log file so errors are
+# preserved even after the CMD window scrolls or the server restarts.
+_log_dir = Path(__file__).parent / "logs"
+_log_dir.mkdir(exist_ok=True)
+_log_file = _log_dir / "backend.log"
+
+_file_handler = logging.handlers.RotatingFileHandler(
+    _log_file, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+)
+_fmt = logging.Formatter("%(asctime)s  %(levelname)-8s  %(name)s — %(message)s")
+_file_handler.setFormatter(_fmt)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+    handlers=[logging.StreamHandler(), _file_handler],
 )
 logger = logging.getLogger(__name__)
 
