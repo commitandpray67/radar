@@ -29,3 +29,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Runtime files created by start.sh
+.radar.log
+.radar_pids
