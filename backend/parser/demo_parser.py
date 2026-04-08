@@ -284,23 +284,56 @@ def _extract_rounds(parser) -> list[RoundInfo]:
 
     freeze_rows = sorted(_rows(freeze_ends), key=lambda r: r.get("tick", 0))
 
+    # ---- Pair each round_end with its latest preceding unused round_start ----
+    #
+    # The naive approach (for each start, take first end after it) breaks when
+    # there are extra round_start events: warmup resets, post-match cleanup,
+    # or tech-pause restarts all fire round_start without a matching round_end.
+    # Those orphaned starts would still "consume" the same end event as the
+    # real preceding start, creating ghost rounds.
+    #
+    # Correct strategy: iterate round_end events in order; for each one, find
+    # the LATEST round_start that precedes it and hasn't been claimed yet.
+    # Orphaned round_starts (no matching end) are silently discarded.
+
+    start_ticks_sorted = sorted(int(r.get("tick", 0)) for r in start_rows)
+    start_row_by_tick  = {int(r.get("tick", 0)): r for r in start_rows}
+    used_start_ticks: set[int] = set()
+
+    pairs: list[tuple[int, int, str, str]] = []  # (start_tick, end_tick, winner, reason)
+
+    for end_row in end_rows:
+        end_tick = int(end_row.get("tick", 0))
+        winner   = _parse_winner(end_row.get("winner", ""))
+        reason   = str(end_row.get("reason", "") or "")
+
+        # Find latest unused start that strictly precedes this end
+        best_start: int | None = None
+        for st in reversed(start_ticks_sorted):
+            if st < end_tick and st not in used_start_ticks:
+                best_start = st
+                break
+
+        if best_start is None:
+            logger.debug("Skipping round_end at tick %d: no preceding start", end_tick)
+            continue
+
+        used_start_ticks.add(best_start)
+        pairs.append((best_start, end_tick, winner, reason))
+
+    pairs.sort(key=lambda x: x[0])
+
+    logger.debug(
+        "Round pairing: %d starts, %d ends → %d paired rounds (%d orphaned starts)",
+        len(start_ticks_sorted),
+        len(end_rows),
+        len(pairs),
+        len(start_ticks_sorted) - len(pairs),
+    )
+
     # ---- Build round list --------------------------------------------------
     rounds: list[RoundInfo] = []
-    for i, start_row in enumerate(start_rows):
-        start_tick = int(start_row.get("tick", 0))
-        round_num  = i + 1
-
-        matching_ends = [r for r in end_rows if r.get("tick", 0) > start_tick]
-        if matching_ends:
-            end_row    = matching_ends[0]
-            end_tick   = int(end_row.get("tick", 0))
-            winner     = _parse_winner(end_row.get("winner", ""))
-            win_reason = str(end_row.get("reason", "") or "")
-        else:
-            end_tick   = start_tick
-            winner     = ""
-            win_reason = ""
-
+    for round_num, (start_tick, end_tick, winner, win_reason) in enumerate(pairs, 1):
         matching_freezes = [
             r for r in freeze_rows
             if start_tick <= r.get("tick", 0) <= end_tick
