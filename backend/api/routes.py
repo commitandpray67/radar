@@ -503,7 +503,7 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
     )
 
     request = HeatmapRequest(
-        player_ids=steam_ids,          # SteamID64s, not DB row IDs
+        player_ids=[],    # SQL pre-filtered; skip float64-imprecise Python re-filter
         round_numbers=payload.round_numbers,
         map_name=map_name,
         layer_label=payload.layer_label,

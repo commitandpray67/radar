@@ -218,9 +218,6 @@ const HeatmapControls: React.FC = () => {
                     >
                       <span className={styles.playerNum}>{idx + 1}</span>
                       <span className={styles.playerName}>{p.name}</span>
-                      <span className={`${styles.playerTeam} ${isCT ? styles.teamCT : styles.teamT}`}>
-                        {p.initial_team}
-                      </span>
                     </button>
 
                     {/* Side quick-select: sets player + their half-specific rounds */}

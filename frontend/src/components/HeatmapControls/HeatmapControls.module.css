@@ -122,23 +122,6 @@
   flex: 1;
 }
 
-.playerTeam {
-  font-size: 9px;
-  font-weight: 700;
-  font-family: 'Inter', sans-serif;
-  padding: 1px 5px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-.teamCT {
-  background: #1a3a5c;
-  color: #5b9bd5;
-}
-.teamT {
-  background: #3d2010;
-  color: #c07030;
-}
-
 /* T / CT side-select buttons (horizontal pair) */
 .sideButtons {
   display: flex;

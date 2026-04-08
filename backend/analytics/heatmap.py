@@ -83,8 +83,14 @@ def compute_heatmap(
     data = positions[round_mask]
 
     # ---- 2. Filter by player -----------------------------------------------
-    player_mask = np.isin(data[:, 2].astype(int), request.player_ids)
-    data = data[player_mask]
+    # SteamID64 values (~7.6e16) exceed float64 exact precision (2^53 ≈ 9e15),
+    # so they are rounded when stored in a float64 array and the round-trip
+    # int → float64 → int produces a different value.  When the caller has
+    # pre-filtered via SQL (the normal API path), player_ids is left empty and
+    # we skip this step to avoid incorrectly dropping all rows.
+    if request.player_ids:
+        player_mask = np.isin(data[:, 2].astype(int), request.player_ids)
+        data = data[player_mask]
 
     # ---- 3. Optional team filter -------------------------------------------
     if request.team_filter is not None and data.shape[1] > 6:
