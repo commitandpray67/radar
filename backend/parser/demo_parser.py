@@ -1,8 +1,11 @@
 """
 CS2 demo parser: wraps demoparser2 to produce a normalised intermediate format.
 
-demoparser2 is a Rust-backed Python library that handles the CS2 binary demo
-format.  We request only the fields we need so parsing stays fast.
+demoparser2 >= 0.14 returns Polars DataFrames (not Pandas).
+All DataFrame access uses the Polars API:
+  df.rows(named=True)   instead of df.to_dict("records")
+  df.is_empty()         instead of df.empty
+  len(df)               works the same
 
 Normalised output schema
 ------------------------
@@ -26,14 +29,32 @@ events : list[dict]
 
 from __future__ import annotations
 
-import os
-import time
 import logging
-from dataclasses import dataclass, field, asdict
-from typing import Optional, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Polars helper: convert any DataFrame (Polars or Pandas) to list[dict]
+# ---------------------------------------------------------------------------
+
+def _rows(df) -> list[dict]:
+    """Return rows as a list of dicts, supporting both Polars and Pandas."""
+    try:
+        return df.rows(named=True)          # Polars API (demoparser2 >= 0.14)
+    except AttributeError:
+        return df.to_dict("records")        # Pandas fallback
+
+def _is_empty(df) -> bool:
+    """Return True if the DataFrame has no rows."""
+    try:
+        return df.is_empty()                # Polars
+    except AttributeError:
+        return df.empty                     # Pandas
+
 
 # ---------------------------------------------------------------------------
 # Data classes for the normalised schema
@@ -85,7 +106,7 @@ class PlayerPosition:
 class GameEvent:
     tick: int
     round_number: int
-    event_type: str           # "player_death", "bomb_planted", etc.
+    event_type: str
     attacker_id: Optional[int] = None
     victim_id: Optional[int] = None
     weapon: Optional[str] = None
@@ -102,7 +123,7 @@ class ParsedDemo:
 
 
 # ---------------------------------------------------------------------------
-# Parser implementation
+# Parser entry point
 # ---------------------------------------------------------------------------
 
 def parse_demo(
@@ -116,12 +137,9 @@ def parse_demo(
     Parameters
     ----------
     demo_path : path to the .dem file
-    position_sample_rate : sample one position record every N game ticks.
-                           Valve demos run at 64 tick; 8 = ~8 Hz sample rate.
-                           Lower values produce smoother visualisations at the
-                           cost of larger datasets.
+    position_sample_rate : sample every Nth tick for positions (64-tick demo,
+                           rate=8 gives ~8 position samples per second).
     progress_callback : optional callable(fraction: float, message: str)
-                        called during parsing to report progress (0.0 → 1.0).
     """
     demo_path = Path(demo_path)
     if not demo_path.exists():
@@ -143,42 +161,38 @@ def parse_demo(
 
     parser = DemoParser(str(demo_path))
 
-    # ---- Header / match info ------------------------------------------------
+    # ---- Header / match info -------------------------------------------
     _progress(0.02, "Reading header")
     header = parser.parse_header()
     map_name: str = header.get("map_name", "unknown")
-    tick_rate: float = float(header.get("playback_ticks", 0)) / max(
-        float(header.get("playback_time", 1)), 1
-    )
-    total_ticks: int = int(header.get("playback_ticks", 0))
+    playback_ticks = int(header.get("playback_ticks", 0))
+    playback_time = float(header.get("playback_time", 1) or 1)
+    tick_rate = round(playback_ticks / playback_time, 2) if playback_time > 0 else 64.0
 
     match_info = MatchInfo(
         map_name=map_name,
         demo_path=str(demo_path),
-        tick_rate=round(tick_rate, 2),
-        total_ticks=total_ticks,
+        tick_rate=tick_rate,
+        total_ticks=playback_ticks,
     )
 
-    # ---- Rounds  -------------------------------------------------------------
+    # ---- Rounds --------------------------------------------------------
     _progress(0.05, "Extracting round boundaries")
     rounds = _extract_rounds(parser)
 
-    # ---- Player roster -------------------------------------------------------
+    # ---- Player roster -------------------------------------------------
     _progress(0.15, "Extracting player roster")
     players = _extract_players(parser)
 
-    # ---- Player positions  ---------------------------------------------------
+    # ---- Player positions ----------------------------------------------
     _progress(0.20, "Sampling player positions")
-    positions = _extract_positions(
-        parser, rounds, position_sample_rate, _progress
-    )
+    positions = _extract_positions(parser, rounds, position_sample_rate, _progress)
 
-    # ---- Game events  --------------------------------------------------------
+    # ---- Game events ---------------------------------------------------
     _progress(0.90, "Extracting game events")
     events = _extract_events(parser, rounds)
 
     _progress(1.0, "Parsing complete")
-
     return ParsedDemo(
         match_info=match_info,
         rounds=rounds,
@@ -193,106 +207,86 @@ def parse_demo(
 # ---------------------------------------------------------------------------
 
 def _extract_rounds(parser) -> list[RoundInfo]:
-    """Build a list of RoundInfo from round_start/round_end events."""
+    """Build RoundInfo list from round_start / round_officially_ended events."""
     try:
         round_starts = parser.parse_event("round_start", other=["tick"])
-        round_ends = parser.parse_event(
+        round_ends   = parser.parse_event(
             "round_officially_ended",
             other=["tick", "winner", "reason", "ct_score", "t_score"],
         )
-        freeze_ends = parser.parse_event("round_freeze_end", other=["tick"])
-        bomb_plants = parser.parse_event("bomb_planted", other=["tick"])
-        bomb_defuses = parser.parse_event("bomb_defused", other=["tick"])
-        bomb_explodes = parser.parse_event("bomb_exploded", other=["tick"])
+        freeze_ends  = parser.parse_event("round_freeze_end", other=["tick"])
+        bomb_plants  = parser.parse_event("bomb_planted",   other=["tick"])
+        bomb_defuses = parser.parse_event("bomb_defused",   other=["tick"])
+        bomb_explodes= parser.parse_event("bomb_exploded",  other=["tick"])
     except Exception as exc:
         logger.warning("Could not parse round events: %s", exc)
         return []
 
-    # Build lookup: round_number → ticks for each auxiliary event
-    plant_ticks: dict[int, int] = {}
-    defuse_ticks: dict[int, int] = {}
-    explode_ticks: dict[int, int] = {}
-
-    # We assign bomb events to rounds by matching tick to nearest round window
-    # (done after we have start/end tick pairs)
-
-    # Build start tick list from round_start events
-    start_rows = sorted(round_starts.to_dict("records"), key=lambda r: r["tick"])
-    end_rows = sorted(round_ends.to_dict("records"), key=lambda r: r["tick"])
-    freeze_rows = sorted(freeze_ends.to_dict("records"), key=lambda r: r["tick"])
+    start_rows  = sorted(_rows(round_starts),  key=lambda r: r["tick"])
+    end_rows    = sorted(_rows(round_ends),    key=lambda r: r["tick"])
+    freeze_rows = sorted(_rows(freeze_ends),   key=lambda r: r["tick"])
 
     rounds: list[RoundInfo] = []
     for i, start_row in enumerate(start_rows):
         start_tick = int(start_row["tick"])
-        round_num = i + 1
+        round_num  = i + 1
 
-        # End tick = the matching round_end (first one after start_tick)
         matching_ends = [r for r in end_rows if r["tick"] > start_tick]
         if matching_ends:
-            end_row = matching_ends[0]
+            end_row  = matching_ends[0]
             end_tick = int(end_row["tick"])
-            winner = str(end_row.get("winner", "")).upper()
-            # Valve gives 2=T, 3=CT; map to string
+            winner   = str(end_row.get("winner", "") or "").upper()
             if winner == "2":
                 winner = "T"
             elif winner == "3":
                 winner = "CT"
-            win_reason = str(end_row.get("reason", ""))
-            ct_score = int(end_row.get("ct_score", 0) or 0)
-            t_score = int(end_row.get("t_score", 0) or 0)
+            win_reason = str(end_row.get("reason", "") or "")
+            ct_score   = int(end_row.get("ct_score", 0) or 0)
+            t_score    = int(end_row.get("t_score",  0) or 0)
         else:
-            # Incomplete last round
             end_tick = start_tick
-            winner, win_reason = "", ""
+            winner = win_reason = ""
             ct_score = t_score = 0
 
-        # Freeze end tick
-        matching_freezes = [r for r in freeze_rows if start_tick <= r["tick"] <= end_tick]
-        freeze_end_tick = int(matching_freezes[0]["tick"]) if matching_freezes else start_tick
-
-        rounds.append(
-            RoundInfo(
-                round_number=round_num,
-                start_tick=start_tick,
-                end_tick=end_tick,
-                freeze_end_tick=freeze_end_tick,
-                winner_team=winner,
-                win_reason=win_reason,
-                ct_score=ct_score,
-                t_score=t_score,
-            )
+        matching_freezes = [
+            r for r in freeze_rows if start_tick <= r["tick"] <= end_tick
+        ]
+        freeze_end_tick = (
+            int(matching_freezes[0]["tick"]) if matching_freezes else start_tick
         )
 
+        rounds.append(RoundInfo(
+            round_number=round_num,
+            start_tick=start_tick,
+            end_tick=end_tick,
+            freeze_end_tick=freeze_end_tick,
+            winner_team=winner,
+            win_reason=win_reason,
+            ct_score=ct_score,
+            t_score=t_score,
+        ))
+
     # Assign bomb events to rounds
-    for bomb_row in (bomb_plants.to_dict("records") if not bomb_plants.empty else []):
-        tick = int(bomb_row["tick"])
-        for r in rounds:
-            if r.start_tick <= tick <= r.end_tick:
-                r.bomb_planted_tick = tick
-                break
-
-    for bomb_row in (bomb_defuses.to_dict("records") if not bomb_defuses.empty else []):
-        tick = int(bomb_row["tick"])
-        for r in rounds:
-            if r.start_tick <= tick <= r.end_tick:
-                r.bomb_defused_tick = tick
-                break
-
-    for bomb_row in (bomb_explodes.to_dict("records") if not bomb_explodes.empty else []):
-        tick = int(bomb_row["tick"])
-        for r in rounds:
-            if r.start_tick <= tick <= r.end_tick:
-                r.bomb_exploded_tick = tick
-                break
+    for df, attr in [
+        (bomb_plants,   "bomb_planted_tick"),
+        (bomb_defuses,  "bomb_defused_tick"),
+        (bomb_explodes, "bomb_exploded_tick"),
+    ]:
+        if _is_empty(df):
+            continue
+        for bomb_row in _rows(df):
+            tick = int(bomb_row["tick"])
+            for r in rounds:
+                if r.start_tick <= tick <= r.end_tick:
+                    setattr(r, attr, tick)
+                    break
 
     return rounds
 
 
 def _extract_players(parser) -> list[PlayerInfo]:
-    """Extract a unique player roster from the demo using parse_player_info."""
+    """Extract the player roster using parse_player_info (Polars-aware)."""
     try:
-        # parse_player_info returns a DataFrame with one row per player
-        # Columns: steamid, name, team_number, team_clan_name, ...
         df = parser.parse_player_info()
     except Exception as exc:
         logger.warning("parse_player_info failed, falling back to parse_ticks: %s", exc)
@@ -305,8 +299,7 @@ def _extract_players(parser) -> list[PlayerInfo]:
     players: list[PlayerInfo] = []
     seen: set[int] = set()
 
-    for row in df.to_dict("records"):
-        # parse_player_info uses 'steamid' (int64); parse_ticks uses 'steamid' str
+    for row in _rows(df):
         raw_id = row.get("steamid", 0) or 0
         try:
             steam_id = int(raw_id)
@@ -316,17 +309,14 @@ def _extract_players(parser) -> list[PlayerInfo]:
             continue
         seen.add(steam_id)
 
-        # team_number: 2=T, 3=CT; or team_name string
         team_num = int(row.get("team_number", 0) or 0)
         team = {2: "T", 3: "CT"}.get(team_num, "") or str(row.get("team_name", "") or "")
 
-        players.append(
-            PlayerInfo(
-                player_id=steam_id,
-                name=str(row.get("name", "") or ""),
-                initial_team=team,
-            )
-        )
+        players.append(PlayerInfo(
+            player_id=steam_id,
+            name=str(row.get("name", "") or ""),
+            initial_team=team,
+        ))
 
     return players
 
@@ -337,20 +327,14 @@ def _extract_positions(
     sample_rate: int,
     progress_cb: Callable[[float, str], None],
 ) -> list[PlayerPosition]:
-    """
-    Sample player positions at `sample_rate` ticks throughout the match.
-
-    We sample only within valid round windows to avoid lobby/warmup noise.
-    """
+    """Sample player positions every `sample_rate` ticks across all rounds."""
     if not rounds:
         return []
 
-    # Build the list of ticks to sample
     all_ticks: list[int] = []
     for r in rounds:
-        start = max(r.start_tick, r.freeze_end_tick)  # skip freeze time
-        ticks_in_round = list(range(start, r.end_tick + 1, sample_rate))
-        all_ticks.extend(ticks_in_round)
+        start = max(r.start_tick, r.freeze_end_tick)
+        all_ticks.extend(range(start, r.end_tick + 1, sample_rate))
 
     if not all_ticks:
         return []
@@ -359,21 +343,17 @@ def _extract_positions(
 
     try:
         df = parser.parse_ticks(
-            [
-                "X", "Y", "Z",
-                "team_num",
-                "is_alive",
-                "steamid",
-            ],
+            ["X", "Y", "Z", "team_num", "is_alive", "steamid"],
             ticks=all_ticks,
         )
     except Exception as exc:
         logger.error("Failed to parse position ticks: %s", exc)
         return []
 
-    progress_cb(0.60, f"Processing {len(df):,} position rows")
+    n_rows = len(df)
+    progress_cb(0.60, f"Processing {n_rows:,} position rows")
 
-    # Build a tick → round_number lookup (fast)
+    # Build tick → round lookup
     tick_to_round: dict[int, int] = {}
     for r in rounds:
         start = max(r.start_tick, r.freeze_end_tick)
@@ -381,50 +361,50 @@ def _extract_positions(
             tick_to_round[t] = r.round_number
 
     positions: list[PlayerPosition] = []
-    records = df.to_dict("records")
+    records = _rows(df)
 
     for i, row in enumerate(records):
         if i % 50_000 == 0 and i > 0:
             progress_cb(
-                0.60 + 0.28 * (i / len(records)),
-                f"Processing positions {i:,}/{len(records):,}",
+                0.60 + 0.28 * (i / n_rows),
+                f"Processing positions {i:,}/{n_rows:,}",
             )
 
-        steam_id = int(row.get("steamid", 0) or 0)
+        raw_id = row.get("steamid", 0) or 0
+        try:
+            steam_id = int(raw_id)
+        except (ValueError, TypeError):
+            continue
         if steam_id == 0:
             continue
 
         tick = int(row.get("tick", 0) or 0)
-        rn = tick_to_round.get(tick, 0)
+        rn   = tick_to_round.get(tick, 0)
         if rn == 0:
             continue
 
         x = float(row.get("X", 0) or 0)
         y = float(row.get("Y", 0) or 0)
         z = float(row.get("Z", 0) or 0)
-
-        # Skip positions at origin (player not spawned)
         if x == 0 and y == 0 and z == 0:
-            continue
+            continue  # player not yet spawned
 
-        positions.append(
-            PlayerPosition(
-                tick=tick,
-                round_number=rn,
-                player_id=steam_id,
-                x=x,
-                y=y,
-                z=z,
-                team_num=int(row.get("team_num", 0) or 0),
-                is_alive=bool(row.get("is_alive", False)),
-            )
-        )
+        positions.append(PlayerPosition(
+            tick=tick,
+            round_number=rn,
+            player_id=steam_id,
+            x=x,
+            y=y,
+            z=z,
+            team_num=int(row.get("team_num", 0) or 0),
+            is_alive=bool(row.get("is_alive", False)),
+        ))
 
     return positions
 
 
 def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
-    """Extract kill events and bomb events."""
+    """Extract kill and bomb events."""
     events: list[GameEvent] = []
 
     tick_to_round: dict[int, int] = {}
@@ -432,47 +412,40 @@ def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
         for t in range(r.start_tick, r.end_tick + 1):
             tick_to_round[t] = r.round_number
 
-    def _round_for_tick(tick: int) -> int:
+    def _rn(tick: int) -> int:
         return tick_to_round.get(tick, 0)
 
-    # ----- Kills -----
+    # Kills
     try:
         kills_df = parser.parse_event(
             "player_death",
-            other=[
-                "tick", "attacker_steamid", "user_steamid",
-                "weapon", "headshot",
-            ],
+            other=["tick", "attacker_steamid", "user_steamid", "weapon", "headshot"],
         )
-        for row in kills_df.to_dict("records"):
+        for row in _rows(kills_df):
             tick = int(row.get("tick", 0) or 0)
-            events.append(
-                GameEvent(
-                    tick=tick,
-                    round_number=_round_for_tick(tick),
-                    event_type="player_death",
-                    attacker_id=int(row.get("attacker_steamid", 0) or 0) or None,
-                    victim_id=int(row.get("user_steamid", 0) or 0) or None,
-                    weapon=str(row.get("weapon", "") or ""),
-                    headshot=bool(row.get("headshot", False)),
-                )
-            )
+            events.append(GameEvent(
+                tick=tick,
+                round_number=_rn(tick),
+                event_type="player_death",
+                attacker_id=int(row.get("attacker_steamid", 0) or 0) or None,
+                victim_id=int(row.get("user_steamid", 0) or 0) or None,
+                weapon=str(row.get("weapon", "") or ""),
+                headshot=bool(row.get("headshot", False)),
+            ))
     except Exception as exc:
         logger.warning("Could not parse player_death events: %s", exc)
 
-    # ----- Bomb events -----
+    # Bomb events
     for event_name in ("bomb_planted", "bomb_defused", "bomb_exploded"):
         try:
             df = parser.parse_event(event_name, other=["tick"])
-            for row in df.to_dict("records"):
+            for row in _rows(df):
                 tick = int(row.get("tick", 0) or 0)
-                events.append(
-                    GameEvent(
-                        tick=tick,
-                        round_number=_round_for_tick(tick),
-                        event_type=event_name,
-                    )
-                )
+                events.append(GameEvent(
+                    tick=tick,
+                    round_number=_rn(tick),
+                    event_type=event_name,
+                ))
         except Exception as exc:
             logger.debug("Could not parse %s: %s", event_name, exc)
 
