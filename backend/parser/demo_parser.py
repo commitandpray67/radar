@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 5
+PARSER_VERSION = 6
 
 
 # ---------------------------------------------------------------------------
@@ -427,15 +427,30 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
         ):
             r.is_knife_round = True
 
-    # ---- Cumulative scores (always computed from winner; event fields unreliable)
-    ct_wins = 0
-    t_wins  = 0
+    # ---- Cumulative scores (team-based, accounts for side swap at halftime)
+    # ct_score/t_score track the team that STARTED the game as CT/T respectively.
+    # After halftime teams swap sides, so T-side wins count for the original CT team.
+    non_knife = [r for r in rounds if not r.is_knife_round]
+    # Halftime is always after the 12th non-knife round (MR12 standard).
+    halftime_boundary = (
+        non_knife[11].round_number if len(non_knife) > 12 else float("inf")
+    )
+    ct_wins = 0  # wins by the team that started as CT
+    t_wins  = 0  # wins by the team that started as T
     for r in rounds:
         if not r.is_knife_round:
-            if r.winner_team == "CT":
-                ct_wins += 1
-            elif r.winner_team == "T":
-                t_wins += 1
+            in_first_half = r.round_number <= halftime_boundary
+            if in_first_half:
+                if r.winner_team == "CT":
+                    ct_wins += 1
+                elif r.winner_team == "T":
+                    t_wins += 1
+            else:
+                # Sides swapped: T side = original CT team, CT side = original T team
+                if r.winner_team == "T":
+                    ct_wins += 1
+                elif r.winner_team == "CT":
+                    t_wins += 1
         r.ct_score = ct_wins
         r.t_score  = t_wins
 
