@@ -1,14 +1,11 @@
 /**
  * HeatmapControls — panel for configuring and triggering heatmap generation.
  *
- * Shows:
- *  - Mode toggle (heatmap on/off)
- *  - Player selector with per-player T/CT side quick-select buttons
- *  - Round quick-select (All, 1st Half, 2nd Half, Clear) + selected list
- *  - Team filter
- *  - Layer selector (multi-level maps)
- *  - Generate button
- *  - Status / error display
+ * Design principles:
+ *  - Team filter is implicit: selecting T/CT rounds for a player encodes the
+ *    side; no separate "team filter" needed (it caused conflicts).
+ *  - Per-player T / CT buttons are the primary way to scope by side.
+ *  - Round quick-select (All / 1st half / 2nd half) covers the other cases.
  */
 
 import React, { useCallback, useMemo } from 'react';
@@ -16,6 +13,24 @@ import { useAppStore } from '../../store/demoStore';
 import { generateHeatmap } from '../../utils/api';
 import type { PlayerInfo } from '../../types';
 import styles from './HeatmapControls.module.css';
+
+// Collapse consecutive round numbers into ranges, e.g. [2,3,4,7] → "2–4, 7"
+function toRangeString(nums: number[]): string {
+  if (nums.length === 0) return '';
+  const s = [...nums].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let lo = s[0];
+  let hi = s[0];
+  for (let i = 1; i < s.length; i++) {
+    if (s[i] === hi + 1) { hi = s[i]; }
+    else {
+      parts.push(lo === hi ? `${lo}` : `${lo}–${hi}`);
+      lo = hi = s[i];
+    }
+  }
+  parts.push(lo === hi ? `${lo}` : `${lo}–${hi}`);
+  return parts.join(', ');
+}
 
 const HeatmapControls: React.FC = () => {
   const demo             = useAppStore((s) => s.demo);
@@ -26,7 +41,6 @@ const HeatmapControls: React.FC = () => {
   const heatmapLoading   = useAppStore((s) => s.heatmapLoading);
   const heatmapError     = useAppStore((s) => s.heatmapError);
   const heatmapResult    = useAppStore((s) => s.heatmapResult);
-  const teamFilter       = useAppStore((s) => s.heatmapTeamFilter);
   const activeLayer      = useAppStore((s) => s.activeLayerLabel);
   const currentMap       = useAppStore((s) => s.currentMap);
   const selectedPlayers  = useAppStore((s) => s.selectedPlayerIds);
@@ -36,13 +50,12 @@ const HeatmapControls: React.FC = () => {
   const setHeatmapResult     = useAppStore((s) => s.setHeatmapResult);
   const setHeatmapLoading    = useAppStore((s) => s.setHeatmapLoading);
   const setHeatmapError      = useAppStore((s) => s.setHeatmapError);
-  const setTeamFilter        = useAppStore((s) => s.setHeatmapTeamFilter);
   const setActiveLayer       = useAppStore((s) => s.setActiveLayer);
   const togglePlayerSel      = useAppStore((s) => s.togglePlayerSelection);
   const setSelectedPlayers   = useAppStore((s) => s.setSelectedPlayers);
 
   // ---------------------------------------------------------------------------
-  // Round group memos
+  // Round groups (derived from loaded round data)
   // ---------------------------------------------------------------------------
 
   const nonKnifeRounds = useMemo(
@@ -50,7 +63,7 @@ const HeatmapControls: React.FC = () => {
     [rounds],
   );
 
-  // Halftime boundary: after the 12th non-knife round (MR12)
+  // Halftime always after the 12th non-knife round (MR12).
   const halftimeBoundary = useMemo(
     () => (nonKnifeRounds.length > 12 ? nonKnifeRounds[11].round_number : Infinity),
     [nonKnifeRounds],
@@ -71,20 +84,20 @@ const HeatmapControls: React.FC = () => {
   // ---------------------------------------------------------------------------
 
   /**
-   * Select all rounds where `player` was on `side`, ensure the player is
-   * selected, and deselect players who were on the opposing side in those rounds
-   * (since the two sides are mutually exclusive).
+   * Auto-select the rounds in which `player` was on `side`, ensure they are
+   * in the selection, and drop any already-selected players who were on the
+   * opposing side (since two players can't be on the same team at the same time
+   * as their opponent).
    *
-   * Because teams swap at halftime, the "opposing team" is simply the set of
-   * players whose initial_team differs from the clicked player's initial_team —
-   * they will always be opponents regardless of which half we're looking at.
+   * No separate team_filter is sent — the round range already encodes which
+   * side is relevant, avoiding filter conflicts.
    */
   const handleSelectSideRounds = useCallback(
     (player: PlayerInfo, side: 'T' | 'CT') => {
-      // Rounds where this player was on the chosen side
       const sideRounds = nonKnifeRounds
         .filter((r) => {
           const inFirstHalf = r.round_number <= halftimeBoundary;
+          // After halftime teams swap; derive actual side from initial_team.
           const playerSide = inFirstHalf
             ? player.initial_team
             : player.initial_team === 'CT' ? 'T' : 'CT';
@@ -94,8 +107,8 @@ const HeatmapControls: React.FC = () => {
 
       setHeatmapRounds(sideRounds);
 
-      // Keep: the clicked player + any already-selected player on the same team.
-      // Remove: players whose initial_team is opposite (they are always opponents).
+      // Players with the same initial_team are always teammates (both halves).
+      // Players with the opposite initial_team are always opponents.
       const oppInitialTeam = player.initial_team === 'CT' ? 'T' : 'CT';
       const newSelected = players
         .filter(
@@ -114,7 +127,7 @@ const HeatmapControls: React.FC = () => {
   // ---------------------------------------------------------------------------
 
   const canGenerate =
-    demo &&
+    !!demo &&
     heatmapRounds.length > 0 &&
     selectedPlayers.size > 0 &&
     !heatmapLoading;
@@ -124,8 +137,7 @@ const HeatmapControls: React.FC = () => {
     setHeatmapLoading(true);
     setHeatmapError(null);
     try {
-      // Send DB row IDs (small integers), not SteamID64s.
-      // SteamID64s > Number.MAX_SAFE_INTEGER lose precision in JS JSON.
+      // Send DB row IDs — SteamID64s exceed JS Number.MAX_SAFE_INTEGER.
       const playerDbIds = players
         .filter((p) => selectedPlayers.has(p.player_id))
         .map((p) => p.id);
@@ -133,7 +145,8 @@ const HeatmapControls: React.FC = () => {
         player_ids: playerDbIds,
         round_numbers: heatmapRounds,
         layer_label: activeLayer || undefined,
-        team_filter: teamFilter,
+        // team_filter intentionally omitted (null = both sides).
+        // Round selection already encodes the relevant side.
         exclude_freeze_time: true,
         blur_sigma: 3.0,
       });
@@ -145,14 +158,14 @@ const HeatmapControls: React.FC = () => {
       setHeatmapLoading(false);
     }
   }, [
-    demo, canGenerate, players, selectedPlayers, heatmapRounds, activeLayer, teamFilter,
+    demo, canGenerate, players, selectedPlayers, heatmapRounds, activeLayer,
     setHeatmapLoading, setHeatmapError, setHeatmapResult,
   ]);
 
-  const clearHeatmap = () => {
+  const clearHeatmap = useCallback(() => {
     setHeatmapResult(null);
     setHeatmapError(null);
-  };
+  }, [setHeatmapResult, setHeatmapError]);
 
   // ---------------------------------------------------------------------------
   // Render
@@ -160,9 +173,9 @@ const HeatmapControls: React.FC = () => {
 
   return (
     <div className={styles.root}>
-      {/* Mode toggle */}
+      {/* ── Mode toggle ──────────────────────────────────────────── */}
       <div className={styles.modeRow}>
-        <label className={styles.modeLabel}>Heatmap mode</label>
+        <span className={styles.modeLabel}>Heatmap mode</span>
         <button
           className={`${styles.toggleSwitch} ${isHeatmapMode ? styles.on : ''}`}
           onClick={() => {
@@ -176,47 +189,53 @@ const HeatmapControls: React.FC = () => {
 
       {isHeatmapMode && (
         <>
-          {/* ── Players ─────────────────────────────────────────── */}
+          {/* ── Players ──────────────────────────────────────────── */}
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
               <span>Players</span>
-              <button className={styles.smallBtn} onClick={() => setSelectedPlayers([])}>
-                Clear
-              </button>
+              {selectedPlayers.size > 0 && (
+                <button className={styles.smallBtn} onClick={() => setSelectedPlayers([])}>
+                  Clear
+                </button>
+              )}
             </div>
+
             <div className={styles.playerList}>
               {players.map((p, idx) => {
                 const isSelected = selectedPlayers.has(p.player_id);
+                const isCT = p.initial_team === 'CT';
                 return (
                   <div key={p.player_id} className={styles.playerRow}>
-                    {/* Main chip — click to toggle selection */}
+                    {/* Chip toggles player in/out of selection */}
                     <button
                       className={[
                         styles.playerChip,
                         isSelected ? styles.selected : '',
-                        p.initial_team === 'CT' ? styles.ct : styles.t,
+                        isCT ? styles.ct : styles.t,
                       ].join(' ')}
                       onClick={() => togglePlayerSel(p.player_id)}
-                      title={`Toggle ${p.name}`}
+                      title={isSelected ? `Deselect ${p.name}` : `Select ${p.name}`}
                     >
                       <span className={styles.playerNum}>{idx + 1}</span>
                       <span className={styles.playerName}>{p.name}</span>
-                      <span className={styles.playerTeam}>{p.initial_team}</span>
+                      <span className={`${styles.playerTeam} ${isCT ? styles.teamCT : styles.teamT}`}>
+                        {p.initial_team}
+                      </span>
                     </button>
 
-                    {/* Side quick-select buttons */}
+                    {/* Side quick-select: sets player + their half-specific rounds */}
                     <div className={styles.sideButtons}>
                       <button
                         className={`${styles.sideBtn} ${styles.tBtn}`}
                         onClick={() => handleSelectSideRounds(p, 'T')}
-                        title={`Select all rounds where ${p.name} plays as T (deselects opposing team)`}
+                        title={`Select rounds where ${p.name} plays as T`}
                       >
                         T
                       </button>
                       <button
                         className={`${styles.sideBtn} ${styles.ctBtn}`}
                         onClick={() => handleSelectSideRounds(p, 'CT')}
-                        title={`Select all rounds where ${p.name} plays as CT (deselects opposing team)`}
+                        title={`Select rounds where ${p.name} plays as CT`}
                       >
                         CT
                       </button>
@@ -225,21 +244,25 @@ const HeatmapControls: React.FC = () => {
                 );
               })}
             </div>
+
+            <p className={styles.sideHint}>
+              T / CT → auto-select that player's rounds for that side
+            </p>
           </div>
 
-          {/* ── Rounds ──────────────────────────────────────────── */}
+          {/* ── Rounds ───────────────────────────────────────────── */}
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
               <span>Rounds</span>
-              <span className={styles.pill}>{heatmapRounds.length} selected</span>
+              {heatmapRounds.length > 0 && (
+                <span className={styles.pill}>{heatmapRounds.length} selected</span>
+              )}
             </div>
 
-            {/* Quick-select row */}
             <div className={styles.quickSelectRow}>
               <button
                 className={styles.quickBtn}
                 onClick={() => setHeatmapRounds(allRoundNums)}
-                title="Select all non-knife rounds"
               >
                 All
               </button>
@@ -247,7 +270,7 @@ const HeatmapControls: React.FC = () => {
                 className={styles.quickBtn}
                 onClick={() => setHeatmapRounds(firstHalfNums)}
                 disabled={firstHalfNums.length === 0}
-                title="Select first-half rounds (1–12)"
+                title="Rounds 1–12"
               >
                 1st half
               </button>
@@ -255,13 +278,14 @@ const HeatmapControls: React.FC = () => {
                 className={styles.quickBtn}
                 onClick={() => setHeatmapRounds(secondHalfNums)}
                 disabled={secondHalfNums.length === 0}
-                title="Select second-half rounds (13+)"
+                title="Rounds 13+"
               >
                 2nd half
               </button>
               <button
-                className={`${styles.quickBtn} ${styles.quickBtnDanger}`}
+                className={`${styles.quickBtn} ${styles.quickBtnClear}`}
                 onClick={() => setHeatmapRounds([])}
+                disabled={heatmapRounds.length === 0}
               >
                 Clear
               </button>
@@ -269,35 +293,17 @@ const HeatmapControls: React.FC = () => {
 
             {heatmapRounds.length === 0 ? (
               <p className={styles.hint}>
-                Click rounds in the left panel, or use the buttons above
+                Use buttons above, or click rounds in the left panel
               </p>
             ) : (
-              <p className={styles.roundsSummary}>
-                {[...heatmapRounds].sort((a, b) => a - b).join(', ')}
-              </p>
+              <p className={styles.roundsSummary}>{toRangeString(heatmapRounds)}</p>
             )}
           </div>
 
-          {/* ── Team filter ─────────────────────────────────────── */}
-          <div className={styles.section}>
-            <div className={styles.sectionHeader}><span>Team filter</span></div>
-            <div className={styles.btnGroup}>
-              {(['CT', 'T', null] as const).map((team) => (
-                <button
-                  key={team ?? 'both'}
-                  className={`${styles.filterBtn} ${teamFilter === team ? styles.active : ''}`}
-                  onClick={() => setTeamFilter(team)}
-                >
-                  {team ?? 'Both'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Layer selector (multi-level maps only) ───────────── */}
+          {/* ── Layer selector (multi-level maps only) ────────────── */}
           {currentMap?.is_multilevel && (
             <div className={styles.section}>
-              <div className={styles.sectionHeader}><span>Map layer</span></div>
+              <div className={styles.sectionHeader}><span>Layer</span></div>
               <div className={styles.btnGroup}>
                 {currentMap.layers.map((la) => (
                   <button
@@ -312,26 +318,32 @@ const HeatmapControls: React.FC = () => {
             </div>
           )}
 
-          {/* ── Error ───────────────────────────────────────────── */}
+          {/* ── Error ────────────────────────────────────────────── */}
           {heatmapError && (
             <div className={styles.error}>{heatmapError}</div>
           )}
 
-          {/* ── Result meta ─────────────────────────────────────── */}
+          {/* ── Result ───────────────────────────────────────────── */}
           {heatmapResult && !heatmapError && (
             <p className={heatmapResult.sample_count === 0 ? styles.warningMeta : styles.resultMeta}>
               {heatmapResult.sample_count === 0
-                ? 'No samples — check filters'
+                ? 'No data — try different rounds or players'
                 : `${heatmapResult.sample_count.toLocaleString()} position samples`}
             </p>
           )}
 
-          {/* ── Actions ─────────────────────────────────────────── */}
+          {/* ── Actions ──────────────────────────────────────────── */}
           <div className={styles.actionRow}>
             <button
               className={styles.generateBtn}
               onClick={handleGenerate}
               disabled={!canGenerate}
+              title={
+                !demo ? 'No demo loaded' :
+                selectedPlayers.size === 0 ? 'Select at least one player' :
+                heatmapRounds.length === 0 ? 'Select at least one round' :
+                undefined
+              }
             >
               {heatmapLoading ? 'Generating…' : 'Generate heatmap'}
             </button>

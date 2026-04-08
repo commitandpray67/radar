@@ -2,9 +2,10 @@
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
+/* ── Mode toggle ────────────────────────────────────────────── */
 .modeRow {
   display: flex;
   align-items: center;
@@ -26,7 +27,7 @@
   color: #4a5a6a;
   font-size: 11px;
   font-weight: 700;
-  padding: 3px 12px;
+  padding: 3px 14px;
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.15s;
@@ -37,10 +38,11 @@
   color: #4ae07a;
 }
 
+/* ── Shared section wrapper ─────────────────────────────────── */
 .section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .sectionHeader {
@@ -55,86 +57,55 @@
   font-family: 'Inter', sans-serif;
 }
 
+/* ── Players ────────────────────────────────────────────────── */
 .playerList {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 220px;
+  gap: 3px;
+  max-height: 210px;
   overflow-y: auto;
 }
 .playerList::-webkit-scrollbar { width: 3px; }
 .playerList::-webkit-scrollbar-thumb { background: #2a3a52; border-radius: 2px; }
 
-/* Each player row: chip + side-select buttons */
+/* Each row = chip + side-select buttons */
 .playerRow {
   display: flex;
-  align-items: stretch;
-  gap: 3px;
+  align-items: center;
+  gap: 4px;
 }
 
+/* Main player chip — click to toggle selection */
 .playerChip {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  background: #1e2d3f;
-  border: 1px solid #2a3a52;
+  background: #1a2535;
+  border: 1px solid #243344;
   border-radius: 4px;
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s;
+  transition: background 0.1s, border-color 0.1s;
 }
-.playerChip:hover {
-  background: #243344;
-}
+.playerChip:hover { background: #1e2d3f; }
+
+/* Selected states */
 .playerChip.selected.ct {
-  background: #1a3d5c;
-  border-color: #2a6abf;
+  background: #162b44;
+  border-color: #2255a0;
 }
 .playerChip.selected.t {
-  background: #3d2210;
-  border-color: #c06020;
-}
-
-/* Per-player T / CT side-select buttons */
-.sideButtons {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.sideBtn {
-  background: #1a2535;
-  border: 1px solid #2a3a52;
-  color: #4a5a6a;
-  font-size: 9px;
-  font-weight: 700;
-  font-family: 'Inter', sans-serif;
-  padding: 0 7px;
-  border-radius: 3px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.1s;
-  flex: 1;
-}
-.sideBtn.tBtn:hover {
-  background: #3d2210;
-  border-color: #c06020;
-  color: #e07b39;
-}
-.sideBtn.ctBtn:hover {
-  background: #1a3d5c;
-  border-color: #2a6abf;
-  color: #5b9bd5;
+  background: #2e1a0a;
+  border-color: #8a4a18;
 }
 
 .playerNum {
   font-size: 10px;
   font-family: 'JetBrains Mono', monospace;
-  color: #4a5a6a;
+  color: #3a4a5a;
   font-weight: 700;
   min-width: 14px;
   flex-shrink: 0;
@@ -142,7 +113,7 @@
 
 .playerName {
   font-size: 12px;
-  color: #c0cfe0;
+  color: #b0bfcf;
   font-family: 'Inter', sans-serif;
   font-weight: 500;
   overflow: hidden;
@@ -152,67 +123,119 @@
 }
 
 .playerTeam {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   font-family: 'Inter', sans-serif;
-  color: #8090a0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.teamCT {
+  background: #1a3a5c;
+  color: #5b9bd5;
+}
+.teamT {
+  background: #3d2010;
+  color: #c07030;
+}
+
+/* T / CT side-select buttons (horizontal pair) */
+.sideButtons {
+  display: flex;
+  gap: 3px;
   flex-shrink: 0;
 }
 
-/* Round quick-select bar */
+.sideBtn {
+  background: #141f2d;
+  border: 1px solid #243344;
+  color: #4a5a6a;
+  font-size: 9px;
+  font-weight: 800;
+  font-family: 'Inter', sans-serif;
+  padding: 4px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.12s;
+}
+.sideBtn.tBtn:hover {
+  background: #3d2010;
+  border-color: #8a4010;
+  color: #d07030;
+}
+.sideBtn.ctBtn:hover {
+  background: #162b44;
+  border-color: #2255a0;
+  color: #5b9bd5;
+}
+
+/* Tiny hint below player list */
+.sideHint {
+  font-size: 10px;
+  color: #3a4a5a;
+  font-family: 'Inter', sans-serif;
+  font-style: italic;
+  margin: 0;
+}
+
+/* ── Rounds ─────────────────────────────────────────────────── */
 .quickSelectRow {
   display: flex;
   gap: 4px;
 }
 
 .quickBtn {
-  background: #1e2d3f;
-  border: 1px solid #2a3a52;
-  color: #8090a0;
+  background: #1a2535;
+  border: 1px solid #243344;
+  color: #7a8a9a;
   font-size: 11px;
   font-family: 'Inter', sans-serif;
   padding: 4px 8px;
   border-radius: 3px;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: all 0.1s;
   white-space: nowrap;
 }
 .quickBtn:hover:not(:disabled) {
-  background: #2a3a52;
+  background: #1e2d3f;
+  border-color: #2a3a52;
   color: #c0cfe0;
 }
 .quickBtn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: default;
 }
-.quickBtn.quickBtnDanger:hover:not(:disabled) {
-  background: #3d1010;
-  border-color: #6a2020;
-  color: #e08080;
+.quickBtn.quickBtnClear:hover:not(:disabled) {
+  background: #2d1010;
+  border-color: #5a1818;
+  color: #d07070;
 }
 
 .hint {
   font-size: 11px;
-  color: #4a5a6a;
+  color: #3a4a5a;
   font-style: italic;
   font-family: 'Inter', sans-serif;
   margin: 0;
 }
 
+/* Compact range display: "2–12, 14–21" */
 .roundsSummary {
   font-size: 11px;
-  color: #c0cfe0;
+  color: #8090a0;
   font-family: 'JetBrains Mono', monospace;
-  word-break: break-all;
   margin: 0;
+  word-break: break-word;
 }
 
+/* ── Shared ─────────────────────────────────────────────────── */
 .pill {
   background: #1e4d8c;
   color: #c0d8f0;
   font-size: 10px;
   font-weight: 700;
-  padding: 1px 7px;
+  padding: 2px 8px;
   border-radius: 8px;
 }
 
@@ -222,9 +245,9 @@
 }
 
 .filterBtn {
-  background: #1e2d3f;
-  border: 1px solid #2a3a52;
-  color: #8090a0;
+  background: #1a2535;
+  border: 1px solid #243344;
+  color: #7a8a9a;
   font-size: 11px;
   padding: 4px 10px;
   border-radius: 3px;
@@ -232,7 +255,7 @@
   font-family: 'Inter', sans-serif;
   transition: background 0.1s;
 }
-.filterBtn:hover { background: #2a3a52; }
+.filterBtn:hover { background: #1e2d3f; }
 .filterBtn.active {
   background: #1e4d8c;
   border-color: #2a6abf;
@@ -242,38 +265,41 @@
 .smallBtn {
   background: none;
   border: none;
-  color: #4a5a6a;
+  color: #3a4a5a;
   font-size: 11px;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0;
   font-family: 'Inter', sans-serif;
+  transition: color 0.1s;
 }
-.smallBtn:hover { color: #c0cfe0; }
+.smallBtn:hover { color: #8090a0; }
 
+/* ── Feedback ────────────────────────────────────────────────── */
 .error {
-  background: #3d1010;
-  border: 1px solid #8a2020;
+  background: #2d0e0e;
+  border: 1px solid #6a1a1a;
   border-radius: 4px;
   padding: 8px 10px;
   font-size: 12px;
-  color: #e08080;
+  color: #c06060;
   font-family: 'Inter', sans-serif;
 }
 
 .resultMeta {
   font-size: 11px;
-  color: #6a7a8a;
+  color: #4a6a4a;
   font-family: 'JetBrains Mono', monospace;
   margin: 0;
 }
 
 .warningMeta {
   font-size: 11px;
-  color: #e07b39;
+  color: #8a5520;
   font-family: 'JetBrains Mono', monospace;
   margin: 0;
 }
 
+/* ── Actions ─────────────────────────────────────────────────── */
 .actionRow {
   display: flex;
   gap: 8px;
@@ -286,7 +312,7 @@
   color: #fff;
   font-size: 13px;
   font-weight: 600;
-  padding: 9px 0;
+  padding: 10px 0;
   border-radius: 4px;
   cursor: pointer;
   font-family: 'Inter', sans-serif;
@@ -294,19 +320,23 @@
 }
 .generateBtn:hover:not(:disabled) { background: #2a6abf; }
 .generateBtn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: default;
 }
 
 .clearBtn {
-  background: #2a2020;
-  border: 1px solid #4a3a3a;
-  color: #c08080;
+  background: #1e1414;
+  border: 1px solid #3a2020;
+  color: #806060;
   font-size: 12px;
   padding: 8px 14px;
   border-radius: 4px;
   cursor: pointer;
   font-family: 'Inter', sans-serif;
-  transition: background 0.12s;
+  transition: all 0.12s;
 }
-.clearBtn:hover { background: #3d2020; }
+.clearBtn:hover {
+  background: #2d1818;
+  border-color: #5a2828;
+  color: #c08080;
+}
