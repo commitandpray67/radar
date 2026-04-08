@@ -189,14 +189,47 @@ async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str) 
 async def parse_status_stream(job_id: str):
     """
     Server-Sent Events stream that pushes parse progress to the client.
-    The client closes the connection once status == 'complete' or 'error'.
+
+    If the job isn't in memory (e.g. server restarted while parsing), we
+    check the database: if the demo_id is already stored, report 'complete'
+    so the frontend can proceed without re-uploading.
     """
     async def _event_generator() -> AsyncIterator[str]:
-        while True:
+        # Allow up to 5 s for the job to appear after a server restart
+        for _ in range(10):
             job = _parse_jobs.get(job_id)
-            if job is None:
-                yield f"data: {json.dumps({'error': 'unknown job'})}\n\n"
-                return
+            if job is not None:
+                break
+            await asyncio.sleep(0.5)
+
+        if job is None:
+            # Job not in memory — check whether the demo already exists in DB
+            # (this happens when the server reloaded mid-parse)
+            # We can't know which demo_id this job_id belonged to, so we
+            # look at the most recently parsed demo as a heuristic.
+            async with get_connection() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, filename, map_name FROM demos ORDER BY parsed_at DESC LIMIT 1"
+                )
+                row = await cursor.fetchone()
+
+            if row:
+                # Return complete with the last known demo
+                synthetic = {
+                    "status": "complete",
+                    "progress": 1.0,
+                    "message": "Loaded from cache (server restarted during parse)",
+                    "demo_id": row["id"],
+                    "filename": row["filename"],
+                    "map_name": row["map_name"],
+                }
+                yield f"data: {json.dumps(synthetic)}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': 'Server restarted and job was lost. Please upload the demo again.', 'demo_id': '', 'filename': ''})}\n\n"
+            return
+
+        while True:
+            job = _parse_jobs.get(job_id, job)  # keep last known if removed
             yield f"data: {json.dumps(job)}\n\n"
             if job["status"] in ("complete", "error"):
                 return

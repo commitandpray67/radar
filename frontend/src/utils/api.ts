@@ -53,30 +53,69 @@ export async function getDemo(demoId: string): Promise<DemoMeta> {
 
 /**
  * Open an SSE stream for parse-job progress.
- * Calls `onStatus` for every message; resolves when status === 'complete'.
- * Rejects on status === 'error'.
+ * Automatically reconnects up to `maxRetries` times if the connection drops
+ * (e.g. because uvicorn reloaded during development).
+ * Resolves when status === 'complete', rejects on status === 'error' or
+ * when all retries are exhausted.
  */
 export function watchParseStatus(
   jobId: string,
   onStatus: (s: ParseJobStatus) => void,
+  maxRetries = 10,
 ): Promise<ParseJobStatus> {
   return new Promise((resolve, reject) => {
-    const es = new EventSource(`/api/parse-status/${jobId}`);
-    es.onmessage = (event) => {
-      const status: ParseJobStatus = JSON.parse(event.data);
-      onStatus(status);
-      if (status.status === 'complete') {
+    let retries = 0;
+    let lastStatus: ParseJobStatus | null = null;
+    let es: EventSource;
+
+    function connect() {
+      es = new EventSource(`/api/parse-status/${jobId}`);
+
+      es.onmessage = (event) => {
+        // Reset retry counter on any successful message
+        retries = 0;
+        const status: ParseJobStatus = JSON.parse(event.data);
+        lastStatus = status;
+        onStatus(status);
+        if (status.status === 'complete') {
+          es.close();
+          resolve(status);
+        } else if (status.status === 'error') {
+          es.close();
+          reject(new Error(status.message));
+        }
+      };
+
+      es.onerror = () => {
         es.close();
-        resolve(status);
-      } else if (status.status === 'error') {
-        es.close();
-        reject(new Error(status.message));
-      }
-    };
-    es.onerror = () => {
-      es.close();
-      reject(new Error('SSE connection lost'));
-    };
+        // If already complete/error from a previous message, ignore the disconnect
+        if (lastStatus?.status === 'complete') return;
+        if (lastStatus?.status === 'error') return;
+
+        retries += 1;
+        if (retries > maxRetries) {
+          reject(new Error(
+            `Lost connection to server after ${maxRetries} retries. ` +
+            `Is the backend still running?`
+          ));
+          return;
+        }
+
+        // Notify the UI that we're reconnecting
+        if (lastStatus) {
+          onStatus({
+            ...lastStatus,
+            message: `Reconnecting… (attempt ${retries}/${maxRetries})`,
+          });
+        }
+
+        // Exponential back-off: 500ms, 1s, 2s, 4s … capped at 8s
+        const delay = Math.min(500 * Math.pow(2, retries - 1), 8000);
+        setTimeout(connect, delay);
+      };
+    }
+
+    connect();
   });
 }
 
