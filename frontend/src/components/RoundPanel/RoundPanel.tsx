@@ -52,10 +52,17 @@ const RoundPanel: React.FC = () => {
     [rounds],
   );
 
-  // Halftime separator: round after which ct_score + t_score first hits 12 (MR12).
+  // Halftime separator — find the round after which sides swap.
+  // Primary: the round where cumulative score first hits 12 (MR12).
+  // Fallback: the middle of the round list when score data is unavailable.
   const halftimeAfter = useMemo(() => {
     for (const r of displayRounds) {
       if ((r.ct_score ?? 0) + (r.t_score ?? 0) === 12) return r.round_number;
+    }
+    // Fallback: split at middle for standard 24-round matches
+    if (displayRounds.length >= 4) {
+      const mid = Math.floor(displayRounds.length / 2);
+      return displayRounds[mid - 1]?.round_number ?? null;
     }
     return null;
   }, [displayRounds]);

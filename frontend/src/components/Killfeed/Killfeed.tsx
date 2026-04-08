@@ -62,6 +62,7 @@ function weaponLabel(weapon: string | null): string {
 const Killfeed: React.FC = () => {
   const events        = useAppStore((s) => s.events);
   const players       = useAppStore((s) => s.players);
+  const rounds        = useAppStore((s) => s.rounds);
   const activeRound   = useAppStore((s) => s.activeRound);
   const currentTick   = useAppStore((s) => s.currentTick);
 
@@ -72,16 +73,25 @@ const Killfeed: React.FC = () => {
     return map;
   }, [players]);
 
+  // Use tick range rather than round_number so kills show correctly even when
+  // event.round_number is 0 (stale cache from an old broken parse).
+  const roundInfo = useMemo(
+    () => rounds.find((r) => r.round_number === activeRound),
+    [rounds, activeRound],
+  );
+
   const kills = useMemo(() => {
+    if (!roundInfo) return [];
+    const { start_tick, end_tick } = roundInfo;
     return events
       .filter(
         (e) =>
           e.event_type === 'player_death' &&
-          e.round_number === activeRound &&
-          e.tick <= currentTick,
+          e.tick >= start_tick &&
+          e.tick <= Math.min(end_tick, currentTick),
       )
       .slice(-MAX_ENTRIES);
-  }, [events, activeRound, currentTick]);
+  }, [events, roundInfo, currentTick]);
 
   if (!kills.length) return null;
 

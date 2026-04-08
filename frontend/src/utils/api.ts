@@ -25,10 +25,11 @@ const http = axios.create({ baseURL: '/api' });
 export async function uploadDemo(
   file: File,
   onProgress?: (pct: number) => void,
+  force = false,
 ): Promise<{ job_id: string; demo_id: string; cached: boolean }> {
   const form = new FormData();
   form.append('file', file);
-  const res = await http.post('/demos/upload', form, {
+  const res = await http.post(`/demos/upload${force ? '?force=true' : ''}`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (e) => {
       if (onProgress && e.total) onProgress(e.loaded / e.total);

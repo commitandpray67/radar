@@ -32,6 +32,7 @@ type LoadPhase =
   | 'uploading'
   | 'parsing'
   | 'fetching'
+  | 'cached'      // loaded from cache — offer re-parse
   | 'done'
   | 'error';
 
@@ -63,7 +64,7 @@ const DemoLoader: React.FC = () => {
   }, []);
 
   const processFile = useCallback(
-    async (file: File) => {
+    async (file: File, force = false) => {
       if (!file.name.toLowerCase().endsWith('.dem')) {
         setErrorMsg('Please select a valid CS2 .dem demo file.');
         setPhase('error');
@@ -78,14 +79,16 @@ const DemoLoader: React.FC = () => {
         // 1. Upload
         const { job_id, demo_id, cached } = await uploadDemo(file, (pct) => {
           setUploadProgress(pct);
-        });
+        }, force);
 
-        // 2. Watch parse status via SSE
-        setPhase('parsing');
-        await watchParseStatus(job_id, (status) => {
-          setParseStatus(status);
-          setParseStatusStore(status);
-        });
+        // 2. Watch parse status via SSE (skipped when loaded from valid cache)
+        if (!cached) {
+          setPhase('parsing');
+          await watchParseStatus(job_id, (status) => {
+            setParseStatus(status);
+            setParseStatusStore(status);
+          });
+        }
 
         // 3. Fetch all data
         setPhase('fetching');
@@ -129,6 +132,7 @@ const DemoLoader: React.FC = () => {
     [maps],
   );
 
+
   // Drag-and-drop handlers
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -158,7 +162,7 @@ const DemoLoader: React.FC = () => {
   // Render
   // -----------------------------------------------------------------------
 
-  if (phase === 'done') return null; // parent App unmounts this once done
+  if (phase === 'done') return null;
 
   const progressFraction =
     phase === 'uploading'

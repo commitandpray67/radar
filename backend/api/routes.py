@@ -95,10 +95,14 @@ async def list_maps():
 # ---------------------------------------------------------------------------
 
 @router.post("/demos/upload")
-async def upload_demo(file: UploadFile = File(...)):
+async def upload_demo(
+    file: UploadFile = File(...),
+    force: bool = False,   # ?force=true skips the cache → always re-parses
+):
     """
     Accept a .dem file upload, hash it, and start async parsing.
     Returns a job_id the client can poll via /parse-status/{job_id}.
+    Pass ?force=true to re-parse a previously cached demo.
     """
     if not file.filename or not file.filename.lower().endswith(".dem"):
         raise HTTPException(400, "File must be a .dem demo file")
@@ -122,17 +126,30 @@ async def upload_demo(file: UploadFile = File(...)):
         "filename": file.filename,
     }
 
-    # Check cache
-    if await demo_exists(demo_id):
-        _parse_jobs[job_id] = {
-            "status": "complete",
-            "progress": 1.0,
-            "message": "Loaded from cache",
-            "demo_id": demo_id,
-            "filename": file.filename,
-        }
-        tmp_path.unlink(missing_ok=True)
-        return {"job_id": job_id, "demo_id": demo_id, "cached": True}
+    # Check cache (skipped when force=True).
+    # Also verify data quality: if all rounds have no winner the cache is from
+    # an old broken parse → re-parse automatically.
+    if not force and await demo_exists(demo_id):
+        async with get_connection() as conn:
+            cur = await conn.execute(
+                "SELECT COUNT(*) FROM rounds WHERE demo_id = ? AND winner_team != ''",
+                (demo_id,),
+            )
+            row = await cur.fetchone()
+            has_valid_data = bool(row and row[0] > 0)
+
+        if has_valid_data:
+            _parse_jobs[job_id] = {
+                "status": "complete",
+                "progress": 1.0,
+                "message": "Loaded from cache",
+                "demo_id": demo_id,
+                "filename": file.filename,
+            }
+            tmp_path.unlink(missing_ok=True)
+            return {"job_id": job_id, "demo_id": demo_id, "cached": True}
+
+        logger.info("Cached demo %s has stale data (no winners) — re-parsing", demo_id)
 
     # Start background parse
     asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename))
