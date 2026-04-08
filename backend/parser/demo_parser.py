@@ -195,7 +195,7 @@ def parse_demo(
 
     # ---- Rounds --------------------------------------------------------
     _progress(0.05, "Extracting round boundaries")
-    rounds = _extract_rounds(parser)
+    rounds = _extract_rounds(parser, tick_rate=tick_rate)
 
     # ---- Player roster -------------------------------------------------
     _progress(0.15, "Extracting player roster")
@@ -233,7 +233,7 @@ def _parse_winner(raw) -> str:
     return ""
 
 
-def _extract_rounds(parser) -> list[RoundInfo]:
+def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
     """
     Build RoundInfo list from round events.
 
@@ -243,7 +243,17 @@ def _extract_rounds(parser) -> list[RoundInfo]:
       • round_officially_ended — fallback end timing; no winner field in v0.41
       • round_freeze_end   — freeze phase end tick
       • bomb_planted/defused/exploded — bomb timeline; also used to infer winner
+
+    Duration filter:
+      Real competitive rounds always include at least 15 s of freeze time, so
+      any paired (start, end) whose duration is below that threshold is a
+      server-generated transition round (halftime intermission, warmup reset,
+      etc.) and is discarded.
     """
+    # Minimum ticks for a real game round: freeze time = 15 s.
+    # We use 13 s as the cutoff to give a small safety margin.
+    MIN_ROUND_TICKS = int(13 * tick_rate)
+
     # ---- round_start (required) --------------------------------------------
     try:
         round_starts_raw = parser.parse_event("round_start", other=["tick"])
@@ -297,7 +307,6 @@ def _extract_rounds(parser) -> list[RoundInfo]:
     # Orphaned round_starts (no matching end) are silently discarded.
 
     start_ticks_sorted = sorted(int(r.get("tick", 0)) for r in start_rows)
-    start_row_by_tick  = {int(r.get("tick", 0)): r for r in start_rows}
     used_start_ticks: set[int] = set()
 
     pairs: list[tuple[int, int, str, str]] = []  # (start_tick, end_tick, winner, reason)
@@ -323,12 +332,30 @@ def _extract_rounds(parser) -> list[RoundInfo]:
 
     pairs.sort(key=lambda x: x[0])
 
+    # ---- Duration filter: drop transition/warmup rounds --------------------
+    # Real rounds always contain the full freeze period (≥ 15 s).
+    # Server-generated transition rounds (halftime intermission, warmup resets)
+    # are much shorter. Any paired round shorter than MIN_ROUND_TICKS is
+    # discarded as a non-game round.
+    short = [(s, e, w, r) for s, e, w, r in pairs if e - s < MIN_ROUND_TICKS]
+    pairs  = [(s, e, w, r) for s, e, w, r in pairs if e - s >= MIN_ROUND_TICKS]
+
+    if short:
+        logger.info(
+            "Discarded %d short transition round(s) (< %d ticks / 13 s): %s",
+            len(short),
+            MIN_ROUND_TICKS,
+            [(s, e, e - s) for s, e, _, _ in short],
+        )
+
     logger.debug(
-        "Round pairing: %d starts, %d ends → %d paired rounds (%d orphaned starts)",
+        "Round pairing: %d starts, %d ends → %d valid rounds "
+        "(%d orphaned starts, %d short/transition)",
         len(start_ticks_sorted),
         len(end_rows),
         len(pairs),
-        len(start_ticks_sorted) - len(pairs),
+        len(start_ticks_sorted) - len(pairs) - len(short),
+        len(short),
     )
 
     # ---- Build round list --------------------------------------------------
@@ -409,13 +436,34 @@ def _extract_rounds(parser) -> list[RoundInfo]:
         r.ct_score = ct_wins
         r.t_score  = t_wins
 
+    knife_count   = sum(1 for r in rounds if r.is_knife_round)
+    winner_count  = sum(1 for r in rounds if r.winner_team)
     logger.info(
-        "Extracted %d rounds (%d knife); winner data: %d/%d rounds",
+        "Extracted %d rounds (%d knife, %d display); winner data: %d/%d rounds",
         len(rounds),
-        sum(1 for r in rounds if r.is_knife_round),
-        sum(1 for r in rounds if r.winner_team),
+        knife_count,
+        len(rounds) - knife_count,
+        winner_count,
         len(rounds),
     )
+
+    # Per-round detail at DEBUG level — useful for diagnosing extra rounds
+    for r in rounds:
+        duration_ticks = r.end_tick - r.start_tick
+        logger.debug(
+            "  R%02d  ticks %d–%d  dur=%d  winner=%-2s  reason=%-3s  "
+            "knife=%s  ct=%d  t=%d",
+            r.round_number,
+            r.start_tick,
+            r.end_tick,
+            duration_ticks,
+            r.winner_team or "--",
+            r.win_reason or "--",
+            "Y" if r.is_knife_round else "N",
+            r.ct_score,
+            r.t_score,
+        )
+
     return rounds
 
 
