@@ -46,6 +46,20 @@ const RoundPanel: React.FC = () => {
     [isHeatmapMode, setActiveRound, toggleHeatmapRnd],
   );
 
+  // Exclude knife rounds — must be computed before any early return (hooks rule).
+  const displayRounds = useMemo(
+    () => rounds.filter((r) => !r.is_knife_round),
+    [rounds],
+  );
+
+  // Halftime separator: round after which ct_score + t_score first hits 12 (MR12).
+  const halftimeAfter = useMemo(() => {
+    for (const r of displayRounds) {
+      if ((r.ct_score ?? 0) + (r.t_score ?? 0) === 12) return r.round_number;
+    }
+    return null;
+  }, [displayRounds]);
+
   if (!rounds.length) {
     return (
       <div className={styles.empty}>
@@ -53,17 +67,6 @@ const RoundPanel: React.FC = () => {
       </div>
     );
   }
-
-  // Exclude knife rounds (side-selection rounds in overtime / start of match).
-  const displayRounds = rounds.filter((r) => !r.is_knife_round);
-
-  // Detect halftime: the round after which the score sum first hits 12 (MR12).
-  const halftimeAfter = useMemo(() => {
-    for (const r of displayRounds) {
-      if ((r.ct_score ?? 0) + (r.t_score ?? 0) === 12) return r.round_number;
-    }
-    return null;
-  }, [displayRounds]);
 
   return (
     <div className={styles.root}>
