@@ -289,26 +289,37 @@ def _extract_rounds(parser) -> list[RoundInfo]:
 
 
 def _extract_players(parser) -> list[PlayerInfo]:
-    """Extract a unique player roster from the demo."""
+    """Extract a unique player roster from the demo using parse_player_info."""
     try:
-        # parse_ticks returns a DataFrame; we use a small set of props
-        df = parser.parse_ticks(
-            ["name", "team_name", "steamid"],
-            ticks=[0],  # first tick only for roster
-        )
+        # parse_player_info returns a DataFrame with one row per player
+        # Columns: steamid, name, team_number, team_clan_name, ...
+        df = parser.parse_player_info()
     except Exception as exc:
-        logger.warning("Could not extract player roster: %s", exc)
-        return []
+        logger.warning("parse_player_info failed, falling back to parse_ticks: %s", exc)
+        try:
+            df = parser.parse_ticks(["name", "team_name", "steamid"], ticks=[1])
+        except Exception as exc2:
+            logger.warning("Could not extract player roster: %s", exc2)
+            return []
 
     players: list[PlayerInfo] = []
     seen: set[int] = set()
 
     for row in df.to_dict("records"):
-        steam_id = int(row.get("steamid", 0) or 0)
+        # parse_player_info uses 'steamid' (int64); parse_ticks uses 'steamid' str
+        raw_id = row.get("steamid", 0) or 0
+        try:
+            steam_id = int(raw_id)
+        except (ValueError, TypeError):
+            continue
         if steam_id == 0 or steam_id in seen:
             continue
         seen.add(steam_id)
-        team = str(row.get("team_name", "") or "").strip()
+
+        # team_number: 2=T, 3=CT; or team_name string
+        team_num = int(row.get("team_number", 0) or 0)
+        team = {2: "T", 3: "CT"}.get(team_num, "") or str(row.get("team_name", "") or "")
+
         players.append(
             PlayerInfo(
                 player_id=steam_id,

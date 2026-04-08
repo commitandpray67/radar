@@ -52,6 +52,21 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api")
 
+# Serve radar map images from backend so both dev and prod modes work.
+# The frontend requests /maps/<name>_radar.png; we look in:
+#   1. frontend/public/maps/   (source tree, dev mode)
+#   2. frontend/dist/maps/     (after npm run build, prod mode)
+# Whichever exists first wins; images can be placed in either location.
+_maps_candidates = [
+    Path(__file__).parent.parent / "frontend" / "public" / "maps",
+    Path(__file__).parent.parent / "frontend" / "dist" / "maps",
+]
+for _maps_dir in _maps_candidates:
+    if _maps_dir.exists():
+        app.mount("/maps", StaticFiles(directory=str(_maps_dir)), name="maps")
+        logger.info("Serving radar images from %s", _maps_dir)
+        break
+
 # Serve the built frontend from the backend process in production
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
