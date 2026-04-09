@@ -137,6 +137,7 @@ class GrenadeEvent:
     y: float = 0.0
     z: float = 0.0
     expire_tick: Optional[int] = None  # when effect ends (smoke, fire)
+    trajectory: list[dict] = field(default_factory=list)  # optional bounce points
 
 
 @dataclass
@@ -846,6 +847,32 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         except Exception as exc:
             logger.debug("Could not parse %s: %s", event_name, exc)
 
+    # -- Bounce points (for more realistic trajectories) --
+    bounce_rows: list[dict] = []
+    for event_name in ("grenade_bounce", "grenade_projectile_bounce"):
+        try:
+            b_df = parser.parse_event(
+                event_name,
+                other=["tick", "x", "y", "z", "user_steamid"],
+            )
+            for row in _rows(b_df):
+                tick = int(row.get("tick", 0) or 0)
+                rn = _rn(tick)
+                if rn == 0:
+                    continue
+                bounce_rows.append({
+                    "tick": tick,
+                    "round_number": rn,
+                    "x": float(row.get("x", row.get("X", 0)) or 0),
+                    "y": float(row.get("y", row.get("Y", 0)) or 0),
+                    "z": float(row.get("z", row.get("Z", 0)) or 0),
+                    "thrower_id": int(row.get("user_steamid", 0) or 0),
+                })
+            if bounce_rows:
+                break
+        except Exception:
+            continue
+
     # -- Match throws to detonations --
     MAX_FLIGHT_TICKS = 448   # ~7 s max flight time
     used_det: set[int] = set()
@@ -909,6 +936,21 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             y=det["y"],
             z=det["z"],
             expire_tick=expire_tick,
+            trajectory=[
+                {
+                    "tick": b["tick"],
+                    "x": b["x"],
+                    "y": b["y"],
+                    "z": b["z"],
+                }
+                for b in bounce_rows
+                if b["round_number"] == throw["round_number"]
+                and throw["tick"] < b["tick"] < det["tick"]
+                and (
+                    (throw["thrower_id"] and b["thrower_id"] and b["thrower_id"] == throw["thrower_id"])
+                    or (not throw["thrower_id"])
+                )
+            ],
         ))
 
     logger.info("Extracted %d grenade events", len(grenades))

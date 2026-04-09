@@ -138,6 +138,12 @@ export interface GrenadeEvent {
   y: number;
   z: number;
   expire_tick: number | null;
+  trajectory?: Array<{
+    tick: number;
+    x: number;
+    y: number;
+    z: number;
+  }> | null;
 }
 
 // ---------------------------------------------------------------------------
