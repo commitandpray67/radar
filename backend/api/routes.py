@@ -438,7 +438,20 @@ async def get_grenades(
             params,
         )
         rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
+    import json as _json
+    result = []
+    for r in rows:
+        d = dict(r)
+        raw_traj = d.get("trajectory")
+        if raw_traj:
+            try:
+                d["trajectory"] = _json.loads(raw_traj)
+            except Exception:
+                d["trajectory"] = None
+        else:
+            d["trajectory"] = None
+        result.append(d)
+    return result
 
 
 # ---------------------------------------------------------------------------
