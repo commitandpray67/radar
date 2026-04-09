@@ -51,6 +51,12 @@ const PlaybackControls: React.FC = () => {
   const roundStart = roundInfo?.freeze_end_tick ?? 0;
   const roundEnd   = roundInfo?.end_tick ?? 0;
 
+  // Display round number = position among non-knife rounds (1-indexed)
+  const displayRounds = rounds.filter((r) => !r.is_knife_round);
+  const displayRoundNumber = activeRound !== null
+    ? displayRounds.findIndex((r) => r.round_number === activeRound) + 1
+    : null;
+
   // ---- Multi-round mode: max relative tick across selected rounds ----
   const multiMaxRelTick = useMemo(() => {
     if (!isMultiRoundMode || multiRoundRounds.length === 0) return 0;
@@ -176,7 +182,7 @@ const PlaybackControls: React.FC = () => {
             ‹
           </button>
           <span className={styles.roundLabel}>
-            {activeRound !== null ? `Round ${activeRound}` : 'No round'}
+            {displayRoundNumber ? `Round ${displayRoundNumber}` : 'No round'}
           </span>
           <button
             className={styles.iconBtn}

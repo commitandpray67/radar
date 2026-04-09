@@ -306,9 +306,11 @@ async def delete_demo(demo_id: str):
 
         for table in [
             "player_positions", "events", "rounds", "players",
-            "grenades", "player_state_events", "demos",
+            "grenades", "player_state_events",
         ]:
             await conn.execute(f"DELETE FROM {table} WHERE demo_id = ?", (demo_id,))
+        # demos table uses `id` as primary key, not `demo_id`
+        await conn.execute("DELETE FROM demos WHERE id = ?", (demo_id,))
         await conn.commit()
     return {"deleted": demo_id}
 

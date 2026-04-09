@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 15
+PARSER_VERSION = 16
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +717,7 @@ def _extract_positions(
             z=z,
             team_num=_to_int(row.get("team_num", 0) or 0),
             is_alive=bool(row.get("is_alive", False)),
-            yaw=float(row.get("yaw", 0) or 0),
+            yaw=_to_float(row.get("yaw"), 0.0),
         ))
 
     return positions
@@ -795,8 +795,11 @@ _DETONATE_EVENTS: dict[str, str] = {
     "inferno_startburn": "molotov",   # covers both molotov & incendiary
 }
 
-# Normalise the grenade_type strings returned by parse_grenades() to our schema
+# Normalise the grenade_type strings returned by parse_grenades() to our schema.
+# parse_grenades() returns CS2 entity class names ("CHEGrenadeProjectile", etc.)
+# which we normalise to lowercase with spaces/underscores stripped.
 _TRAJ_TYPE_MAP: dict[str, str] = {
+    # Short names (older demoparser2 / CS:GO)
     "hegrenade": "he",
     "flashbang": "flash",
     "smokegrenade": "smoke",
@@ -806,7 +809,39 @@ _TRAJ_TYPE_MAP: dict[str, str] = {
     "incendiary": "incendiary",
     "decoygrenade": "decoy",
     "decoy": "decoy",
+    # CS2 entity class names as returned by demoparser2
+    "chegrenadeprojectile": "he",
+    "cflashbangprojectile": "flash",
+    "csmokegrenadeprojectile": "smoke",
+    "cmolotovprojectile": "molotov",
+    "cincendiaryprojectile": "incendiary",
+    "cdecoyprojectile": "decoy",
+    "cdecoyprojector": "decoy",
 }
+
+# Substring fallback for entity class names (order matters — most specific first)
+_TRAJ_SUBSTR_FALLBACK: list[tuple[str, str]] = [
+    ("hegrenade", "he"),
+    ("flashbang", "flash"),
+    ("smokegrenade", "smoke"),
+    ("smoke", "smoke"),
+    ("molotov", "molotov"),
+    ("incendiary", "incendiary"),
+    ("decoy", "decoy"),
+]
+
+
+def _map_grenade_type(raw: str) -> str | None:
+    """Map a raw grenade_type string from parse_grenades() to our schema type."""
+    key = raw.lower().replace(" ", "").replace("_", "")
+    result = _TRAJ_TYPE_MAP.get(key)
+    if result is not None:
+        return result
+    # Substring fallback
+    for substr, gtype in _TRAJ_SUBSTR_FALLBACK:
+        if substr in key:
+            return gtype
+    return None
 
 # Effect duration in ticks (64-tick default; scaled if tick_rate differs)
 _EFFECT_TICKS: dict[str, int] = {
@@ -906,10 +941,12 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
     try:
         import math as _math
         traj_df = parser.parse_grenades()
+        # Log a sample of raw grenade_type values to diagnose mapping issues
+        _seen_raw_types: set[str] = set()
         for row in _rows(traj_df):
-            raw_type = (str(row.get("grenade_type", "") or "")
-                        .lower().replace(" ", "").replace("_", ""))
-            gtype = _TRAJ_TYPE_MAP.get(raw_type)
+            raw_type = str(row.get("grenade_type", "") or "")
+            _seen_raw_types.add(raw_type)
+            gtype = _map_grenade_type(raw_type)
             if gtype is None:
                 continue
             tick = int(row.get("tick", 0) or 0)
@@ -934,6 +971,10 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 "z": z,
                 "thrower_id": thrower_id,
             })
+        logger.info(
+            "parse_grenades() raw grenade_type values seen: %s",
+            sorted(_seen_raw_types),
+        )
         logger.info("parse_grenades() yielded %d usable rows", len(raw_traj))
     except Exception as exc:
         logger.warning("Could not extract grenade trajectories via parse_grenades(): %s", exc)

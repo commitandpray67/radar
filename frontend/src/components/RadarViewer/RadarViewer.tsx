@@ -93,10 +93,10 @@ function drawPlayerMarker(
   ctx.save();
   ctx.globalAlpha = isAlive ? alpha : alpha * DEAD_ALPHA;
 
-  // Direction wedge (yaw): CS2 yaw 0=East, 90=South in screen-space.
-  // Canvas: +x=right(East), +y=down(South). Angle 0 should point right.
-  if (isAlive && yaw !== undefined) {
-    const angle = (yaw * Math.PI) / 180;
+  // Direction wedge (yaw): CS2 yaw 0=East, positive CCW (toward North=+Y world).
+  // Canvas Y is flipped (+Y = South on screen), so negate to convert to canvas angle.
+  if (isAlive && yaw != null) {
+    const angle = -(yaw * Math.PI) / 180;
     const wedgeLen = radius * 2.2;
     const wedgeHalf = Math.PI / 6;  // ±30° spread
     ctx.globalAlpha = (isAlive ? alpha : alpha * DEAD_ALPHA) * 0.7;
@@ -671,7 +671,7 @@ const RadarViewer: React.FC = () => {
       drawPlayerMarker(
         ctx, cx, cy, color, playerLabel(pid), 1, alive, isSelected,
         markerR,
-        showYaw && pos.yaw !== undefined ? pos.yaw : undefined,
+        showYaw && pos.yaw != null ? pos.yaw : undefined,
       );
     }
 
