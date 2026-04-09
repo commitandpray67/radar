@@ -109,9 +109,16 @@
   background: rgba(224, 123, 57, 0.1);
 }
 
+.barsWrap {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  width: 100%;
+}
+
 .hpBarWrap {
   position: relative;
-  height: 14px;
+  height: 7px;
   background: #0d1520;
   border: 1px solid #1e2e3e;
   border-radius: 2px;
@@ -127,17 +134,23 @@
   transition: width 0.15s, background 0.15s;
 }
 
-.hpLabel {
+.armorBarWrap {
+  position: relative;
+  height: 7px;
+  background: #0d1520;
+  border: 1px solid #1e2e3e;
+  border-radius: 2px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.armorBarFill {
   position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 8px;
-  font-weight: 700;
-  font-family: 'JetBrains Mono', monospace;
-  color: rgba(255, 255, 255, 0.95);
-  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: #4a86d1;
+  transition: width 0.15s;
 }
 
 .rowBottom {
@@ -162,4 +175,29 @@
 .loadoutSep {
   color: #5c7a93;
   margin: 0 2px;
+}
+
+.nadesInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.nadeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  line-height: 1;
+}
+
+.nadeIcon {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+}
+
+.nadeFallback {
+  font-size: 9px;
+  color: #8fb0c8;
 }

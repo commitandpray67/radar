@@ -8,7 +8,7 @@ interface PlayerState {
   activeWeapon: string;
   pistols: Set<string>;
   primaries: Set<string>;
-  grenades: Map<string, number>;
+  grenades: Set<string>;
 }
 
 const GRENADE_WEAPONS = new Set([
@@ -52,6 +52,14 @@ function formatWeapon(raw: string | null | undefined): string {
   return raw.replace(/^weapon_/, '').replace(/_/g, ' ');
 }
 
+function normalizeWeaponName(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const s = raw.toLowerCase().trim();
+  if (!s) return '';
+  if (s.startsWith('weapon_') || s.startsWith('item_')) return s;
+  return `weapon_${s}`;
+}
+
 function grenadeShortName(raw: string): string {
   const key = raw.replace(/^weapon_/, '');
   if (key === 'hegrenade') return 'HE';
@@ -71,6 +79,15 @@ function isPrimaryWeapon(raw: string): boolean {
 function defaultPistolForTeam(team: 'CT' | 'T'): string {
   return team === 'CT' ? 'usp silencer / p2000' : 'glock';
 }
+
+const GRENADE_ICON_PATH: Record<string, string> = {
+  weapon_hegrenade: '/icons/grenades/hegrenade.png',
+  weapon_flashbang: '/icons/grenades/flashbang.png',
+  weapon_smokegrenade: '/icons/grenades/smokegrenade.png',
+  weapon_molotov: '/icons/grenades/molotov.png',
+  weapon_incgrenade: '/icons/grenades/incgrenade.png',
+  weapon_decoy: '/icons/grenades/decoy.png',
+};
 
 const PlayerInfoPanel: React.FC = () => {
   const players = useAppStore((s) => s.players);
@@ -119,7 +136,7 @@ const PlayerInfoPanel: React.FC = () => {
         activeWeapon: '',
         pistols: new Set<string>(),
         primaries: new Set<string>(),
-        grenades: new Map<string, number>(),
+        grenades: new Set<string>(),
       });
     }
 
@@ -135,7 +152,7 @@ const PlayerInfoPanel: React.FC = () => {
           activeWeapon: cur.activeWeapon,
           pistols: new Set(),
           primaries: new Set(),
-          grenades: new Map(),
+          grenades: new Set(),
         });
         continue;
       }
@@ -150,13 +167,13 @@ const PlayerInfoPanel: React.FC = () => {
       }
 
       if (ev.event_type === 'equip') {
-        const weapon = (ev.weapon ?? '').toLowerCase();
+        const weapon = normalizeWeaponName(ev.weapon);
         const next: PlayerState = {
           ...cur,
           activeWeapon: weapon || cur.activeWeapon,
           pistols: new Set(cur.pistols),
           primaries: new Set(cur.primaries),
-          grenades: new Map(cur.grenades),
+          grenades: new Set(cur.grenades),
         };
 
         if (ARMOR_ITEMS.has(weapon)) {
@@ -166,8 +183,7 @@ const PlayerInfoPanel: React.FC = () => {
         }
 
         if (GRENADE_WEAPONS.has(weapon)) {
-          const count = next.grenades.get(weapon) ?? 0;
-          next.grenades.set(weapon, Math.min(3, count + 1));
+          next.grenades.add(weapon);
         } else if (PISTOL_WEAPONS.has(weapon)) {
           next.pistols.add(weapon);
         } else if (isPrimaryWeapon(weapon)) {
@@ -219,9 +235,8 @@ const PlayerInfoPanel: React.FC = () => {
       ? formatWeapon(pistolList[pistolList.length - 1])
       : defaultPistolForTeam(team);
     const primary = primaryList.length ? formatWeapon(primaryList[primaryList.length - 1]) : '—';
-    const grenades = Array.from(st.grenades.entries())
-      .map(([name, count]) => `${grenadeShortName(name)}${count > 1 ? `×${count}` : ''}`)
-      .join(' · ') || '—';
+    const grenades = Array.from(st.grenades.values());
+    const armorPct = Math.max(0, Math.min(100, st.armor));
 
     return (
       <div key={p.player_id} className={`${styles.playerCard} ${!isAlive ? styles.dead : ''}`}>
@@ -236,9 +251,13 @@ const PlayerInfoPanel: React.FC = () => {
         </div>
 
         <div className={styles.rowMid}>
-          <div className={styles.hpBarWrap}>
-            <div className={styles.hpBarFill} style={{ width: `${hpPct}%`, background: hpColor }} />
-            <span className={styles.hpLabel}>{isAlive ? `${hp} HP · ${st.armor} AR` : '✕'}</span>
+          <div className={styles.barsWrap}>
+            <div className={styles.hpBarWrap}>
+              <div className={styles.hpBarFill} style={{ width: `${hpPct}%`, background: hpColor }} />
+            </div>
+            <div className={styles.armorBarWrap}>
+              <div className={styles.armorBarFill} style={{ width: `${isAlive ? armorPct : 0}%` }} />
+            </div>
           </div>
         </div>
 
@@ -247,7 +266,22 @@ const PlayerInfoPanel: React.FC = () => {
           <span className={styles.loadoutItem}>
             <strong>Primary:</strong> {isAlive ? primary : '—'}
             <span className={styles.loadoutSep}> · </span>
-            <strong>Nades:</strong> {isAlive ? grenades : '—'}
+            <strong>Nades:</strong>
+            <span className={styles.nadesInline}>
+              {isAlive && grenades.length > 0 ? grenades.map((nade) => (
+                <span key={`${p.player_id}-${nade}`} className={styles.nadeChip} title={grenadeShortName(nade)}>
+                  <img
+                    src={GRENADE_ICON_PATH[nade]}
+                    alt={grenadeShortName(nade)}
+                    className={styles.nadeIcon}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                  <span className={styles.nadeFallback}>{grenadeShortName(nade)}</span>
+                </span>
+              )) : ' —'}
+            </span>
           </span>
         </div>
       </div>
