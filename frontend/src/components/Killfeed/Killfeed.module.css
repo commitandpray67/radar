@@ -20,12 +20,17 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   backdrop-filter: blur(2px);
+  max-width: 290px;
 }
 
 .attacker {
   color: #5b9bd5;
   font-weight: 700;
-  min-width: 24px;
+  min-width: 72px;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .weapon {
@@ -38,7 +43,11 @@
 .victim {
   color: #e07b39;
   font-weight: 700;
-  min-width: 24px;
+  min-width: 72px;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hs {
