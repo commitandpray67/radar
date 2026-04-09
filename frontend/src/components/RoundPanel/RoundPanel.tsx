@@ -27,6 +27,18 @@ function winReasonLabel(reason: string): string {
   return WIN_REASON_SHORT[reason] ?? reason ?? '';
 }
 
+function getDisplaySideScore(
+  roundNumber: number,
+  halftimeRoundNumber: number | null,
+  ctScore: number,
+  tScore: number,
+): { ct: number; t: number } {
+  if (halftimeRoundNumber !== null && roundNumber > halftimeRoundNumber) {
+    return { ct: tScore, t: ctScore };
+  }
+  return { ct: ctScore, t: tScore };
+}
+
 const RoundPanel: React.FC = () => {
   const rounds           = useAppStore((s) => s.rounds);
   const activeRound      = useAppStore((s) => s.activeRound);
@@ -61,6 +73,13 @@ const RoundPanel: React.FC = () => {
     return null;
   }, [displayRounds]);
 
+  const halftimeRoundNumber = useMemo(() => {
+    if (displayRounds.length > 12) {
+      return displayRounds[11]?.round_number ?? null;
+    }
+    return null;
+  }, [displayRounds]);
+
   if (!rounds.length) {
     return (
       <div className={styles.empty}>
@@ -80,6 +99,12 @@ const RoundPanel: React.FC = () => {
       <div className={styles.list}>
         {displayRounds.map((r, idx) => {
           const displayNum = idx + 1;
+          const score = getDisplaySideScore(
+            r.round_number,
+            halftimeRoundNumber,
+            r.ct_score,
+            r.t_score,
+          );
           const isActive = r.round_number === activeRound && !isHeatmapMode;
           const isHeatmapSelected =
             isHeatmapMode && heatmapRounds.includes(r.round_number);
@@ -117,7 +142,7 @@ const RoundPanel: React.FC = () => {
 
               {/* Score */}
               <span className={styles.score}>
-                {r.ct_score}:{r.t_score}
+                {score.ct}:{score.t}
               </span>
 
               {/* Bomb indicator */}
