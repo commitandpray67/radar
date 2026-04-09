@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 8
+PARSER_VERSION = 9
 
 
 # ---------------------------------------------------------------------------
@@ -1001,6 +1001,33 @@ def _extract_player_state_events(
             ))
     except Exception as exc:
         logger.warning("Could not parse item_equip: %s", exc)
+
+    # -- item_pickup: helps reconstruct grenade / loadout ownership --
+    try:
+        pickup_df = parser.parse_event(
+            "item_pickup",
+            other=["tick", "user_steamid", "item"],
+        )
+        for row in _rows(pickup_df):
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            player_id = int(row.get("user_steamid", 0) or 0)
+            if player_id == 0:
+                continue
+            item = str(row.get("item", "") or "")
+            if not item:
+                continue
+            state_events.append(PlayerStateEvent(
+                tick=tick,
+                round_number=rn,
+                player_id=player_id,
+                event_type="equip",
+                weapon=item,
+            ))
+    except Exception as exc:
+        logger.debug("Could not parse item_pickup: %s", exc)
 
     # -- player_spawn: reset HP/armor to round-start values --
     try:
