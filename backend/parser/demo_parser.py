@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 10
+PARSER_VERSION = 11
 
 
 # ---------------------------------------------------------------------------
@@ -973,6 +973,17 @@ def _extract_player_state_events(
     def _rn(tick: int) -> int:
         return tick_to_round.get(tick, 0)
 
+    def _event_player_id(row: dict) -> int:
+        for key in ("user_steamid", "steamid", "player_steamid"):
+            raw = row.get(key, 0) or 0
+            try:
+                pid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if pid > 0:
+                return pid
+        return 0
+
     state_events: list[PlayerStateEvent] = []
 
     def _optional_nonnegative_int(value: object) -> Optional[int]:
@@ -998,7 +1009,7 @@ def _extract_player_state_events(
             rn = _rn(tick)
             if rn == 0:
                 continue
-            player_id = int(row.get("user_steamid", 0) or 0)
+            player_id = _event_player_id(row)
             if player_id == 0:
                 continue
             state_events.append(PlayerStateEvent(
@@ -1028,7 +1039,7 @@ def _extract_player_state_events(
             rn = _rn(tick)
             if rn == 0:
                 continue
-            player_id = int(row.get("user_steamid", 0) or 0)
+            player_id = _event_player_id(row)
             if player_id == 0:
                 continue
             item = str(row.get("item", "") or "")
@@ -1055,7 +1066,7 @@ def _extract_player_state_events(
             rn = _rn(tick)
             if rn == 0:
                 continue
-            player_id = int(row.get("user_steamid", 0) or 0)
+            player_id = _event_player_id(row)
             if player_id == 0:
                 continue
             item = str(row.get("item", "") or "")
@@ -1082,7 +1093,7 @@ def _extract_player_state_events(
             rn = _rn(tick)
             if rn == 0:
                 continue
-            player_id = int(row.get("user_steamid", 0) or 0)
+            player_id = _event_player_id(row)
             if player_id == 0:
                 continue
             weapon = str(row.get("weapon", row.get("item", "")) or "")
@@ -1109,7 +1120,7 @@ def _extract_player_state_events(
             rn = _rn(tick)
             if rn == 0:
                 continue
-            player_id = int(row.get("user_steamid", 0) or 0)
+            player_id = _event_player_id(row)
             if player_id == 0:
                 continue
             state_events.append(PlayerStateEvent(
@@ -1122,6 +1133,37 @@ def _extract_player_state_events(
             ))
     except Exception as exc:
         logger.debug("Could not parse player_spawn: %s", exc)
+
+    # -- Tick-based fallback at freeze_end: captures true round-start hp/armor --
+    try:
+        freeze_ticks = sorted({r.freeze_end_tick for r in rounds})
+        if freeze_ticks:
+            tick_df = parser.parse_ticks(
+                ["steamid", "health", "hp", "armor"],
+                ticks=freeze_ticks,
+            )
+            for row in _rows(tick_df):
+                tick = int(row.get("tick", 0) or 0)
+                rn = _rn(tick)
+                if rn == 0:
+                    continue
+                player_id = _event_player_id(row)
+                if player_id == 0:
+                    continue
+                hp = _optional_nonnegative_int(row.get("health", row.get("hp")))
+                armor = _optional_nonnegative_int(row.get("armor"))
+                if hp is None and armor is None:
+                    continue
+                state_events.append(PlayerStateEvent(
+                    tick=tick,
+                    round_number=rn,
+                    player_id=player_id,
+                    event_type="spawn",
+                    hp=hp,
+                    armor=armor,
+                ))
+    except Exception as exc:
+        logger.debug("Could not parse freeze_end tick state: %s", exc)
 
     logger.info("Extracted %d player state events", len(state_events))
     return sorted(state_events, key=lambda e: e.tick)
