@@ -2,7 +2,7 @@
  * Killfeed — overlays the last N kills of the current round up to the current tick.
  *
  * Positioned in the top-right corner of the radar canvas via CSS absolute.
- * Each entry shows:  [attacker#] ──[weapon]──▶ [victim#]  (HS star if applicable)
+ * Each entry shows:  [attacker name] ──[weapon]──▶ [victim name]  (HS star if applicable)
  */
 
 import React, { useMemo } from 'react';
@@ -66,10 +66,10 @@ const Killfeed: React.FC = () => {
   const activeRound   = useAppStore((s) => s.activeRound);
   const currentTick   = useAppStore((s) => s.currentTick);
 
-  // Map player_id → 1-based index for display
-  const playerNum = useMemo(() => {
-    const map = new Map<number, number>();
-    players.forEach((p, idx) => map.set(p.player_id, idx + 1));
+  // Map player_id → nickname for display
+  const playerName = useMemo(() => {
+    const map = new Map<number, string>();
+    players.forEach((p) => map.set(p.player_id, p.name));
     return map;
   }, [players]);
 
@@ -98,13 +98,13 @@ const Killfeed: React.FC = () => {
   return (
     <div className={styles.feed}>
       {kills.map((k) => {
-        const attackerNum = k.attacker_id ? (playerNum.get(k.attacker_id) ?? '?') : '?';
-        const victimNum   = playerNum.get(k.victim_id ?? 0) ?? '?';
+        const attacker = k.attacker_id ? (playerName.get(k.attacker_id) ?? '?') : '?';
+        const victim   = playerName.get(k.victim_id ?? 0) ?? '?';
         return (
           <div key={k.id} className={styles.entry}>
-            <span className={styles.attacker}>#{attackerNum}</span>
+            <span className={styles.attacker} title={attacker}>{attacker}</span>
             <span className={styles.weapon}>{weaponLabel(k.weapon)}</span>
-            <span className={styles.victim}>#{victimNum}</span>
+            <span className={styles.victim} title={victim}>{victim}</span>
             {k.headshot === 1 && <span className={styles.hs} title="Headshot">★</span>}
           </div>
         );

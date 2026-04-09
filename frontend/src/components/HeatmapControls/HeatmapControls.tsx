@@ -180,7 +180,7 @@ const HeatmapControls: React.FC = () => {
           className={`${styles.toggleSwitch} ${isHeatmapMode ? styles.on : ''}`}
           onClick={() => {
             setHeatmapMode(!isHeatmapMode);
-            if (!isHeatmapMode) clearHeatmap();
+            if (isHeatmapMode) clearHeatmap();
           }}
         >
           {isHeatmapMode ? 'ON' : 'OFF'}
