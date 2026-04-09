@@ -417,6 +417,63 @@ async def get_events(
 
 
 # ---------------------------------------------------------------------------
+# Grenades
+# ---------------------------------------------------------------------------
+
+@router.get("/demos/{demo_id}/grenades")
+async def get_grenades(
+    demo_id: str,
+    round_number: Optional[int] = Query(None),
+):
+    """Return grenade events for a demo, optionally filtered by round."""
+    clauses = ["demo_id = ?"]
+    params: list = [demo_id]
+    if round_number is not None:
+        clauses.append("round_number = ?")
+        params.append(round_number)
+    where = " AND ".join(clauses)
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT * FROM grenades WHERE {where} ORDER BY throw_tick",
+            params,
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Player state events
+# ---------------------------------------------------------------------------
+
+@router.get("/demos/{demo_id}/player-state-events")
+async def get_player_state_events(
+    demo_id: str,
+    round_number: Optional[int] = Query(None),
+    player_ids: Optional[str] = Query(None),  # comma-separated SteamID64s
+):
+    """Return player state events (HP, armor, weapon equip) for a demo."""
+    clauses = ["demo_id = ?"]
+    params: list = [demo_id]
+    if round_number is not None:
+        clauses.append("round_number = ?")
+        params.append(round_number)
+    if player_ids:
+        ids = [int(x.strip()) for x in player_ids.split(",") if x.strip().isdigit()]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            clauses.append(f"player_id IN ({placeholders})")
+            params.extend(ids)
+    where = " AND ".join(clauses)
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT * FROM player_state_events WHERE {where} ORDER BY tick",
+            params,
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
 # Heatmap
 # ---------------------------------------------------------------------------
 

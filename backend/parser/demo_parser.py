@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 7
+PARSER_VERSION = 8
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +127,38 @@ class GameEvent:
 
 
 @dataclass
+class GrenadeEvent:
+    round_number: int
+    thrower_id: int           # SteamID64
+    grenade_type: str         # 'he' | 'flash' | 'smoke' | 'molotov' | 'incendiary' | 'decoy'
+    throw_tick: int
+    detonate_tick: Optional[int] = None
+    x: float = 0.0            # detonation world position
+    y: float = 0.0
+    z: float = 0.0
+    expire_tick: Optional[int] = None  # when effect ends (smoke, fire)
+
+
+@dataclass
+class PlayerStateEvent:
+    tick: int
+    round_number: int
+    player_id: int            # SteamID64
+    event_type: str           # 'hurt' | 'equip' | 'spawn'
+    hp: Optional[int] = None
+    armor: Optional[int] = None
+    weapon: Optional[str] = None
+
+
+@dataclass
 class ParsedDemo:
     match_info: MatchInfo
     rounds: list[RoundInfo] = field(default_factory=list)
     players: list[PlayerInfo] = field(default_factory=list)
     positions: list[PlayerPosition] = field(default_factory=list)
     events: list[GameEvent] = field(default_factory=list)
+    grenades: list[GrenadeEvent] = field(default_factory=list)
+    player_state_events: list[PlayerStateEvent] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +238,14 @@ def parse_demo(
     _progress(0.90, "Extracting game events")
     events = _extract_events(parser, rounds)
 
+    # ---- Grenades ------------------------------------------------------
+    _progress(0.92, "Extracting grenade events")
+    grenades = _extract_grenades(parser, rounds)
+
+    # ---- Player state events (HP, armor, weapon equip) -----------------
+    _progress(0.94, "Extracting player state events")
+    player_state_events = _extract_player_state_events(parser, rounds)
+
     # ---- Correct initial_team from live position data ------------------
     # parse_player_info() reflects the CURRENT state which, after halftime,
     # means every player's team is the SWAPPED side.  We override initial_team
@@ -236,6 +270,8 @@ def parse_demo(
         players=players,
         positions=positions,
         events=events,
+        grenades=grenades,
+        player_state_events=player_state_events,
     )
 
 
@@ -696,3 +732,284 @@ def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
             logger.debug("Could not parse %s: %s", event_name, exc)
 
     return sorted(events, key=lambda e: e.tick)
+
+
+# ---------------------------------------------------------------------------
+# Grenade extraction
+# ---------------------------------------------------------------------------
+
+# Grenade-type weapon names (CS2 uses both with and without "weapon_" prefix)
+_GRENADE_WEAPONS: dict[str, str] = {
+    "hegrenade": "he",          "weapon_hegrenade": "he",
+    "flashbang": "flash",       "weapon_flashbang": "flash",
+    "smokegrenade": "smoke",    "weapon_smokegrenade": "smoke",
+    "molotov": "molotov",       "weapon_molotov": "molotov",
+    "incgrenade": "incendiary", "weapon_incgrenade": "incendiary",
+    "decoy": "decoy",           "weapon_decoy": "decoy",
+}
+
+# Detonation event name → normalised grenade type
+_DETONATE_EVENTS: dict[str, str] = {
+    "hegrenade_detonate": "he",
+    "flashbang_detonate": "flash",
+    "smokegrenade_detonate": "smoke",
+    "molotov_detonate": "molotov",
+    "inferno_startburn": "molotov",   # covers both molotov & incendiary
+}
+
+# Effect duration in ticks (64-tick default; scaled if tick_rate differs)
+_EFFECT_TICKS: dict[str, int] = {
+    "he": 64,          # ~1 s brief flash
+    "flash": 48,
+    "smoke": 1152,     # ~18 s
+    "molotov": 448,    # ~7 s
+    "incendiary": 448,
+    "decoy": 256,      # ~4 s
+}
+
+
+def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
+    """Match weapon_fire (throw) events to grenade detonation events."""
+    tick_to_round: dict[int, int] = {}
+    for r in rounds:
+        for t in range(r.start_tick, r.end_tick + 1):
+            tick_to_round[t] = r.round_number
+
+    def _rn(tick: int) -> int:
+        return tick_to_round.get(tick, 0)
+
+    # -- Throws (weapon_fire filtered to grenade weapon types) --
+    throws: list[dict] = []
+    try:
+        fire_df = parser.parse_event(
+            "weapon_fire",
+            other=["tick", "weapon", "user_steamid"],
+        )
+        for row in _rows(fire_df):
+            weapon = str(row.get("weapon", "") or "").lower()
+            nade_type = _GRENADE_WEAPONS.get(weapon)
+            if nade_type is None:
+                continue
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            thrower_id = int(row.get("user_steamid", 0) or 0)
+            throws.append({"tick": tick, "round_number": rn,
+                           "thrower_id": thrower_id, "grenade_type": nade_type})
+    except Exception as exc:
+        logger.warning("Could not parse weapon_fire for grenades: %s", exc)
+
+    # -- Detonations --
+    detonations: list[dict] = []
+    for event_name, nade_type in _DETONATE_EVENTS.items():
+        try:
+            det_df = parser.parse_event(
+                event_name,
+                other=["tick", "x", "y", "z", "user_steamid"],
+            )
+            for row in _rows(det_df):
+                tick = int(row.get("tick", 0) or 0)
+                rn = _rn(tick)
+                if rn == 0:
+                    continue
+                # demoparser2 may return uppercase or lowercase coordinate keys
+                x = float(row.get("x", row.get("X", 0)) or 0)
+                y = float(row.get("y", row.get("Y", 0)) or 0)
+                z = float(row.get("z", row.get("Z", 0)) or 0)
+                thrower_id = int(row.get("user_steamid", 0) or 0)
+                detonations.append({
+                    "tick": tick, "round_number": rn,
+                    "grenade_type": nade_type,
+                    "x": x, "y": y, "z": z,
+                    "thrower_id": thrower_id,
+                })
+        except Exception as exc:
+            logger.debug("Could not parse %s: %s", event_name, exc)
+
+    # -- Expire events (smoke / fire end) --
+    expire_map: dict[tuple, int] = {}
+    for event_name in ("smokegrenade_expired", "inferno_expire"):
+        try:
+            exp_df = parser.parse_event(event_name, other=["tick", "x", "y"])
+            for row in _rows(exp_df):
+                tick = int(row.get("tick", 0) or 0)
+                rn = _rn(tick)
+                if rn == 0:
+                    continue
+                x = float(row.get("x", row.get("X", 0)) or 0)
+                y = float(row.get("y", row.get("Y", 0)) or 0)
+                # Round coords to nearest 10 units for fuzzy matching
+                key = (rn, round(x / 10) * 10, round(y / 10) * 10)
+                if key not in expire_map or expire_map[key] > tick:
+                    expire_map[key] = tick
+        except Exception as exc:
+            logger.debug("Could not parse %s: %s", event_name, exc)
+
+    # -- Match throws to detonations --
+    MAX_FLIGHT_TICKS = 448   # ~7 s max flight time
+    used_det: set[int] = set()
+    grenades: list[GrenadeEvent] = []
+
+    for throw in sorted(throws, key=lambda t: t["tick"]):
+        best_idx: int | None = None
+        best_diff = MAX_FLIGHT_TICKS + 1
+
+        for i, det in enumerate(detonations):
+            if i in used_det:
+                continue
+            if det["round_number"] != throw["round_number"]:
+                continue
+            # Type compatibility: incendiary throw → molotov detonate (same event)
+            nt = throw["grenade_type"]
+            dt = det["grenade_type"]
+            if nt != dt and not (nt in ("molotov", "incendiary") and dt == "molotov"):
+                continue
+            diff = det["tick"] - throw["tick"]
+            if diff < 0 or diff > MAX_FLIGHT_TICKS:
+                continue
+            # Prefer exact thrower match when both sides have the ID
+            if det["thrower_id"] and throw["thrower_id"]:
+                if det["thrower_id"] != throw["thrower_id"]:
+                    continue
+            if diff < best_diff:
+                best_diff = diff
+                best_idx = i
+
+        if best_idx is None:
+            # No detonation found — store throw only
+            grenades.append(GrenadeEvent(
+                round_number=throw["round_number"],
+                thrower_id=throw["thrower_id"],
+                grenade_type=throw["grenade_type"],
+                throw_tick=throw["tick"],
+            ))
+            continue
+
+        used_det.add(best_idx)
+        det = detonations[best_idx]
+        nade_type = throw["grenade_type"]
+
+        # Find expire tick via fuzzy position match, else use default duration
+        expire_key = (det["round_number"],
+                      round(det["x"] / 10) * 10,
+                      round(det["y"] / 10) * 10)
+        expire_tick: int | None = expire_map.get(expire_key)
+        if expire_tick is None:
+            duration = _EFFECT_TICKS.get(nade_type, 64)
+            expire_tick = det["tick"] + duration
+
+        grenades.append(GrenadeEvent(
+            round_number=throw["round_number"],
+            thrower_id=throw["thrower_id"],
+            grenade_type=nade_type,
+            throw_tick=throw["tick"],
+            detonate_tick=det["tick"],
+            x=det["x"],
+            y=det["y"],
+            z=det["z"],
+            expire_tick=expire_tick,
+        ))
+
+    logger.info("Extracted %d grenade events", len(grenades))
+    return grenades
+
+
+# ---------------------------------------------------------------------------
+# Player state event extraction
+# ---------------------------------------------------------------------------
+
+def _extract_player_state_events(
+    parser, rounds: list[RoundInfo]
+) -> list[PlayerStateEvent]:
+    """Extract HP/armor changes (player_hurt) and weapon equip events."""
+    tick_to_round: dict[int, int] = {}
+    for r in rounds:
+        for t in range(r.start_tick, r.end_tick + 1):
+            tick_to_round[t] = r.round_number
+
+    def _rn(tick: int) -> int:
+        return tick_to_round.get(tick, 0)
+
+    state_events: list[PlayerStateEvent] = []
+
+    # -- player_hurt: records victim HP/armor after taking damage --
+    try:
+        hurt_df = parser.parse_event(
+            "player_hurt",
+            other=["tick", "user_steamid", "hp", "armor", "weapon"],
+        )
+        for row in _rows(hurt_df):
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            player_id = int(row.get("user_steamid", 0) or 0)
+            if player_id == 0:
+                continue
+            state_events.append(PlayerStateEvent(
+                tick=tick,
+                round_number=rn,
+                player_id=player_id,
+                event_type="hurt",
+                hp=max(0, int(row.get("hp", 0) or 0)),
+                armor=max(0, int(row.get("armor", 0) or 0)),
+                weapon=str(row.get("weapon", "") or ""),
+            ))
+    except Exception as exc:
+        logger.warning("Could not parse player_hurt: %s", exc)
+
+    # -- item_equip: tracks currently held weapon --
+    try:
+        equip_df = parser.parse_event(
+            "item_equip",
+            other=["tick", "user_steamid", "item"],
+        )
+        for row in _rows(equip_df):
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            player_id = int(row.get("user_steamid", 0) or 0)
+            if player_id == 0:
+                continue
+            item = str(row.get("item", "") or "")
+            if not item:
+                continue
+            state_events.append(PlayerStateEvent(
+                tick=tick,
+                round_number=rn,
+                player_id=player_id,
+                event_type="equip",
+                weapon=item,
+            ))
+    except Exception as exc:
+        logger.warning("Could not parse item_equip: %s", exc)
+
+    # -- player_spawn: reset HP/armor to round-start values --
+    try:
+        spawn_df = parser.parse_event(
+            "player_spawn",
+            other=["tick", "user_steamid"],
+        )
+        for row in _rows(spawn_df):
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            player_id = int(row.get("user_steamid", 0) or 0)
+            if player_id == 0:
+                continue
+            state_events.append(PlayerStateEvent(
+                tick=tick,
+                round_number=rn,
+                player_id=player_id,
+                event_type="spawn",
+                hp=100,
+                armor=0,
+            ))
+    except Exception as exc:
+        logger.debug("Could not parse player_spawn: %s", exc)
+
+    logger.info("Extracted %d player state events", len(state_events))
+    return sorted(state_events, key=lambda e: e.tick)

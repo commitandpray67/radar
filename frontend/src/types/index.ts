@@ -121,6 +121,44 @@ export interface HeatmapResult {
 }
 
 // ---------------------------------------------------------------------------
+// Grenade events
+// ---------------------------------------------------------------------------
+
+export type GrenadeType = 'he' | 'flash' | 'smoke' | 'molotov' | 'incendiary' | 'decoy';
+
+export interface GrenadeEvent {
+  id: number;
+  demo_id: string;
+  round_number: number;
+  thrower_id: number;       // SteamID64
+  grenade_type: GrenadeType;
+  throw_tick: number;
+  detonate_tick: number | null;
+  x: number;                // world detonation position
+  y: number;
+  z: number;
+  expire_tick: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Player state events (HP, armor, weapon equip)
+// ---------------------------------------------------------------------------
+
+export type PlayerStateEventType = 'hurt' | 'equip' | 'spawn';
+
+export interface PlayerStateEvent {
+  id: number;
+  demo_id: string;
+  tick: number;
+  round_number: number;
+  player_id: number;        // SteamID64
+  event_type: PlayerStateEventType;
+  hp: number | null;
+  armor: number | null;
+  weapon: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Playback state helpers
 // ---------------------------------------------------------------------------
 

@@ -110,21 +110,52 @@ async def init_db() -> None:
                 headshot        INTEGER          -- 0/1
             );
 
+            CREATE TABLE IF NOT EXISTS grenades (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                demo_id         TEXT NOT NULL REFERENCES demos(id),
+                round_number    INTEGER NOT NULL,
+                thrower_id      INTEGER NOT NULL,
+                grenade_type    TEXT NOT NULL,
+                throw_tick      INTEGER NOT NULL,
+                detonate_tick   INTEGER,
+                x               REAL,
+                y               REAL,
+                z               REAL,
+                expire_tick     INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS player_state_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                demo_id         TEXT NOT NULL REFERENCES demos(id),
+                tick            INTEGER NOT NULL,
+                round_number    INTEGER NOT NULL,
+                player_id       INTEGER NOT NULL,
+                event_type      TEXT NOT NULL,
+                hp              INTEGER,
+                armor           INTEGER,
+                weapon          TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_pos_demo_round
                 ON player_positions(demo_id, round_number);
             CREATE INDEX IF NOT EXISTS idx_pos_player
                 ON player_positions(demo_id, player_id);
             CREATE INDEX IF NOT EXISTS idx_events_demo
                 ON events(demo_id, round_number);
+            CREATE INDEX IF NOT EXISTS idx_grenades_demo
+                ON grenades(demo_id, round_number);
+            CREATE INDEX IF NOT EXISTS idx_pstate_demo
+                ON player_state_events(demo_id, round_number);
         """)
-        # Migration: add is_knife_round if an older DB doesn't have it yet
-        try:
-            await conn.execute(
-                "ALTER TABLE rounds ADD COLUMN is_knife_round INTEGER DEFAULT 0"
-            )
-            await conn.commit()
-        except Exception:
-            pass  # Column already exists — ignore
+        # Migrations: add columns / tables that older DBs may be missing
+        for migration in [
+            "ALTER TABLE rounds ADD COLUMN is_knife_round INTEGER DEFAULT 0",
+        ]:
+            try:
+                await conn.execute(migration)
+                await conn.commit()
+            except Exception:
+                pass  # already exists
         await conn.commit()
     logger.info("Database initialised at %s", await get_db_path())
 
@@ -236,5 +267,44 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
             ],
         )
 
+        # grenades
+        await conn.execute("DELETE FROM grenades WHERE demo_id = ?", (demo_id,))
+        if parsed.grenades:
+            await conn.executemany(
+                """INSERT INTO grenades
+                   (demo_id, round_number, thrower_id, grenade_type, throw_tick,
+                    detonate_tick, x, y, z, expire_tick)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                [
+                    (
+                        demo_id, g.round_number, g.thrower_id, g.grenade_type,
+                        g.throw_tick, g.detonate_tick, g.x, g.y, g.z, g.expire_tick,
+                    )
+                    for g in parsed.grenades
+                ],
+            )
+
+        # player_state_events
+        await conn.execute(
+            "DELETE FROM player_state_events WHERE demo_id = ?", (demo_id,)
+        )
+        if parsed.player_state_events:
+            await conn.executemany(
+                """INSERT INTO player_state_events
+                   (demo_id, tick, round_number, player_id, event_type, hp, armor, weapon)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                [
+                    (
+                        demo_id, e.tick, e.round_number, e.player_id,
+                        e.event_type, e.hp, e.armor, e.weapon,
+                    )
+                    for e in parsed.player_state_events
+                ],
+            )
+
         await conn.commit()
-    logger.info("Stored demo %s (%d positions, %d events)", demo_id, len(pos_rows), len(parsed.events))
+    logger.info(
+        "Stored demo %s (%d positions, %d events, %d grenades, %d state events)",
+        demo_id, len(pos_rows), len(parsed.events),
+        len(parsed.grenades), len(parsed.player_state_events),
+    )

@@ -22,6 +22,8 @@ import {
   getPlayers,
   getPositions,
   getEvents,
+  getGrenades,
+  getPlayerStateEvents,
   getMaps,
 } from '../../utils/api';
 import type { ParseJobStatus } from '../../types';
@@ -44,16 +46,18 @@ const DemoLoader: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const setDemo    = useAppStore((s) => s.setDemo);
-  const setRounds  = useAppStore((s) => s.setRounds);
-  const setPlayers = useAppStore((s) => s.setPlayers);
-  const setPositions = useAppStore((s) => s.setPositions);
-  const setEvents  = useAppStore((s) => s.setEvents);
-  const setMaps    = useAppStore((s) => s.setMaps);
-  const setCurrentMap = useAppStore((s) => s.setCurrentMap);
-  const setParseStatusStore = useAppStore((s) => s.setParseStatus);
-  const setActiveRound = useAppStore((s) => s.setActiveRound);
-  const maps       = useAppStore((s) => s.maps);
+  const setDemo              = useAppStore((s) => s.setDemo);
+  const setRounds            = useAppStore((s) => s.setRounds);
+  const setPlayers           = useAppStore((s) => s.setPlayers);
+  const setPositions         = useAppStore((s) => s.setPositions);
+  const setEvents            = useAppStore((s) => s.setEvents);
+  const setGrenades          = useAppStore((s) => s.setGrenades);
+  const setPlayerStateEvents = useAppStore((s) => s.setPlayerStateEvents);
+  const setMaps              = useAppStore((s) => s.setMaps);
+  const setCurrentMap        = useAppStore((s) => s.setCurrentMap);
+  const setParseStatusStore  = useAppStore((s) => s.setParseStatus);
+  const setActiveRound       = useAppStore((s) => s.setActiveRound);
+  const maps                 = useAppStore((s) => s.maps);
 
   // Preload maps on mount
   useEffect(() => {
@@ -92,18 +96,23 @@ const DemoLoader: React.FC = () => {
 
         // 3. Fetch all data
         setPhase('fetching');
-        const [rounds, players, positions, events, freshMaps] = await Promise.all([
-          getRounds(demo_id),
-          getPlayers(demo_id),
-          getPositions(demo_id),  // all rounds; may be large
-          getEvents(demo_id),
-          cached ? Promise.resolve(maps) : getMaps(),
-        ]);
+        const [rounds, players, positions, events, grenades, playerStateEvts, freshMaps] =
+          await Promise.all([
+            getRounds(demo_id),
+            getPlayers(demo_id),
+            getPositions(demo_id),
+            getEvents(demo_id),
+            getGrenades(demo_id),
+            getPlayerStateEvents(demo_id),
+            cached ? Promise.resolve(maps) : getMaps(),
+          ]);
 
         setRounds(rounds);
         setPlayers(players);
         setPositions(positions);
         setEvents(events);
+        setGrenades(grenades);
+        setPlayerStateEvents(playerStateEvts);
         if (!cached) setMaps(freshMaps);
 
         // Set current map calibration

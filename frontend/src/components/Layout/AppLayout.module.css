@@ -149,7 +149,7 @@
 
 /* ---- Right panel ---- */
 .rightPanel {
-  width: 180px;
+  width: 200px;
   flex-shrink: 0;
   border-left: 1px solid #1e2d3f;
   background: #0f1620;
@@ -158,13 +158,40 @@
   overflow: hidden;
 }
 
+/* Right panel tab bar */
+.rightTabBar {
+  display: flex;
+  border-bottom: 1px solid #1e2d3f;
+  flex-shrink: 0;
+}
+
+.rightTab {
+  flex: 1;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4a5a6a;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: color 0.1s;
+  letter-spacing: 0.04em;
+}
+.rightTab:hover { color: #c0cfe0; }
+.rightTab.rightTabActive {
+  color: #c0cfe0;
+  border-bottom: 2px solid #2a6abf;
+  margin-bottom: -1px;
+}
+
 .rightHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid #1e2d3f;
+  justify-content: flex-end;
+  padding: 6px 14px;
   flex-shrink: 0;
+  min-height: 26px;
 }
 
 .rightTitle {

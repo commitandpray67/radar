@@ -2,10 +2,13 @@
  * Global application state via Zustand.
  *
  * Slice responsibilities:
- *  demoStore  – loaded demo metadata, rounds, players, and position data
- *  playback   – current round selection, tick cursor, play/pause, speed
- *  heatmap    – heatmap mode flags, selected players/rounds, result image
- *  ui         – sidebar state, active panel, layer selection
+ *  demoStore    – loaded demo metadata, rounds, players, positions, events,
+ *                 grenades, player state events
+ *  playback     – current round selection, tick cursor, play/pause, speed,
+ *                 display toggles
+ *  heatmap      – heatmap mode flags, selected players/rounds, result image
+ *  multiRound   – multi-round overlay replay mode
+ *  ui           – sidebar state, active panel, layer selection
  */
 
 import { create } from 'zustand';
@@ -16,6 +19,8 @@ import type {
   PlayerInfo,
   PlayerPosition,
   GameEvent,
+  GrenadeEvent,
+  PlayerStateEvent,
   MapMeta,
   HeatmapResult,
   ParseJobStatus,
@@ -31,30 +36,29 @@ import {
 // ---------------------------------------------------------------------------
 
 interface DemoState {
-  // Loaded data
   demo: DemoMeta | null;
   rounds: RoundInfo[];
   players: PlayerInfo[];
   positions: PlayerPosition[];
   events: GameEvent[];
+  grenades: GrenadeEvent[];
+  playerStateEvents: PlayerStateEvent[];
 
-  // Map calibration data from server
   maps: MapMeta[];
   currentMap: MapMeta | null;
 
-  // Pre-built lookup for fast tick-based queries
   tickIndex: TickIndex;
   sortedTicks: number[];
 
-  // Parse-job status
   parseStatus: ParseJobStatus | null;
 
-  // Actions
   setDemo: (demo: DemoMeta) => void;
   setRounds: (rounds: RoundInfo[]) => void;
   setPlayers: (players: PlayerInfo[]) => void;
   setPositions: (positions: PlayerPosition[], roundNumbers?: number[]) => void;
   setEvents: (events: GameEvent[]) => void;
+  setGrenades: (grenades: GrenadeEvent[]) => void;
+  setPlayerStateEvents: (events: PlayerStateEvent[]) => void;
   setMaps: (maps: MapMeta[]) => void;
   setCurrentMap: (map: MapMeta | null) => void;
   setParseStatus: (status: ParseJobStatus | null) => void;
@@ -62,23 +66,19 @@ interface DemoState {
 }
 
 interface PlaybackState {
-  // Which round is currently selected for viewing
   activeRound: number | null;
-  // The current tick cursor (absolute tick number)
   currentTick: number;
   isPlaying: boolean;
-  speedMultiplier: number;   // 0.25 | 0.5 | 1 | 2 | 4
+  speedMultiplier: number;
 
-  // UI toggles
   showDeadPlayers: boolean;
   showTrails: boolean;
   trailLengthTicks: number;
   showBomb: boolean;
+  showGrenades: boolean;
 
-  // Selected players for filtering/heatmap
   selectedPlayerIds: Set<number>;
 
-  // Actions
   setActiveRound: (round: number | null) => void;
   setCurrentTick: (tick: number) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -87,6 +87,7 @@ interface PlaybackState {
   toggleShowTrails: () => void;
   setTrailLength: (ticks: number) => void;
   toggleShowBomb: () => void;
+  toggleShowGrenades: () => void;
   togglePlayerSelection: (playerId: number) => void;
   setSelectedPlayers: (ids: number[]) => void;
   clearSelectedPlayers: () => void;
@@ -99,7 +100,7 @@ interface HeatmapState {
   heatmapLoading: boolean;
   heatmapError: string | null;
   heatmapTeamFilter: 'CT' | 'T' | null;
-  activeLayerLabel: string;      // "" for single-level, "Upper"/"Lower" for multi
+  activeLayerLabel: string;
 
   setHeatmapMode: (on: boolean) => void;
   setHeatmapRounds: (rounds: number[]) => void;
@@ -111,6 +112,26 @@ interface HeatmapState {
   setActiveLayer: (label: string) => void;
 }
 
+interface MultiRoundState {
+  /** Whether multi-round overlay mode is active */
+  isMultiRoundMode: boolean;
+  /** Round numbers included in the overlay */
+  multiRoundSelectedRounds: number[];
+  /** SteamID64 player IDs to show (empty = all) */
+  multiRoundSelectedPlayers: Set<number>;
+  /** Relative tick cursor (0 = freeze_end_tick of each round) */
+  multiRoundRelativeTick: number;
+  multiRoundIsPlaying: boolean;
+
+  setMultiRoundMode: (on: boolean) => void;
+  toggleMultiRoundRound: (rn: number) => void;
+  setMultiRoundRounds: (rounds: number[]) => void;
+  toggleMultiRoundPlayer: (playerId: number) => void;
+  setMultiRoundPlayers: (ids: number[]) => void;
+  setMultiRoundRelativeTick: (tick: number) => void;
+  setMultiRoundIsPlaying: (playing: boolean) => void;
+}
+
 interface UIState {
   sidebarOpen: boolean;
   activePanel: 'rounds' | 'heatmap' | 'players';
@@ -119,8 +140,7 @@ interface UIState {
   setActivePanel: (panel: UIState['activePanel']) => void;
 }
 
-// Combined store type
-type AppStore = DemoState & PlaybackState & HeatmapState & UIState;
+type AppStore = DemoState & PlaybackState & HeatmapState & MultiRoundState & UIState;
 
 // ---------------------------------------------------------------------------
 // Store implementation
@@ -136,6 +156,8 @@ export const useAppStore = create<AppStore>()(
       players: [],
       positions: [],
       events: [],
+      grenades: [],
+      playerStateEvents: [],
       maps: [],
       currentMap: null,
       tickIndex: new Map(),
@@ -151,6 +173,9 @@ export const useAppStore = create<AppStore>()(
         set({ positions, tickIndex, sortedTicks }, false, 'setPositions');
       },
       setEvents: (events) => set({ events }, false, 'setEvents'),
+      setGrenades: (grenades) => set({ grenades }, false, 'setGrenades'),
+      setPlayerStateEvents: (playerStateEvents) =>
+        set({ playerStateEvents }, false, 'setPlayerStateEvents'),
       setMaps: (maps) => set({ maps }, false, 'setMaps'),
       setCurrentMap: (map) => set({ currentMap: map }, false, 'setCurrentMap'),
       setParseStatus: (parseStatus) => set({ parseStatus }, false, 'setParseStatus'),
@@ -163,6 +188,8 @@ export const useAppStore = create<AppStore>()(
             players: [],
             positions: [],
             events: [],
+            grenades: [],
+            playerStateEvents: [],
             currentMap: null,
             tickIndex: new Map(),
             sortedTicks: [],
@@ -175,6 +202,11 @@ export const useAppStore = create<AppStore>()(
             heatmapError: null,
             selectedPlayerIds: new Set(),
             selectedRoundsForHeatmap: [],
+            isMultiRoundMode: false,
+            multiRoundSelectedRounds: [],
+            multiRoundSelectedPlayers: new Set(),
+            multiRoundRelativeTick: 0,
+            multiRoundIsPlaying: false,
           },
           false,
           'reset',
@@ -187,8 +219,9 @@ export const useAppStore = create<AppStore>()(
       speedMultiplier: 1,
       showDeadPlayers: true,
       showTrails: false,
-      trailLengthTicks: 192,  // ~3 s at 64 tick
+      trailLengthTicks: 192,
       showBomb: true,
+      showGrenades: true,
       selectedPlayerIds: new Set(),
 
       setActiveRound: (round) => {
@@ -216,6 +249,8 @@ export const useAppStore = create<AppStore>()(
         set({ trailLengthTicks: ticks }, false, 'setTrailLength'),
       toggleShowBomb: () =>
         set((s) => ({ showBomb: !s.showBomb }), false, 'toggleShowBomb'),
+      toggleShowGrenades: () =>
+        set((s) => ({ showGrenades: !s.showGrenades }), false, 'toggleShowGrenades'),
       togglePlayerSelection: (playerId) =>
         set((s) => {
           const next = new Set(s.selectedPlayerIds);
@@ -259,6 +294,43 @@ export const useAppStore = create<AppStore>()(
       setActiveLayer: (activeLayerLabel) =>
         set({ activeLayerLabel }, false, 'setActiveLayer'),
 
+      // ----- Multi-round state -----
+      isMultiRoundMode: false,
+      multiRoundSelectedRounds: [],
+      multiRoundSelectedPlayers: new Set(),
+      multiRoundRelativeTick: 0,
+      multiRoundIsPlaying: false,
+
+      setMultiRoundMode: (on) => {
+        set(
+          { isMultiRoundMode: on, multiRoundRelativeTick: 0, multiRoundIsPlaying: false },
+          false,
+          'setMultiRoundMode',
+        );
+      },
+      toggleMultiRoundRound: (rn) =>
+        set((s) => {
+          const next = s.multiRoundSelectedRounds.includes(rn)
+            ? s.multiRoundSelectedRounds.filter((r) => r !== rn)
+            : [...s.multiRoundSelectedRounds, rn];
+          return { multiRoundSelectedRounds: next };
+        }, false, 'toggleMultiRoundRound'),
+      setMultiRoundRounds: (rounds) =>
+        set({ multiRoundSelectedRounds: rounds }, false, 'setMultiRoundRounds'),
+      toggleMultiRoundPlayer: (playerId) =>
+        set((s) => {
+          const next = new Set(s.multiRoundSelectedPlayers);
+          if (next.has(playerId)) next.delete(playerId);
+          else next.add(playerId);
+          return { multiRoundSelectedPlayers: next };
+        }, false, 'toggleMultiRoundPlayer'),
+      setMultiRoundPlayers: (ids) =>
+        set({ multiRoundSelectedPlayers: new Set(ids) }, false, 'setMultiRoundPlayers'),
+      setMultiRoundRelativeTick: (tick) =>
+        set({ multiRoundRelativeTick: tick }, false, 'setMultiRoundRelativeTick'),
+      setMultiRoundIsPlaying: (playing) =>
+        set({ multiRoundIsPlaying: playing }, false, 'setMultiRoundIsPlaying'),
+
       // ----- UI state -----
       sidebarOpen: true,
       activePanel: 'rounds',
@@ -272,7 +344,7 @@ export const useAppStore = create<AppStore>()(
   ),
 );
 
-// Convenience selectors (avoids re-render on unrelated state changes)
+// Convenience selectors
 export const useDemo = () => useAppStore((s) => s.demo);
 export const useRounds = () => useAppStore((s) => s.rounds);
 export const usePlayers = () => useAppStore((s) => s.players);
@@ -282,3 +354,4 @@ export const useIsPlaying = () => useAppStore((s) => s.isPlaying);
 export const useSelectedPlayers = () => useAppStore((s) => s.selectedPlayerIds);
 export const useHeatmapMode = () => useAppStore((s) => s.isHeatmapMode);
 export const useCurrentMap = () => useAppStore((s) => s.currentMap);
+export const useIsMultiRoundMode = () => useAppStore((s) => s.isMultiRoundMode);

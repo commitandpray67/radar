@@ -1,18 +1,13 @@
 /**
- * RadarViewer — the central canvas-based map component.
+ * RadarViewer — canvas-based map renderer.
  *
  * Renders:
- *  1. The map radar image as the background
- *  2. Player position markers for the current tick
- *  3. Player movement trails (last N ticks)
- *  4. Heatmap overlay image (when in heatmap mode)
- *  5. Event markers (deaths, bomb plant/defuse)
- *
- * All drawing happens on an HTML5 Canvas for performance.
- * The canvas is sized to fill its container and re-renders on:
- *  - tick change (playback)
- *  - position data change (round switch)
- *  - toggle changes (dead players, trails, heatmap)
+ *  1. Radar background image
+ *  2. Player position markers (single-round mode)
+ *  3. Movement trails
+ *  4. Grenade trajectories + detonation effects
+ *  5. Heatmap overlay (heatmap mode)
+ *  6. Multi-round overlay (all selected rounds simultaneously)
  */
 
 import React, {
@@ -24,7 +19,7 @@ import React, {
   useState,
 } from 'react';
 import { useAppStore } from '../../store/demoStore';
-import type { TickSnapshot } from '../../types';
+import type { GrenadeEvent, TickSnapshot } from '../../types';
 import { TEAM_COLORS } from '../../types';
 import Killfeed from '../Killfeed/Killfeed';
 import {
@@ -33,37 +28,46 @@ import {
 } from '../../utils/coordinates';
 import {
   getSnapshotAtTick,
+  getSortedTicks,
   nearestTick,
+  type TickIndex,
 } from '../../utils/playback';
 import styles from './RadarViewer.module.css';
 
 // ---------------------------------------------------------------------------
-// Hard-coded calibration values that the frontend knows about.
-// In production, fetch from /api/maps and store in the Zustand store.
-// These mirror backend/maps/calibration.py.
+// Map calibrations (mirrors backend calibration.py)
 // ---------------------------------------------------------------------------
 const MAP_CALIBRATIONS: Record<string, CalibrationParams> = {
-  de_dust2:   { pos_x: -2476, pos_y:  3239, scale: 4.4, rotate: 0 },
-  de_mirage:  { pos_x: -3230, pos_y:  1713, scale: 5.0, rotate: 0 },
-  de_inferno: { pos_x: -2087, pos_y:  3870, scale: 4.9, rotate: 0 },
-  de_cache:   { pos_x: -2000, pos_y:  3250, scale: 5.5, rotate: 0 },
-  de_overpass:{ pos_x: -4831, pos_y:  1781, scale: 5.2, rotate: 0 },
-  de_ancient: { pos_x: -2953, pos_y:  2164, scale: 5.0, rotate: 0 },
-  de_anubis:  { pos_x: -2796, pos_y:  3328, scale: 5.22,rotate: 0 },
-  de_vertigo: { pos_x: -3168, pos_y:  1762, scale: 4.0, rotate: 0 },
-  de_nuke:    { pos_x: -3453, pos_y:  2887, scale: 7.0, rotate: 0 },
-  de_train:   { pos_x: -2477, pos_y:  2392, scale: 4.7, rotate: 0 },
-  de_office:  { pos_x: -1838, pos_y:  1858, scale: 4.1, rotate: 0 },
-  cs_italy:   { pos_x: -2647, pos_y:  2592, scale: 4.6, rotate: 0 },
+  de_dust2:    { pos_x: -2476, pos_y:  3239, scale: 4.4, rotate: 0 },
+  de_mirage:   { pos_x: -3230, pos_y:  1713, scale: 5.0, rotate: 0 },
+  de_inferno:  { pos_x: -2087, pos_y:  3870, scale: 4.9, rotate: 0 },
+  de_cache:    { pos_x: -2000, pos_y:  3250, scale: 5.5, rotate: 0 },
+  de_overpass: { pos_x: -4831, pos_y:  1781, scale: 5.2, rotate: 0 },
+  de_ancient:  { pos_x: -2953, pos_y:  2164, scale: 5.0, rotate: 0 },
+  de_anubis:   { pos_x: -2796, pos_y:  3328, scale: 5.22, rotate: 0 },
+  de_vertigo:  { pos_x: -3168, pos_y:  1762, scale: 4.0, rotate: 0 },
+  de_nuke:     { pos_x: -3453, pos_y:  2887, scale: 7.0, rotate: 0 },
+  de_train:    { pos_x: -2477, pos_y:  2392, scale: 4.7, rotate: 0 },
+  de_office:   { pos_x: -1838, pos_y:  1858, scale: 4.1, rotate: 0 },
+  cs_italy:    { pos_x: -2647, pos_y:  2592, scale: 4.6, rotate: 0 },
 };
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const MARKER_RADIUS = 7;         // player dot radius in canvas pixels
-const FONT_SIZE = 10;            // label font size
-const TRAIL_ALPHA_MAX = 0.55;    // opacity of the most recent trail point
-const DEAD_ALPHA = 0.35;         // opacity of dead player markers
+const MARKER_RADIUS   = 7;
+const FONT_SIZE       = 10;
+const TRAIL_ALPHA_MAX = 0.55;
+const DEAD_ALPHA      = 0.35;
+
+// Grenade effect radius on the radar (canvas pixels) — approximations
+const SMOKE_RADIUS_PX    = 40;
+const MOLOTOV_RADIUS_PX  = 28;
+const HE_RADIUS_PX       = 18;
+const FLASH_RADIUS_PX    = 14;
+
+// Multi-round overlay dot colour (neutral, same for all teams / rounds)
+const MULTI_DOT_COLOR = '#c8d8e8';
 
 // ---------------------------------------------------------------------------
 // Drawing helpers
@@ -83,7 +87,6 @@ function drawPlayerMarker(
   ctx.save();
   ctx.globalAlpha = isAlive ? alpha : alpha * DEAD_ALPHA;
 
-  // Glow ring for selected players
   if (isSelected) {
     ctx.beginPath();
     ctx.arc(cx, cy, radius + 4, 0, Math.PI * 2);
@@ -92,33 +95,27 @@ function drawPlayerMarker(
     ctx.stroke();
   }
 
-  // Main circle
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
 
-  // Dead cross
   if (!isAlive) {
     ctx.strokeStyle = 'rgba(255,255,255,0.8)';
     ctx.lineWidth = 1.5;
     const d = radius * 0.6;
     ctx.beginPath();
-    ctx.moveTo(cx - d, cy - d);
-    ctx.lineTo(cx + d, cy + d);
-    ctx.moveTo(cx + d, cy - d);
-    ctx.lineTo(cx - d, cy + d);
+    ctx.moveTo(cx - d, cy - d); ctx.lineTo(cx + d, cy + d);
+    ctx.moveTo(cx + d, cy - d); ctx.lineTo(cx - d, cy + d);
     ctx.stroke();
   }
 
-  // Label (player number, e.g. "1"–"10")
   ctx.globalAlpha = isAlive ? 1 : DEAD_ALPHA;
   ctx.font = `bold ${FONT_SIZE}px 'JetBrains Mono', monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffffff';
   ctx.fillText(label, cx, cy + 0.5);
-
   ctx.restore();
 }
 
@@ -142,32 +139,167 @@ function drawTrail(
   ctx.restore();
 }
 
+function drawGrenade(
+  ctx: CanvasRenderingContext2D,
+  g: GrenadeEvent,
+  currentTick: number,
+  throwCx: number,
+  throwCy: number,
+  detonateCx: number,
+  detonateCy: number,
+  canvasSize: number,
+): void {
+  const { throw_tick, detonate_tick, expire_tick, grenade_type } = g;
+  const inFlight   = detonate_tick !== null && currentTick >= throw_tick && currentTick < detonate_tick;
+  const detonated  = detonate_tick !== null && currentTick >= detonate_tick;
+  const expired    = expire_tick !== null && currentTick >= expire_tick;
+
+  ctx.save();
+
+  if (inFlight && detonate_tick !== null) {
+    // Animate grenade dot along trajectory
+    const progress = (currentTick - throw_tick) / (detonate_tick - throw_tick);
+    const gx = throwCx + (detonateCx - throwCx) * progress;
+    const gy = throwCy + (detonateCy - throwCy) * progress;
+
+    // Dashed trajectory line
+    ctx.setLineDash([3, 4]);
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    ctx.moveTo(throwCx, throwCy);
+    ctx.lineTo(detonateCx, detonateCy);
+    ctx.strokeStyle = grenadeLineColor(grenade_type);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Moving dot
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.arc(gx, gy, 4, 0, Math.PI * 2);
+    ctx.fillStyle = grenadeLineColor(grenade_type);
+    ctx.fill();
+  }
+
+  if (detonated && !expired) {
+    // Draw effect at detonation position
+    const age = currentTick - detonate_tick!;
+    const maxAge = expire_tick ? expire_tick - detonate_tick! : 64;
+    const fadeRatio = 1 - Math.min(1, age / maxAge);
+
+    switch (grenade_type) {
+      case 'smoke': {
+        // Expanding grey circle that settles
+        const growTicks = 96;  // ~1.5 s expansion
+        const expandRatio = Math.min(1, age / growTicks);
+        const r = SMOKE_RADIUS_PX * expandRatio * (canvasSize / 1024);
+        ctx.globalAlpha = 0.55 * fadeRatio + 0.05;
+        ctx.beginPath();
+        ctx.arc(detonateCx, detonateCy, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#a0b0b8';
+        ctx.fill();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = '#d0e0e8';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        break;
+      }
+      case 'molotov':
+      case 'incendiary': {
+        const r = MOLOTOV_RADIUS_PX * (canvasSize / 1024);
+        ctx.globalAlpha = 0.5 * fadeRatio + 0.1;
+        ctx.beginPath();
+        ctx.arc(detonateCx, detonateCy, r, 0, Math.PI * 2);
+        ctx.fillStyle = grenade_type === 'molotov' ? '#e05020' : '#e07020';
+        ctx.fill();
+        ctx.globalAlpha = 0.8;
+        ctx.strokeStyle = '#ffaa44';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        break;
+      }
+      case 'he': {
+        const r = HE_RADIUS_PX * (1 + age / 32) * (canvasSize / 1024);
+        ctx.globalAlpha = 0.7 * fadeRatio;
+        ctx.beginPath();
+        ctx.arc(detonateCx, detonateCy, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffdd44';
+        ctx.fill();
+        break;
+      }
+      case 'flash': {
+        const r = FLASH_RADIUS_PX * (1 + age / 24) * (canvasSize / 1024);
+        ctx.globalAlpha = 0.65 * fadeRatio;
+        ctx.beginPath();
+        ctx.arc(detonateCx, detonateCy, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        break;
+      }
+      case 'decoy': {
+        const r = 8 * (canvasSize / 1024);
+        ctx.globalAlpha = 0.5 * fadeRatio;
+        ctx.beginPath();
+        ctx.arc(detonateCx, detonateCy, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#a0a0a0';
+        ctx.fill();
+        break;
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
+function grenadeLineColor(type: string): string {
+  switch (type) {
+    case 'smoke':     return '#b0c8d8';
+    case 'he':        return '#ffd040';
+    case 'flash':     return '#e8e8ff';
+    case 'molotov':
+    case 'incendiary': return '#ff6020';
+    case 'decoy':     return '#a0a0c0';
+    default:          return '#cccccc';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 const RadarViewer: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const radarImgRef = useRef<HTMLImageElement | null>(null);
+  const canvasRef       = useRef<HTMLCanvasElement>(null);
+  const containerRef    = useRef<HTMLDivElement>(null);
+  const radarImgRef     = useRef<HTMLImageElement | null>(null);
   const [canvasSize, setCanvasSize] = useState(600);
 
   // Store selectors
-  const demo = useAppStore((s) => s.demo);
-  const players = useAppStore((s) => s.players);
-  const currentTick = useAppStore((s) => s.currentTick);
-  const tickIndex = useAppStore((s) => s.tickIndex);
-  const sortedTicks = useAppStore((s) => s.sortedTicks);
-  const showDeadPlayers = useAppStore((s) => s.showDeadPlayers);
-  const showTrails = useAppStore((s) => s.showTrails);
-  const trailLengthTicks = useAppStore((s) => s.trailLengthTicks);
-  const selectedPlayerIds = useAppStore((s) => s.selectedPlayerIds);
-  const isHeatmapMode = useAppStore((s) => s.isHeatmapMode);
-  const heatmapResult = useAppStore((s) => s.heatmapResult);
-  const heatmapLoading = useAppStore((s) => s.heatmapLoading);
+  const demo               = useAppStore((s) => s.demo);
+  const players            = useAppStore((s) => s.players);
+  const currentTick        = useAppStore((s) => s.currentTick);
+  const tickIndex          = useAppStore((s) => s.tickIndex);
+  const sortedTicks        = useAppStore((s) => s.sortedTicks);
+  const showDeadPlayers    = useAppStore((s) => s.showDeadPlayers);
+  const showTrails         = useAppStore((s) => s.showTrails);
+  const trailLengthTicks   = useAppStore((s) => s.trailLengthTicks);
+  const showGrenades       = useAppStore((s) => s.showGrenades);
+  const selectedPlayerIds  = useAppStore((s) => s.selectedPlayerIds);
+  const isHeatmapMode      = useAppStore((s) => s.isHeatmapMode);
+  const heatmapResult      = useAppStore((s) => s.heatmapResult);
+  const heatmapLoading     = useAppStore((s) => s.heatmapLoading);
+  const grenades           = useAppStore((s) => s.grenades);
+  const activeRound        = useAppStore((s) => s.activeRound);
+  const positions          = useAppStore((s) => s.positions);
+
+  // Multi-round mode
+  const isMultiRoundMode        = useAppStore((s) => s.isMultiRoundMode);
+  const multiRoundSelectedRounds = useAppStore((s) => s.multiRoundSelectedRounds);
+  const multiRoundSelectedPlayers = useAppStore((s) => s.multiRoundSelectedPlayers);
+  const multiRoundRelativeTick   = useAppStore((s) => s.multiRoundRelativeTick);
+  const rounds                   = useAppStore((s) => s.rounds);
 
   // ---------------------------------------------------------------------------
-  // Calibration for the current map
+  // Calibration
   // ---------------------------------------------------------------------------
   const calibration = useMemo<CalibrationParams | null>(() => {
     if (!demo) return null;
@@ -175,45 +307,31 @@ const RadarViewer: React.FC = () => {
   }, [demo]);
 
   // ---------------------------------------------------------------------------
-  // Load radar background image
+  // Load radar image
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!demo) return;
     const img = new Image();
     img.src = `/maps/${demo.map_name}_radar.png`;
-    img.onload = () => {
-      radarImgRef.current = img;
-      drawFrame();
-    };
-    img.onerror = () => {
-      // Fallback: use placeholder
-      radarImgRef.current = null;
-      drawFrame();
-    };
+    img.onload = () => { radarImgRef.current = img; drawFrame(); };
+    img.onerror = () => { radarImgRef.current = null; drawFrame(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demo?.map_name]);
 
   // ---------------------------------------------------------------------------
-  // Heatmap overlay image (preloaded)
+  // Heatmap overlay
   // ---------------------------------------------------------------------------
   const heatmapImgRef = useRef<HTMLImageElement | null>(null);
   useEffect(() => {
-    if (!heatmapResult) {
-      heatmapImgRef.current = null;
-      drawFrame();
-      return;
-    }
+    if (!heatmapResult) { heatmapImgRef.current = null; drawFrame(); return; }
     const img = new Image();
     img.src = heatmapResult.image;
-    img.onload = () => {
-      heatmapImgRef.current = img;
-      drawFrame();
-    };
+    img.onload = () => { heatmapImgRef.current = img; drawFrame(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heatmapResult]);
 
   // ---------------------------------------------------------------------------
-  // Resize observer — keep canvas square and filling the container
+  // Resize observer
   // ---------------------------------------------------------------------------
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -227,7 +345,33 @@ const RadarViewer: React.FC = () => {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Player number helper — returns "1"–"10" based on position in players array
+  // Per-round index for multi-round mode (O(n) one pass)
+  // ---------------------------------------------------------------------------
+  const perRoundData = useMemo<Map<number, { tickIndex: TickIndex; sortedTicks: number[] }> | null>(() => {
+    if (!isMultiRoundMode || multiRoundSelectedRounds.length === 0) return null;
+    const selectedSet = new Set(multiRoundSelectedRounds);
+    const roundIndexes = new Map<number, TickIndex>();
+
+    for (const pos of positions) {
+      if (!selectedSet.has(pos.round_number)) continue;
+      // Player filter: if selectedPlayers is non-empty, only include those players
+      if (multiRoundSelectedPlayers.size > 0 && !multiRoundSelectedPlayers.has(pos.player_id)) continue;
+      if (!roundIndexes.has(pos.round_number)) roundIndexes.set(pos.round_number, new Map());
+      const idx = roundIndexes.get(pos.round_number)!;
+      let snap = idx.get(pos.tick);
+      if (!snap) { snap = new Map(); idx.set(pos.tick, snap); }
+      snap.set(pos.player_id, pos);
+    }
+
+    const result = new Map<number, { tickIndex: TickIndex; sortedTicks: number[] }>();
+    for (const [rn, idx] of roundIndexes.entries()) {
+      result.set(rn, { tickIndex: idx, sortedTicks: getSortedTicks(idx) });
+    }
+    return result;
+  }, [isMultiRoundMode, multiRoundSelectedRounds, multiRoundSelectedPlayers, positions]);
+
+  // ---------------------------------------------------------------------------
+  // Player label (number 1-10)
   // ---------------------------------------------------------------------------
   const playerLabel = useCallback(
     (playerId: number): string => {
@@ -238,26 +382,38 @@ const RadarViewer: React.FC = () => {
   );
 
   // ---------------------------------------------------------------------------
-  // Trail positions: collect the last N sorted ticks for each player
+  // Trail snapshots (single-round mode)
   // ---------------------------------------------------------------------------
   const trailSnapshots = useMemo(() => {
     if (!showTrails || !sortedTicks.length) return [];
     const idx = nearestTick(currentTick, sortedTicks);
     if (idx === undefined) return [];
     const cursor = sortedTicks.indexOf(idx);
-    // Take the previous trailLengthTicks ticks worth of snapshots
-    const approxSteps = Math.ceil(trailLengthTicks / 8); // 8 = sample_rate
+    const approxSteps = Math.ceil(trailLengthTicks / 8);
     const start = Math.max(0, cursor - approxSteps);
     return sortedTicks.slice(start, cursor + 1).map((t) => tickIndex.get(t)!).filter(Boolean);
   }, [showTrails, sortedTicks, currentTick, trailLengthTicks, tickIndex]);
 
   // ---------------------------------------------------------------------------
-  // Current snapshot
+  // Current snapshot (single-round mode)
   // ---------------------------------------------------------------------------
   const snapshot = useMemo<TickSnapshot | undefined>(
     () => getSnapshotAtTick(currentTick, tickIndex, sortedTicks),
     [currentTick, tickIndex, sortedTicks],
   );
+
+  // ---------------------------------------------------------------------------
+  // Grenades visible at current tick (single-round mode)
+  // ---------------------------------------------------------------------------
+  const visibleGrenades = useMemo<GrenadeEvent[]>(() => {
+    if (!showGrenades || activeRound === null) return [];
+    return grenades.filter((g) => {
+      if (g.round_number !== activeRound) return false;
+      if (currentTick < g.throw_tick) return false;
+      if (g.expire_tick !== null && currentTick >= g.expire_tick) return false;
+      return true;
+    });
+  }, [showGrenades, grenades, activeRound, currentTick]);
 
   // ---------------------------------------------------------------------------
   // Main draw function
@@ -268,55 +424,96 @@ const RadarViewer: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Clear
     ctx.clearRect(0, 0, canvasSize, canvasSize);
 
-    // --- Background radar image ---
+    // Background
     if (radarImgRef.current) {
       ctx.drawImage(radarImgRef.current, 0, 0, canvasSize, canvasSize);
     } else {
-      // Placeholder grid
       ctx.fillStyle = '#1a2332';
       ctx.fillRect(0, 0, canvasSize, canvasSize);
-      ctx.strokeStyle = '#2a3a52';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#2a3a52'; ctx.lineWidth = 1;
       const step = canvasSize / 8;
       for (let i = 0; i <= 8; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * step, 0);
-        ctx.lineTo(i * step, canvasSize);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, i * step);
-        ctx.lineTo(canvasSize, i * step);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, canvasSize); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(canvasSize, i * step); ctx.stroke();
       }
-      ctx.fillStyle = '#4a5a6a';
-      ctx.font = '14px Inter, sans-serif';
+      ctx.fillStyle = '#4a5a6a'; ctx.font = '14px Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(
         demo ? `${demo.map_name} — radar image not found` : 'No demo loaded',
-        canvasSize / 2,
-        canvasSize / 2,
+        canvasSize / 2, canvasSize / 2,
       );
     }
 
     if (!calibration) return;
 
-    // --- Heatmap overlay ---
+    // ---- Heatmap mode ----
     if (isHeatmapMode && heatmapImgRef.current) {
       ctx.save();
       ctx.globalAlpha = 0.75;
       ctx.drawImage(heatmapImgRef.current, 0, 0, canvasSize, canvasSize);
       ctx.restore();
-      return; // In heatmap mode, don't draw individual players
+      return;
     }
 
+    // ---- Multi-round overlay mode ----
+    if (isMultiRoundMode && perRoundData) {
+      for (const rn of multiRoundSelectedRounds) {
+        const roundInfo = rounds.find((r) => r.round_number === rn);
+        if (!roundInfo) continue;
+        const rdData = perRoundData.get(rn);
+        if (!rdData) continue;
+
+        const absoluteTick = roundInfo.freeze_end_tick + multiRoundRelativeTick;
+        if (absoluteTick > roundInfo.end_tick) continue;  // this round ended
+
+        const snap = getSnapshotAtTick(absoluteTick, rdData.tickIndex, rdData.sortedTicks);
+        if (!snap) continue;
+
+        for (const [pid, pos] of snap.entries()) {
+          const alive = pos.is_alive === 1;
+          const { cx, cy } = worldToCanvas(pos.x, pos.y, calibration, canvasSize);
+          drawPlayerMarker(ctx, cx, cy, MULTI_DOT_COLOR, playerLabel(pid), 1, alive, false);
+        }
+      }
+
+      // Draw grenades for multi-round (selected players only)
+      if (showGrenades) {
+        for (const rn of multiRoundSelectedRounds) {
+          const roundInfo = rounds.find((r) => r.round_number === rn);
+          if (!roundInfo) continue;
+          const absoluteTick = roundInfo.freeze_end_tick + multiRoundRelativeTick;
+          const roundGrenades = grenades.filter((g) => {
+            if (g.round_number !== rn) return false;
+            if (multiRoundSelectedPlayers.size > 0 && !multiRoundSelectedPlayers.has(g.thrower_id)) return false;
+            if (absoluteTick < g.throw_tick) return false;
+            if (g.expire_tick !== null && absoluteTick >= g.expire_tick) return false;
+            return true;
+          });
+          const rdData = perRoundData.get(rn);
+          for (const g of roundGrenades) {
+            const throwSnap = rdData
+              ? getSnapshotAtTick(g.throw_tick, rdData.tickIndex, rdData.sortedTicks)
+              : undefined;
+            const throwerPos = throwSnap?.get(g.thrower_id);
+            if (!throwerPos && g.detonate_tick === null) continue;
+            const { cx: txCx, cy: txCy } = throwerPos
+              ? worldToCanvas(throwerPos.x, throwerPos.y, calibration, canvasSize)
+              : worldToCanvas(g.x, g.y, calibration, canvasSize);
+            const { cx: dxCx, cy: dxCy } = worldToCanvas(g.x, g.y, calibration, canvasSize);
+            drawGrenade(ctx, g, absoluteTick, txCx, txCy, dxCx, dxCy, canvasSize);
+          }
+        }
+      }
+      return;
+    }
+
+    // ---- Single-round mode ----
     if (!snapshot) return;
 
-    // --- Trails ---
+    // Trails
     if (showTrails && trailSnapshots.length > 1) {
-      // Build per-player trail arrays
       const playerTrails = new Map<number, Array<{ cx: number; cy: number }>>();
       for (const snap of trailSnapshots) {
         for (const [pid, pos] of snap.entries()) {
@@ -332,59 +529,57 @@ const RadarViewer: React.FC = () => {
       }
     }
 
-    // --- Player markers ---
+    // Grenades (single-round)
+    if (showGrenades && calibration) {
+      for (const g of visibleGrenades) {
+        const throwSnap = getSnapshotAtTick(g.throw_tick, tickIndex, sortedTicks);
+        const throwerPos = throwSnap?.get(g.thrower_id);
+        const { cx: dxCx, cy: dxCy } = worldToCanvas(g.x, g.y, calibration, canvasSize);
+        const { cx: txCx, cy: txCy } = throwerPos
+          ? worldToCanvas(throwerPos.x, throwerPos.y, calibration, canvasSize)
+          : { cx: dxCx, cy: dxCy };
+        drawGrenade(ctx, g, currentTick, txCx, txCy, dxCx, dxCy, canvasSize);
+      }
+    }
+
+    // Player markers
     for (const [pid, pos] of snapshot.entries()) {
       const alive = pos.is_alive === 1 || pos.is_alive === (true as unknown as number);
       if (!showDeadPlayers && !alive) continue;
-
-      // Filter: if players are selected, show only them (plus all in radar mode)
       const isSelected = selectedPlayerIds.has(pid);
       const color = pos.team_num === 3 ? TEAM_COLORS.CT : TEAM_COLORS.T;
       const { cx, cy } = worldToCanvas(pos.x, pos.y, calibration, canvasSize);
-      const label = playerLabel(pid);
-
-      drawPlayerMarker(ctx, cx, cy, color, label, 1, alive, isSelected);
+      drawPlayerMarker(ctx, cx, cy, color, playerLabel(pid), 1, alive, isSelected);
     }
   }, [
-    canvasSize,
-    calibration,
-    snapshot,
-    showDeadPlayers,
-    showTrails,
-    trailSnapshots,
-    selectedPlayerIds,
-    playerLabel,
-    isHeatmapMode,
-    demo,
+    canvasSize, calibration, snapshot, showDeadPlayers, showTrails, trailSnapshots,
+    selectedPlayerIds, playerLabel, isHeatmapMode, demo, showGrenades, visibleGrenades,
+    tickIndex, sortedTicks, currentTick,
+    isMultiRoundMode, perRoundData, multiRoundSelectedRounds, multiRoundRelativeTick,
+    multiRoundSelectedPlayers, rounds, grenades,
   ]);
 
-  // Re-draw whenever anything relevant changes
-  useEffect(() => {
-    drawFrame();
-  }, [drawFrame]);
+  useEffect(() => { drawFrame(); }, [drawFrame]);
 
   // ---------------------------------------------------------------------------
-  // Click handler — select/deselect a player by clicking their marker
+  // Click handler
   // ---------------------------------------------------------------------------
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!snapshot || !calibration) return;
+      if (!snapshot || !calibration || isMultiRoundMode) return;
       const rect = canvasRef.current!.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
-
       const togglePlayer = useAppStore.getState().togglePlayerSelection;
-
       for (const [pid, pos] of snapshot.entries()) {
         const { cx, cy } = worldToCanvas(pos.x, pos.y, calibration, canvasSize);
-        const dist = Math.hypot(clickX - cx, clickY - cy);
-        if (dist < MARKER_RADIUS + 4) {
+        if (Math.hypot(clickX - cx, clickY - cy) < MARKER_RADIUS + 4) {
           togglePlayer(pid);
           break;
         }
       }
     },
-    [snapshot, calibration, canvasSize],
+    [snapshot, calibration, canvasSize, isMultiRoundMode],
   );
 
   // ---------------------------------------------------------------------------
@@ -398,18 +593,19 @@ const RadarViewer: React.FC = () => {
         height={canvasSize}
         className={styles.canvas}
         onClick={handleCanvasClick}
-        title="Click a player marker to select/deselect"
+        title={isMultiRoundMode ? 'Multi-round overlay active' : 'Click a player marker to select/deselect'}
       />
-      {demo && !isHeatmapMode && <Killfeed />}
+      {demo && !isHeatmapMode && !isMultiRoundMode && <Killfeed />}
       {heatmapLoading && (
-        <div className={styles.loadingOverlay}>
-          <span>Generating heatmap…</span>
+        <div className={styles.loadingOverlay}><span>Generating heatmap…</span></div>
+      )}
+      {isMultiRoundMode && (
+        <div className={styles.multiRoundBadge}>
+          Multi-round overlay — {multiRoundSelectedRounds.length} rounds
         </div>
       )}
       {!demo && (
-        <div className={styles.emptyState}>
-          <p>Load a demo to begin</p>
-        </div>
+        <div className={styles.emptyState}><p>Load a demo to begin</p></div>
       )}
     </div>
   );

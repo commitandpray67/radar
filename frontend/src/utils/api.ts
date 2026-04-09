@@ -10,6 +10,8 @@ import type {
   PlayerInfo,
   PlayerPosition,
   GameEvent,
+  GrenadeEvent,
+  PlayerStateEvent,
   MapMeta,
   HeatmapPayload,
   HeatmapResult,
@@ -158,6 +160,33 @@ export async function getEvents(
   params: { round_number?: number; event_type?: string } = {},
 ): Promise<GameEvent[]> {
   const res = await http.get(`/demos/${demoId}/events`, { params });
+  return res.data;
+}
+
+// ---------------------------------------------------------------------------
+// Grenades
+// ---------------------------------------------------------------------------
+
+export async function getGrenades(
+  demoId: string,
+  params: { round_number?: number } = {},
+): Promise<GrenadeEvent[]> {
+  const res = await http.get(`/demos/${demoId}/grenades`, { params });
+  return res.data;
+}
+
+// ---------------------------------------------------------------------------
+// Player state events
+// ---------------------------------------------------------------------------
+
+export async function getPlayerStateEvents(
+  demoId: string,
+  params: { round_number?: number; player_ids?: number[] } = {},
+): Promise<PlayerStateEvent[]> {
+  const query: Record<string, string | number> = {};
+  if (params.round_number !== undefined) query.round_number = params.round_number;
+  if (params.player_ids?.length) query.player_ids = params.player_ids.join(',');
+  const res = await http.get(`/demos/${demoId}/player-state-events`, { params: query });
   return res.data;
 }
 

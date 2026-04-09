@@ -139,3 +139,16 @@
   background: #1a3d5c;
   border-color: #2a6abf;
 }
+
+.multiLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: #70b8f8;
+  font-family: 'Inter', sans-serif;
+  letter-spacing: 0.06em;
+  background: #1a3a5a;
+  border: 1px solid #2a6a9a;
+  padding: 3px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
