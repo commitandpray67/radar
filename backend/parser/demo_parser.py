@@ -1029,6 +1029,33 @@ def _extract_player_state_events(
     except Exception as exc:
         logger.debug("Could not parse item_pickup: %s", exc)
 
+    # -- item_purchase: captures armor and bought pistols/primaries --
+    try:
+        purchase_df = parser.parse_event(
+            "item_purchase",
+            other=["tick", "user_steamid", "weapon"],
+        )
+        for row in _rows(purchase_df):
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            player_id = int(row.get("user_steamid", 0) or 0)
+            if player_id == 0:
+                continue
+            weapon = str(row.get("weapon", "") or "")
+            if not weapon:
+                continue
+            state_events.append(PlayerStateEvent(
+                tick=tick,
+                round_number=rn,
+                player_id=player_id,
+                event_type="equip",
+                weapon=weapon,
+            ))
+    except Exception as exc:
+        logger.debug("Could not parse item_purchase: %s", exc)
+
     # -- player_spawn: reset HP/armor to round-start values --
     try:
         spawn_df = parser.parse_event(

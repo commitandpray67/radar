@@ -39,6 +39,14 @@ const PRIMARY_HINTS = [
   'mp9', 'mac10', 'ump45', 'mp7', 'mp5sd', 'p90', 'bizon', 'm249', 'negev',
 ];
 
+const ARMOR_ITEMS = new Set([
+  'item_kevlar',
+  'item_assaultsuit',
+  'vest',
+  'vesthelm',
+  'kevlar',
+]);
+
 function formatWeapon(raw: string | null | undefined): string {
   if (!raw) return '—';
   return raw.replace(/^weapon_/, '').replace(/_/g, ' ');
@@ -58,6 +66,10 @@ function grenadeShortName(raw: string): string {
 function isPrimaryWeapon(raw: string): boolean {
   const key = raw.replace(/^weapon_/, '');
   return PRIMARY_HINTS.some((hint) => key.includes(hint));
+}
+
+function defaultPistolForTeam(team: 'CT' | 'T'): string {
+  return team === 'CT' ? 'usp silencer / p2000' : 'glock';
 }
 
 const PlayerInfoPanel: React.FC = () => {
@@ -138,7 +150,7 @@ const PlayerInfoPanel: React.FC = () => {
       }
 
       if (ev.event_type === 'equip') {
-        const weapon = ev.weapon ?? '';
+        const weapon = (ev.weapon ?? '').toLowerCase();
         const next: PlayerState = {
           ...cur,
           activeWeapon: weapon || cur.activeWeapon,
@@ -146,6 +158,12 @@ const PlayerInfoPanel: React.FC = () => {
           primaries: new Set(cur.primaries),
           grenades: new Map(cur.grenades),
         };
+
+        if (ARMOR_ITEMS.has(weapon)) {
+          next.armor = 100;
+          state.set(ev.player_id, next);
+          continue;
+        }
 
         if (GRENADE_WEAPONS.has(weapon)) {
           const count = next.grenades.get(weapon) ?? 0;
@@ -197,7 +215,9 @@ const PlayerInfoPanel: React.FC = () => {
 
     const pistolList = Array.from(st.pistols);
     const primaryList = Array.from(st.primaries);
-    const pistol = pistolList.length ? formatWeapon(pistolList[pistolList.length - 1]) : '—';
+    const pistol = pistolList.length
+      ? formatWeapon(pistolList[pistolList.length - 1])
+      : defaultPistolForTeam(team);
     const primary = primaryList.length ? formatWeapon(primaryList[primaryList.length - 1]) : '—';
     const grenades = Array.from(st.grenades.entries())
       .map(([name, count]) => `${grenadeShortName(name)}${count > 1 ? `×${count}` : ''}`)
@@ -218,15 +238,17 @@ const PlayerInfoPanel: React.FC = () => {
         <div className={styles.rowMid}>
           <div className={styles.hpBarWrap}>
             <div className={styles.hpBarFill} style={{ width: `${hpPct}%`, background: hpColor }} />
-            <span className={styles.hpLabel}>{isAlive ? hp : '✕'}</span>
+            <span className={styles.hpLabel}>{isAlive ? `${hp} HP · ${st.armor} AR` : '✕'}</span>
           </div>
-          <span className={styles.armor}>AR {isAlive ? st.armor : '—'}</span>
         </div>
 
         <div className={styles.rowBottom}>
           <span className={styles.loadoutItem}><strong>Pistol:</strong> {isAlive ? pistol : '—'}</span>
-          <span className={styles.loadoutItem}><strong>Primary:</strong> {isAlive ? primary : '—'}</span>
-          <span className={styles.loadoutItem}><strong>Grenades:</strong> {isAlive ? grenades : '—'}</span>
+          <span className={styles.loadoutItem}>
+            <strong>Primary:</strong> {isAlive ? primary : '—'}
+            <span className={styles.loadoutSep}> · </span>
+            <strong>Nades:</strong> {isAlive ? grenades : '—'}
+          </span>
         </div>
       </div>
     );
