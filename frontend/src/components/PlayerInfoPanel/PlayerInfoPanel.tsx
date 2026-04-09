@@ -220,13 +220,13 @@ const PlayerInfoPanel: React.FC = () => {
             <div className={styles.hpBarFill} style={{ width: `${hpPct}%`, background: hpColor }} />
             <span className={styles.hpLabel}>{isAlive ? hp : '✕'}</span>
           </div>
-          <span className={styles.armor}>AR {st.armor}</span>
+          <span className={styles.armor}>AR {isAlive ? st.armor : '—'}</span>
         </div>
 
         <div className={styles.rowBottom}>
-          <span className={styles.loadoutItem}><strong>P:</strong> {isAlive ? pistol : '—'}</span>
-          <span className={styles.loadoutItem}><strong>R:</strong> {isAlive ? primary : '—'}</span>
-          <span className={styles.loadoutItem}><strong>G:</strong> {isAlive ? grenades : '—'}</span>
+          <span className={styles.loadoutItem}><strong>Pistol:</strong> {isAlive ? pistol : '—'}</span>
+          <span className={styles.loadoutItem}><strong>Primary:</strong> {isAlive ? primary : '—'}</span>
+          <span className={styles.loadoutItem}><strong>Grenades:</strong> {isAlive ? grenades : '—'}</span>
         </div>
       </div>
     );
