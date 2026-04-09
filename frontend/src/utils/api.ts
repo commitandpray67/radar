@@ -172,7 +172,23 @@ export async function getGrenades(
   params: { round_number?: number } = {},
 ): Promise<GrenadeEvent[]> {
   const res = await http.get(`/demos/${demoId}/grenades`, { params });
-  return res.data;
+  return (res.data as Array<Record<string, unknown>>).map((g) => {
+    const raw = g.trajectory;
+    let trajectory: GrenadeEvent['trajectory'] = null;
+    if (typeof raw === 'string' && raw.trim().length > 0) {
+      try {
+        trajectory = JSON.parse(raw) as GrenadeEvent['trajectory'];
+      } catch {
+        trajectory = null;
+      }
+    } else if (Array.isArray(raw)) {
+      trajectory = raw as GrenadeEvent['trajectory'];
+    }
+    return {
+      ...(g as unknown as GrenadeEvent),
+      trajectory,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

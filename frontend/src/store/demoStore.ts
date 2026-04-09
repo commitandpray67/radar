@@ -273,7 +273,18 @@ export const useAppStore = create<AppStore>()(
       activeLayerLabel: '',
 
       setHeatmapMode: (isHeatmapMode) =>
-        set({ isHeatmapMode }, false, 'setHeatmapMode'),
+        set(() => {
+          if (!isHeatmapMode) {
+            return { isHeatmapMode: false };
+          }
+          return {
+            isHeatmapMode: true,
+            // Heatmap and multi-round are mutually exclusive.
+            isMultiRoundMode: false,
+            multiRoundIsPlaying: false,
+            multiRoundRelativeTick: 0,
+          };
+        }, false, 'setHeatmapMode'),
       setHeatmapRounds: (rounds) =>
         set({ selectedRoundsForHeatmap: rounds }, false, 'setHeatmapRounds'),
       toggleHeatmapRound: (round) =>
@@ -302,10 +313,28 @@ export const useAppStore = create<AppStore>()(
       multiRoundIsPlaying: false,
 
       setMultiRoundMode: (on) => {
-        set(
-          { isMultiRoundMode: on, multiRoundRelativeTick: 0, multiRoundIsPlaying: false },
-          false,
-          'setMultiRoundMode',
+        set(() => {
+          if (!on) {
+            return {
+              isMultiRoundMode: false,
+              multiRoundRelativeTick: 0,
+              multiRoundIsPlaying: false,
+            };
+          }
+          return {
+            isMultiRoundMode: true,
+            multiRoundRelativeTick: 0,
+            multiRoundIsPlaying: false,
+            // Heatmap and multi-round are mutually exclusive.
+            isHeatmapMode: false,
+            heatmapResult: null,
+            heatmapError: null,
+            heatmapLoading: false,
+            selectedRoundsForHeatmap: [],
+          };
+        },
+        false,
+        'setMultiRoundMode',
         );
       },
       toggleMultiRoundRound: (rn) =>

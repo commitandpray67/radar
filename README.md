@@ -1,8 +1,29 @@
 # CS2 Demo Radar
 
-A desktop-first web application for analysing Counter-Strike 2 demo (`.dem`) files.
-Visualise player positions on the official radar, scrub through rounds, and generate
-positional heatmaps for any combination of players and rounds.
+CS2 Demo Radar is a desktop-first web app for inspecting Counter-Strike 2 (`.dem`) files.
+It parses demos on the backend, caches normalized data in SQLite, and renders a radar replay
+UI with rounds, playback, killfeed, live player info, heatmaps, and multi-round overlays.
+
+---
+
+## What the app does
+
+After upload, the app parses and stores:
+
+- Demo metadata (map, tickrate, total ticks)
+- Round boundaries + winners + score progression
+- Player roster and sampled player positions
+- Core gameplay events (kills, bomb events)
+- Grenade events (throw / detonate / expire) and **best-effort bounce trajectory points**
+- Player-state events (spawn, hurt, equip/pickup/purchase derived loadout state)
+
+From this data, the frontend provides:
+
+- Radar playback by round and tick
+- Killfeed with per-kill side-aware coloring
+- Live Info player cards with HP/armor bars and loadout summary
+- Heatmap generation for selected players/rounds
+- Multi-round overlay replay mode
 
 ---
 
@@ -10,247 +31,208 @@ positional heatmaps for any combination of players and rounds.
 
 ```
 cs2-radar/
-├── backend/                  # Python 3.11+ FastAPI service
-│   ├── main.py               # Application entry-point
-│   ├── requirements.txt
-│   ├── pytest.ini
-│   ├── api/
-│   │   └── routes.py         # REST + SSE endpoints
-│   ├── parser/
-│   │   └── demo_parser.py    # demoparser2 integration → normalised schema
+├── backend/
+│   ├── main.py
+│   ├── api/routes.py
+│   ├── parser/demo_parser.py
 │   ├── analytics/
-│   │   ├── coordinates.py    # World ↔ radar pixel transformation
-│   │   └── heatmap.py        # 2-D density grid + Gaussian smoothing
-│   ├── maps/
-│   │   └── calibration.py    # Per-map pos_x/pos_y/scale/layers
-│   ├── db/
-│   │   └── database.py       # aiosqlite schema + CRUD
-│   ├── data/                 # SQLite cache lives here (git-ignored)
+│   ├── maps/calibration.py
+│   ├── db/database.py
 │   └── tests/
-│       ├── test_coordinates.py
-│       ├── test_calibration.py
-│       ├── test_heatmap.py
-│       └── test_api.py
-└── frontend/                 # React 18 + TypeScript + Vite
-    ├── index.html
-    ├── vite.config.ts
-    ├── tsconfig.json
-    ├── package.json
+└── frontend/
     ├── public/
-    │   └── maps/             # Radar PNG images (1024×1024)
+    │   ├── maps/
+    │   └── icons/grenades/
     └── src/
-        ├── main.tsx
-        ├── App.tsx
-        ├── styles/globals.css
-        ├── types/index.ts    # Domain types (mirrors backend schema)
-        ├── store/demoStore.ts # Zustand global state
-        ├── utils/
-        │   ├── api.ts        # Axios wrappers for all API calls
-        │   ├── coordinates.ts # Client-side coordinate transform
-        │   └── playback.ts   # Tick-index + binary search helpers
+        ├── store/demoStore.ts
+        ├── utils/api.ts
         └── components/
-            ├── DemoLoader/   # Drag-and-drop file picker + SSE progress
-            ├── RadarViewer/  # Canvas-based radar + player markers
-            ├── Playback/     # Tick slider, play/pause, speed
-            ├── RoundPanel/   # Round list with metadata
-            ├── HeatmapControls/ # Heatmap config + generate button
-            └── Layout/       # Three-column app shell
 ```
 
-### Technology choices
+### Stack
 
-| Layer | Technology | Reason |
-|---|---|---|
-| Demo parsing | `demoparser2` (Rust) | Only reliable CS2 binary parser; handles Source 2 format |
-| Backend | FastAPI + uvicorn | Async-native; SSE for parse progress; automatic OpenAPI docs |
-| Cache | SQLite + aiosqlite | Zero-infrastructure; survives server restarts |
-| Frontend | React 18 + Vite | Fast HMR; JSX + TypeScript type safety |
-| State | Zustand | Minimal boilerplate; fine-grained subscriptions |
-| Radar | HTML5 Canvas | No DOM overhead; handles 10 players × 64 tick smoothly |
-| Heatmap | NumPy + SciPy gaussian_filter | Vectorised; 10 k+ points < 200 ms |
-| Styling | CSS Modules | Scoped styles; no runtime overhead |
+- **Backend:** FastAPI + aiosqlite
+- **Parser:** demoparser2
+- **Frontend:** React + TypeScript + Vite + Zustand
+- **Rendering:** HTML canvas for radar + overlays
+- **Heatmaps:** NumPy/SciPy on backend
 
 ---
 
 ## Quick start
 
-### Prerequisites
+## 1) Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- pip
+- `pip` / `npm`
 
-### 1. Install radar images
+## 2) Radar images
 
-Download CS2 radar overview PNGs (1024 × 1024) and place them in
-`frontend/public/maps/` with filenames matching those in
-`backend/maps/calibration.py` (e.g. `de_dust2_radar.png`).
+Place radar PNGs (1024x1024) in `frontend/public/maps/` with names like:
 
-You can extract them from your CS2 installation:
-```
-game/csgo/resource/overviews/<mapname>_radar.png
-```
+- `de_dust2_radar.png`
+- `de_mirage_radar.png`
 
-Or use the community mirror at https://github.com/CS2Modding/overview-overviews
-(verify checksums before use).
+Map calibration values live in `backend/maps/calibration.py`.
 
-### 2. Backend
+## 3) Run backend
 
 ```bash
 cd backend
-
-# Create a virtual environment
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# Install dependencies
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-# Run the development server
 python main.py
-# → http://localhost:8000
-# → API docs: http://localhost:8000/docs
 ```
 
-### 3. Frontend
+Backend default URL: `http://localhost:8000`
+Docs: `http://localhost:8000/docs`
+
+## 4) Run frontend
 
 ```bash
 cd frontend
-
 npm install
 npm run dev
-# → http://localhost:5173
 ```
 
-The Vite dev server proxies `/api/*` to `http://localhost:8000` automatically.
+Frontend URL: `http://localhost:5173`
 
-### 4. Use the app
+---
 
-1. Open `http://localhost:5173`
-2. Drag and drop a CS2 `.dem` file onto the screen
-3. Watch parse progress in real time via SSE
-4. Use the round panel on the left to jump to any round
-5. Use the tick slider to scrub through time
-6. Click player dots on the radar to select them
-7. Switch to the **Heatmap** tab, pick rounds, and click **Generate heatmap**
+## How to use
+
+1. Upload a `.dem` file in the loader.
+2. Wait for parse completion (SSE progress).
+3. Select a round from the left panel.
+4. Use playback controls to scrub ticks / play.
+5. Switch right panel tabs:
+   - **Players:** roster and selection
+   - **Live Info:** HP/armor bars + loadout snapshot
+6. Optional modes:
+   - **Heatmap:** generate density overlay for selected players/rounds
+   - **Multi-round:** replay 2+ rounds overlaid at round-relative time
+
+> Heatmap and Multi-round are mutually exclusive by design.
+
+---
+
+## Live Info details
+
+Live Info reconstructs state from parser events up to current tick:
+
+- HP/armor from spawn + hurt + purchase/equip-derived events
+- Weapons/loadout from equip/pickup/purchase events
+- Team side from current round position samples (with fallback)
+
+UI behavior:
+
+- Top bar: player number, nickname, side badge
+- Middle: separate HP and armor bars
+- Bottom: pistol, primary, and inline grenades
+- Dead players are greyed-out
+
+### Grenade icons
+
+If you want icon textures, add PNGs to:
+
+`frontend/public/icons/grenades/`
+
+Expected filenames:
+
+- `hegrenade.png`
+- `flashbang.png`
+- `smokegrenade.png`
+- `molotov.png`
+- `incgrenade.png`
+- `decoy.png`
+
+If missing, text fallback labels are shown.
+
+---
+
+## Grenade trajectory model
+
+Grenades are rendered using:
+
+- throw tick
+- optional bounce points (if parser event data exists)
+- detonation point
+
+During flight, the moving dot interpolates across trajectory segments.
+
+### Important
+
+Trajectory quality depends on demo event availability. If bounce events are absent
+for a specific demo/event, rendering falls back toward simpler paths.
+
+---
+
+## Data cache and reparsing
+
+Parsed demos are cached in SQLite (`backend/data/demos.db`).
+When parser logic changes, old cached demos may not contain newly extracted fields.
+
+If something looks outdated (e.g., trajectories/loadout), re-upload/re-parse the demo.
+
+---
+
+## API overview
+
+Common endpoints:
+
+- `POST /api/demos/upload`
+- `GET /api/parse-status/{job_id}` (SSE)
+- `GET /api/demos/{id}/rounds`
+- `GET /api/demos/{id}/players`
+- `GET /api/demos/{id}/positions`
+- `GET /api/demos/{id}/events`
+- `GET /api/demos/{id}/grenades`
+- `GET /api/demos/{id}/player-state-events`
+- `POST /api/demos/{id}/heatmap`
+- `GET /api/maps`
 
 ---
 
 ## Running tests
 
+Backend test suite:
+
 ```bash
 cd backend
-pytest
+pytest -q
 ```
 
-Tests cover:
-- Coordinate transformation (world ↔ radar pixel, rotation, multi-level Z)
-- Map calibration data validation
-- Heatmap density computation (filtering, sampling, normalisation, grid shape)
-- FastAPI route smoke tests (maps list, upload validation, 404 handling)
+Frontend build/typecheck smoke test:
+
+```bash
+cd frontend
+npm run build
+```
 
 ---
 
-## API reference
+## Current limitations
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/demos/upload` | Upload `.dem` file; returns `job_id` + `demo_id` |
-| `GET`  | `/api/parse-status/{job_id}` | SSE stream of parse progress |
-| `GET`  | `/api/demos` | List all cached demos |
-| `GET`  | `/api/demos/{id}` | Demo metadata |
-| `GET`  | `/api/demos/{id}/rounds` | All round info |
-| `GET`  | `/api/demos/{id}/players` | Player roster |
-| `GET`  | `/api/demos/{id}/positions` | Sampled positions (filterable) |
-| `GET`  | `/api/demos/{id}/events` | Game events |
-| `POST` | `/api/demos/{id}/heatmap` | Generate heatmap PNG (base64) |
-| `GET`  | `/api/maps` | All maps with calibration metadata |
-
-Full interactive docs: `http://localhost:8000/docs`
+1. **Best-effort state reconstruction:** demo events do not always expose full inventory snapshots every tick.
+2. **Grenade trajectories depend on event support:** some demos may miss bounce events.
+3. **Large demos can be heavy:** loading all positions/events can be memory intensive.
+4. **No auth/multi-user controls:** intended for local analysis workflows.
+5. **Map/radar assets are external:** you must provide radar images manually.
 
 ---
 
-## Coordinate transformation
+## Troubleshooting
 
-Game world coordinates (X, Y, Z) are in Hammer units.
-The radar image is 1024 × 1024 pixels with (0, 0) at the top-left.
-
-```
-radar_px = (world_x - pos_x) / scale
-radar_py = (pos_y  - world_y) / scale   # Y-axis is inverted
-```
-
-Each map has its own `pos_x`, `pos_y`, and `scale` in
-`backend/maps/calibration.py`.  Multi-level maps (Nuke, Vertigo) additionally
-have Z-range thresholds that determine which radar image layer to use.
-
-To add a new map:
-1. Add an entry to `MAP_CALIBRATIONS` in `calibration.py`
-2. Place the radar PNG in `frontend/public/maps/`
-3. Add the same calibration parameters to the `MAP_CALIBRATIONS` dict in
-   `frontend/src/components/RadarViewer/RadarViewer.tsx`
+- **Heatmap and Multi-round conflict:** not supported simultaneously; disable one to use the other.
+- **Old behavior after code changes:** remove/re-upload cached demo parse.
+- **Missing grenade icons:** add PNG files to `frontend/public/icons/grenades/`.
+- **Map not rendering:** verify radar image filename and map calibration entry.
 
 ---
 
-## Heatmap algorithm
+## License / usage
 
-```
-Input  : player_ids[], round_numbers[], time filters
- ↓
-Filter positions by player + round (vectorised NumPy boolean mask)
- ↓
-Convert world (X,Y) → radar pixels (batch, no Python loop)
- ↓
-np.histogram2d → 2D density grid (grid_cell_size pixels per bin)
- ↓
-scipy.ndimage.gaussian_filter → Gaussian smoothing (blur_sigma in bins)
- ↓
-Normalise to [0, 1]
- ↓
-matplotlib colormap → RGBA array → PNG → base64 data URL
-```
-
-Tunable parameters (via the `HeatmapPayload` API body):
-- `sample_every` — subsample every Nth row for speed
-- `blur_sigma` — Gaussian kernel radius (larger = smoother)
-- `grid_cell_size` — pixels per histogram bin (smaller = finer detail)
-- `team_filter` — "CT" | "T" | null
-- `layer_label` — for multi-level maps
-
----
-
-## Adding map calibration values
-
-Valve stores calibration in:
-```
-game/csgo/resource/overviews/<mapname>.txt
-```
-
-Key fields:
-```
-"pos_x"   "-2476"
-"pos_y"   "3239"
-"scale"   "4.400000"
-```
-
-For maps with a `verticalsections` block, extract Z thresholds from the
-`AltitudeMax` / `AltitudeMin` entries in each section.
-
----
-
-## Known limitations / next steps
-
-1. **Radar images** — must be sourced from the CS2 installation; not bundled
-2. **Z-coordinate filtering on multi-level maps** — per-player Z is used to
-   select the correct layer but both layers are drawn on the same canvas;
-   a layer toggle button is provided in HeatmapControls
-3. **Bomb object position** — tracker for the bomb entity (not just events) is
-   not yet implemented in the parser; bomb events (plant/defuse/explode) are
-   included
-4. **Grenade trajectories** — parsed but not rendered (event data is available)
-5. **Performance on very long demos** — position fetching for all rounds at
-   once (`GET /positions`) can be large; consider paginating or fetching
-   per-round on demand in production
-6. **Authentication** — no auth; designed for local / LAN use
-7. **Tauri/Electron packaging** — the backend runs as a subprocess; hookup
-   code for desktop packaging is not yet written
+Project-specific licensing is not defined in this repository.
+Use radar/map assets according to Valve and source-provider terms.
