@@ -933,6 +933,18 @@ def _extract_player_state_events(
 
     state_events: list[PlayerStateEvent] = []
 
+    def _optional_nonnegative_int(value: object) -> Optional[int]:
+        """Parse an event numeric field without collapsing missing values to 0."""
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0, parsed)
+
     # -- player_hurt: records victim HP/armor after taking damage --
     try:
         hurt_df = parser.parse_event(
@@ -952,8 +964,12 @@ def _extract_player_state_events(
                 round_number=rn,
                 player_id=player_id,
                 event_type="hurt",
-                hp=max(0, int(row.get("hp", 0) or 0)),
-                armor=max(0, int(row.get("armor", 0) or 0)),
+                hp=_optional_nonnegative_int(
+                    row.get("hp", row.get("health", row.get("user_health")))
+                ),
+                armor=_optional_nonnegative_int(
+                    row.get("armor", row.get("user_armor"))
+                ),
                 weapon=str(row.get("weapon", "") or ""),
             ))
     except Exception as exc:
