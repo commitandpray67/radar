@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 13
+PARSER_VERSION = 14
 
 
 # ---------------------------------------------------------------------------
@@ -860,22 +860,28 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         except Exception as exc:
             logger.debug("Could not parse %s: %s", event_name, exc)
 
-    # -- Full trajectory from parse_grenades() (covers all positions, not just bounces) --
-    # We build trajectory_instances as a list of {gtype, rn, start_tick, thrower_id, positions}
-    # which are later matched to each GrenadeEvent as a post-processing step.
-    trajectory_instances: list[dict] = []
+    # -- Full per-tick trajectory from parse_grenades() --
+    # parse_grenades() returns the grenade entity position at every tick of its
+    # existence (including pre-throw "inventory" ticks at Z≈−5120).  We collect
+    # all rows and later filter each GrenadeEvent to its exact flight window
+    # [throw_tick, detonate_tick] — no instance-grouping needed.
+    raw_traj: list[dict] = []
     try:
         import math as _math
         traj_df = parser.parse_grenades()
-        raw_traj: list[dict] = []
         for row in _rows(traj_df):
-            raw_type = str(row.get("grenade_type", "") or "").lower().replace(" ", "").replace("_", "")
+            raw_type = (str(row.get("grenade_type", "") or "")
+                        .lower().replace(" ", "").replace("_", ""))
             gtype = _TRAJ_TYPE_MAP.get(raw_type)
             if gtype is None:
                 continue
             tick = int(row.get("tick", 0) or 0)
             rn = _rn(tick)
             if rn == 0:
+                continue
+            z = float(row.get("Z", row.get("z", 0)) or 0)
+            # Skip "parked" positions (grenade entity stored below map while in inventory)
+            if z < -4096:
                 continue
             raw_sid = row.get("thrower_steamid")
             try:
@@ -888,33 +894,10 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 "gtype": gtype, "tick": tick, "rn": rn,
                 "x": float(row.get("X", row.get("x", 0)) or 0),
                 "y": float(row.get("Y", row.get("y", 0)) or 0),
-                "z": float(row.get("Z", row.get("z", 0)) or 0),
+                "z": z,
                 "thrower_id": thrower_id,
             })
-
-        # Group consecutive rows into grenade entity instances
-        raw_traj.sort(key=lambda r: (r["gtype"], r["rn"], r["tick"]))
-        if raw_traj:
-            cur_grp: list[dict] = [raw_traj[0]]
-            def _finalize_group(grp: list[dict]) -> None:
-                tid = next((r["thrower_id"] for r in grp if r["thrower_id"]), 0)
-                seen: dict[int, tuple] = {}
-                for r in grp:
-                    seen[r["tick"]] = (r["x"], r["y"], r["z"])
-                trajectory_instances.append({
-                    "gtype": grp[0]["gtype"], "rn": grp[0]["rn"],
-                    "start_tick": grp[0]["tick"], "thrower_id": tid,
-                    "positions": sorted((t, x, y, z) for t, (x, y, z) in seen.items()),
-                })
-            for row in raw_traj[1:]:
-                prev = cur_grp[-1]
-                if (row["gtype"] != prev["gtype"] or row["rn"] != prev["rn"]
-                        or row["tick"] - prev["tick"] > 8):
-                    _finalize_group(cur_grp)
-                    cur_grp = [row]
-                else:
-                    cur_grp.append(row)
-            _finalize_group(cur_grp)
+        logger.info("parse_grenades() yielded %d usable rows", len(raw_traj))
     except Exception as exc:
         logger.warning("Could not extract grenade trajectories via parse_grenades(): %s", exc)
 
@@ -984,37 +967,47 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             trajectory=[],  # filled in post-processing below
         ))
 
-    # -- Attach trajectory waypoints to each grenade (post-processing) --
-    if trajectory_instances:
-        used_inst: set[int] = set()
+    # -- Attach trajectory waypoints to each grenade --
+    # Directly filter raw_traj rows to each grenade's flight window.
+    # No instance-grouping is needed: filtering by [throw_tick, detonate_tick]
+    # naturally excludes the pre-throw "parked" positions.
+    if raw_traj:
+        MAX_TRAJ_WP = 48
         for g in grenades:
             if g.detonate_tick is None:
                 continue
-            best_inst: int | None = None
-            best_diff = 65  # within ~1 s
-            for ii, inst in enumerate(trajectory_instances):
-                if ii in used_inst:
+            # Collect rows inside the flight window, matching type + round
+            flight: list[dict] = []
+            for r in raw_traj:
+                if r["gtype"] != g.grenade_type or r["rn"] != g.round_number:
                     continue
-                if inst["gtype"] != g.grenade_type or inst["rn"] != g.round_number:
+                if r["tick"] < g.throw_tick or r["tick"] > g.detonate_tick:
                     continue
-                if inst["thrower_id"] and g.thrower_id and inst["thrower_id"] != g.thrower_id:
+                # Skip rows from another player when thrower IDs are known
+                if r["thrower_id"] and g.thrower_id and r["thrower_id"] != g.thrower_id:
                     continue
-                diff = abs(inst["start_tick"] - g.throw_tick)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_inst = ii
-            if best_inst is not None:
-                used_inst.add(best_inst)
-                positions = trajectory_instances[best_inst]["positions"]
-                # Filter to flight window and sample up to 48 waypoints
-                flight = [(t, x, y, z) for t, x, y, z in positions
-                          if g.throw_tick <= t <= g.detonate_tick]
-                step = max(1, len(flight) // 48)
-                sampled = flight[::step]
-                if sampled and sampled[-1] != flight[-1]:
-                    sampled.append(flight[-1])
-                g.trajectory = [{"tick": t, "x": x, "y": y, "z": z}
-                                 for t, x, y, z in sampled]
+                flight.append(r)
+
+            if len(flight) < 2:
+                continue
+
+            # Deduplicate ticks (keep last X/Y/Z per tick) then sort
+            seen_t: dict[int, dict] = {}
+            for r in flight:
+                seen_t[r["tick"]] = r
+            flight_dedup = sorted(seen_t.values(), key=lambda r: r["tick"])
+
+            # Sample evenly, always keeping first and last
+            step = max(1, len(flight_dedup) // MAX_TRAJ_WP)
+            sampled = flight_dedup[::step]
+            if sampled[-1] is not flight_dedup[-1]:
+                sampled.append(flight_dedup[-1])
+
+            g.trajectory = [
+                {"tick": r["tick"], "x": r["x"], "y": r["y"], "z": r["z"]}
+                for r in sampled
+            ]
+
         attached = sum(1 for g in grenades if g.trajectory)
         logger.info("Attached trajectories to %d/%d grenades", attached, len(grenades))
 
