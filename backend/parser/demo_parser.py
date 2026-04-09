@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 11
+PARSER_VERSION = 12
 
 
 # ---------------------------------------------------------------------------
@@ -998,6 +998,16 @@ def _extract_player_state_events(
             return None
         return max(0, parsed)
 
+    def _row_hp(row: dict, default: object = None) -> Optional[int]:
+        return _optional_nonnegative_int(
+            row.get("hp", row.get("health", row.get("user_health", default)))
+        )
+
+    def _row_armor(row: dict) -> Optional[int]:
+        return _optional_nonnegative_int(
+            row.get("armor", row.get("armor_value", row.get("user_armor")))
+        )
+
     # -- player_hurt: records victim HP/armor after taking damage --
     try:
         hurt_df = parser.parse_event(
@@ -1017,12 +1027,8 @@ def _extract_player_state_events(
                 round_number=rn,
                 player_id=player_id,
                 event_type="hurt",
-                hp=_optional_nonnegative_int(
-                    row.get("hp", row.get("health", row.get("user_health")))
-                ),
-                armor=_optional_nonnegative_int(
-                    row.get("armor", row.get("user_armor"))
-                ),
+                hp=_row_hp(row),
+                armor=_row_armor(row),
                 weapon=str(row.get("weapon", "") or ""),
             ))
     except Exception as exc:
@@ -1113,7 +1119,7 @@ def _extract_player_state_events(
     try:
         spawn_df = parser.parse_event(
             "player_spawn",
-            other=["tick", "user_steamid", "health", "hp", "armor"],
+            other=["tick", "user_steamid", "health", "hp", "armor", "armor_value"],
         )
         for row in _rows(spawn_df):
             tick = int(row.get("tick", 0) or 0)
@@ -1128,8 +1134,8 @@ def _extract_player_state_events(
                 round_number=rn,
                 player_id=player_id,
                 event_type="spawn",
-                hp=_optional_nonnegative_int(row.get("health", row.get("hp", 100))),
-                armor=_optional_nonnegative_int(row.get("armor")),
+                hp=_row_hp(row, 100),
+                armor=_row_armor(row),
             ))
     except Exception as exc:
         logger.debug("Could not parse player_spawn: %s", exc)
@@ -1139,7 +1145,7 @@ def _extract_player_state_events(
         freeze_ticks = sorted({r.freeze_end_tick for r in rounds})
         if freeze_ticks:
             tick_df = parser.parse_ticks(
-                ["steamid", "health", "hp", "armor"],
+                ["steamid", "health", "hp", "armor", "armor_value"],
                 ticks=freeze_ticks,
             )
             for row in _rows(tick_df):
@@ -1150,8 +1156,8 @@ def _extract_player_state_events(
                 player_id = _event_player_id(row)
                 if player_id == 0:
                     continue
-                hp = _optional_nonnegative_int(row.get("health", row.get("hp")))
-                armor = _optional_nonnegative_int(row.get("armor"))
+                hp = _row_hp(row)
+                armor = _row_armor(row)
                 if hp is None and armor is None:
                     continue
                 state_events.append(PlayerStateEvent(
