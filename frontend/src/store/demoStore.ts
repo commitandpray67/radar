@@ -76,6 +76,7 @@ interface PlaybackState {
   trailLengthTicks: number;
   showBomb: boolean;
   showGrenades: boolean;
+  showYaw: boolean;
 
   selectedPlayerIds: Set<number>;
 
@@ -88,6 +89,7 @@ interface PlaybackState {
   setTrailLength: (ticks: number) => void;
   toggleShowBomb: () => void;
   toggleShowGrenades: () => void;
+  toggleShowYaw: () => void;
   togglePlayerSelection: (playerId: number) => void;
   setSelectedPlayers: (ids: number[]) => void;
   clearSelectedPlayers: () => void;
@@ -222,6 +224,7 @@ export const useAppStore = create<AppStore>()(
       trailLengthTicks: 192,
       showBomb: true,
       showGrenades: true,
+      showYaw: false,
       selectedPlayerIds: new Set(),
 
       setActiveRound: (round) => {
@@ -251,6 +254,8 @@ export const useAppStore = create<AppStore>()(
         set((s) => ({ showBomb: !s.showBomb }), false, 'toggleShowBomb'),
       toggleShowGrenades: () =>
         set((s) => ({ showGrenades: !s.showGrenades }), false, 'toggleShowGrenades'),
+      toggleShowYaw: () =>
+        set((s) => ({ showYaw: !s.showYaw }), false, 'toggleShowYaw'),
       togglePlayerSelection: (playerId) =>
         set((s) => {
           const next = new Set(s.selectedPlayerIds);

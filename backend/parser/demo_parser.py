@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 14
+PARSER_VERSION = 15
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +123,8 @@ class RoundInfo:
     bomb_defused_tick: Optional[int] = None
     bomb_exploded_tick: Optional[int] = None
     is_knife_round: bool = False
+    ct_equip_value: int = 0   # CT team total equipment value at freeze_end
+    t_equip_value: int = 0    # T team total equipment value at freeze_end
 
 
 @dataclass
@@ -142,6 +144,7 @@ class PlayerPosition:
     z: float
     team_num: int             # 2 = T, 3 = CT
     is_alive: bool
+    yaw: float = 0.0          # view angle in degrees (0=East, 90=North in game coords)
 
 
 @dataclass
@@ -271,6 +274,10 @@ def parse_demo(
     # ---- Grenades ------------------------------------------------------
     _progress(0.92, "Extracting grenade events")
     grenades = _extract_grenades(parser, rounds)
+
+    # ---- Economy (equipment values at freeze end) ----------------------
+    _progress(0.93, "Extracting economy data")
+    rounds = _extract_economy(parser, rounds)
 
     # ---- Player state events (HP, armor, weapon equip) -----------------
     _progress(0.94, "Extracting player state events")
@@ -655,7 +662,7 @@ def _extract_positions(
 
     try:
         df = parser.parse_ticks(
-            ["X", "Y", "Z", "team_num", "is_alive", "steamid"],
+            ["X", "Y", "Z", "yaw", "team_num", "is_alive", "steamid"],
             ticks=all_ticks,
         )
     except Exception as exc:
@@ -710,6 +717,7 @@ def _extract_positions(
             z=z,
             team_num=_to_int(row.get("team_num", 0) or 0),
             is_alive=bool(row.get("is_alive", False)),
+            yaw=float(row.get("yaw", 0) or 0),
         ))
 
     return positions
@@ -1042,6 +1050,51 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
 
     logger.info("Extracted %d grenade events", len(grenades))
     return grenades
+
+
+# ---------------------------------------------------------------------------
+# Economy extraction
+# ---------------------------------------------------------------------------
+
+def _extract_economy(parser, rounds: list[RoundInfo]) -> list[RoundInfo]:
+    """
+    Fill ct_equip_value / t_equip_value on each RoundInfo by reading
+    current_equip_value at the freeze_end_tick of each round.
+    """
+    if not rounds:
+        return rounds
+
+    freeze_ticks = [r.freeze_end_tick for r in rounds if r.freeze_end_tick > 0]
+    if not freeze_ticks:
+        return rounds
+
+    try:
+        df = parser.parse_ticks(
+            ["current_equip_value", "team_num", "steamid"],
+            ticks=freeze_ticks,
+        )
+    except Exception as exc:
+        logger.warning("Could not extract economy data: %s", exc)
+        return rounds
+
+    # Build {freeze_end_tick: {team_num: total_value}} mapping
+    from collections import defaultdict
+    economy: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+
+    for row in _rows(df):
+        tick = int(row.get("tick", 0) or 0)
+        team = int(row.get("team_num", 0) or 0)
+        val = int(row.get("current_equip_value", 0) or 0)
+        if team in (2, 3) and val > 0:
+            economy[tick][team] += val
+
+    for r in rounds:
+        snap = economy.get(r.freeze_end_tick, {})
+        r.ct_equip_value = snap.get(3, 0)  # team_num 3 = CT
+        r.t_equip_value  = snap.get(2, 0)  # team_num 2 = T
+
+    logger.info("Economy extracted for %d rounds", len(rounds))
+    return rounds
 
 
 # ---------------------------------------------------------------------------

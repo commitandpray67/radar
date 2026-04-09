@@ -10,10 +10,29 @@
 
 .canvas {
   display: block;
-  cursor: crosshair;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   border: 1px solid #2a3a52;
+}
+
+.resetZoomBtn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  background: rgba(26, 45, 60, 0.88);
+  border: 1px solid #2a6a9a;
+  color: #70b8f8;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 3px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.resetZoomBtn:hover {
+  background: rgba(42, 106, 154, 0.7);
 }
 
 .loadingOverlay {

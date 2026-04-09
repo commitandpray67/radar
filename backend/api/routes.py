@@ -167,13 +167,14 @@ async def upload_demo(
             demo_id, cached_version, PARSER_VERSION,
         )
 
-    # Start background parse
-    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename))
+    # Start background parse (pass file size so it can be stored)
+    file_size = tmp_path.stat().st_size
+    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename, file_size))
 
     return {"job_id": job_id, "demo_id": demo_id, "cached": False}
 
 
-async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str) -> None:
+async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str, file_size: int = 0) -> None:
     """Background task: parse demo and store results."""
     import concurrent.futures
 
@@ -195,7 +196,7 @@ async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str) 
             )
 
         _progress(0.95, "Storing to database")
-        await store_demo(parsed, demo_id, filename)
+        await store_demo(parsed, demo_id, filename, file_size=file_size)
 
         _parse_jobs[job_id] = {
             "status": "complete",
@@ -286,10 +287,30 @@ async def parse_status_stream(job_id: str):
 async def list_demos():
     async with get_connection() as conn:
         cursor = await conn.execute(
-            "SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at FROM demos"
+            "SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at, file_size FROM demos"
         )
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+@router.delete("/demos/{demo_id}")
+async def delete_demo(demo_id: str):
+    """Delete a demo and all associated data from the database."""
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT id FROM demos WHERE id = ?", (demo_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Demo not found")
+
+        for table in [
+            "player_positions", "events", "rounds", "players",
+            "grenades", "player_state_events", "demos",
+        ]:
+            await conn.execute(f"DELETE FROM {table} WHERE demo_id = ?", (demo_id,))
+        await conn.commit()
+    return {"deleted": demo_id}
 
 
 @router.get("/demos/{demo_id}")
@@ -375,7 +396,7 @@ async def get_positions(
 
     async with get_connection() as conn:
         cursor = await conn.execute(
-            f"SELECT tick, round_number, player_id, x, y, z, team_num, is_alive "
+            f"SELECT tick, round_number, player_id, x, y, z, team_num, is_alive, yaw "
             f"FROM player_positions WHERE {where} ORDER BY tick, player_id",
             params,
         )

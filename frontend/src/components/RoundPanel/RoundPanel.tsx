@@ -8,6 +8,20 @@ import { useAppStore } from '../../store/demoStore';
 import type { RoundInfo } from '../../types';
 import styles from './RoundPanel.module.css';
 
+// Max reasonable equipment value per team (used to scale economy bars)
+const ECONOMY_MAX = 20000;
+
+function EconomyBars({ ct, t }: { ct: number; t: number }) {
+  const ctPct = Math.min(100, (ct / ECONOMY_MAX) * 100);
+  const tPct  = Math.min(100, (t  / ECONOMY_MAX) * 100);
+  return (
+    <span className={styles.econBars} title={`CT $${ct.toLocaleString()} · T $${t.toLocaleString()}`}>
+      <span className={styles.econBarCT} style={{ width: `${ctPct}%` }} />
+      <span className={styles.econBarT}  style={{ width: `${tPct}%` }} />
+    </span>
+  );
+}
+
 const TEAM_LABEL: Record<string, string> = {
   CT: 'CT',
   T: 'T',
@@ -140,9 +154,14 @@ const RoundPanel: React.FC = () => {
                 {TEAM_LABEL[r.winner_team]}
               </span>
 
-              {/* Score */}
-              <span className={styles.score}>
-                {score.ct}:{score.t}
+              {/* Economy + score column */}
+              <span className={styles.midCol}>
+                {/* Economy bars */}
+                {(r.ct_equip_value || r.t_equip_value) ? (
+                  <EconomyBars ct={r.ct_equip_value ?? 0} t={r.t_equip_value ?? 0} />
+                ) : null}
+                {/* Score */}
+                <span className={styles.score}>{score.ct}:{score.t}</span>
               </span>
 
               {/* Bomb indicator */}

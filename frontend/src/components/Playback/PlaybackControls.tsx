@@ -24,6 +24,7 @@ const PlaybackControls: React.FC = () => {
   const showTrails    = useAppStore((s) => s.showTrails);
   const showBomb      = useAppStore((s) => s.showBomb);
   const showGrenades  = useAppStore((s) => s.showGrenades);
+  const showYaw       = useAppStore((s) => s.showYaw);
 
   // Multi-round mode
   const isMultiRoundMode       = useAppStore((s) => s.isMultiRoundMode);
@@ -39,6 +40,7 @@ const PlaybackControls: React.FC = () => {
   const toggleShowTrails        = useAppStore((s) => s.toggleShowTrails);
   const toggleShowBomb          = useAppStore((s) => s.toggleShowBomb);
   const toggleShowGrenades      = useAppStore((s) => s.toggleShowGrenades);
+  const toggleShowYaw           = useAppStore((s) => s.toggleShowYaw);
   const setMultiRoundRelTick    = useAppStore((s) => s.setMultiRoundRelativeTick);
   const setMultiRoundIsPlaying  = useAppStore((s) => s.setMultiRoundIsPlaying);
 
@@ -264,6 +266,13 @@ const PlaybackControls: React.FC = () => {
           title="Show/hide grenades"
         >
           💥
+        </button>
+        <button
+          className={`${styles.toggleBtn} ${showYaw ? styles.on : ''}`}
+          onClick={toggleShowYaw}
+          title="Show/hide player view direction"
+        >
+          ↗
         </button>
       </div>
     </div>

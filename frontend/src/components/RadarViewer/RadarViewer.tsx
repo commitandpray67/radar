@@ -17,7 +17,12 @@ import React, {
   useMemo,
   useRef,
   useState,
+  type WheelEvent as ReactWheelEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
+
+// Clamp helper
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 import { useAppStore } from '../../store/demoStore';
 import type { GrenadeEvent, TickSnapshot } from '../../types';
 import { TEAM_COLORS } from '../../types';
@@ -83,9 +88,26 @@ function drawPlayerMarker(
   isAlive: boolean,
   isSelected: boolean,
   radius = MARKER_RADIUS,
+  yaw?: number,
 ): void {
   ctx.save();
   ctx.globalAlpha = isAlive ? alpha : alpha * DEAD_ALPHA;
+
+  // Direction wedge (yaw): CS2 yaw 0=East, 90=South in screen-space.
+  // Canvas: +x=right(East), +y=down(South). Angle 0 should point right.
+  if (isAlive && yaw !== undefined) {
+    const angle = (yaw * Math.PI) / 180;
+    const wedgeLen = radius * 2.2;
+    const wedgeHalf = Math.PI / 6;  // ±30° spread
+    ctx.globalAlpha = (isAlive ? alpha : alpha * DEAD_ALPHA) * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, wedgeLen, angle - wedgeHalf, angle + wedgeHalf);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = isAlive ? alpha : alpha * DEAD_ALPHA;
+  }
 
   if (isSelected) {
     ctx.beginPath();
@@ -293,6 +315,16 @@ const RadarViewer: React.FC = () => {
   const radarImgRef     = useRef<HTMLImageElement | null>(null);
   const [canvasSize, setCanvasSize] = useState(600);
 
+  // Zoom / pan state
+  const [zoom, setZoom]   = useState(1);
+  const [panX, setPanX]   = useState(0);
+  const [panY, setPanY]   = useState(0);
+  const isDragging        = useRef(false);
+  const dragStart         = useRef({ x: 0, y: 0, px: 0, py: 0 });
+
+  const MIN_ZOOM = 1;
+  const MAX_ZOOM = 6;
+
   // Store selectors
   const demo               = useAppStore((s) => s.demo);
   const players            = useAppStore((s) => s.players);
@@ -303,6 +335,7 @@ const RadarViewer: React.FC = () => {
   const showTrails         = useAppStore((s) => s.showTrails);
   const trailLengthTicks   = useAppStore((s) => s.trailLengthTicks);
   const showGrenades       = useAppStore((s) => s.showGrenades);
+  const showYaw            = useAppStore((s) => s.showYaw);
   const selectedPlayerIds  = useAppStore((s) => s.selectedPlayerIds);
   const isHeatmapMode      = useAppStore((s) => s.isHeatmapMode);
   const heatmapResult      = useAppStore((s) => s.heatmapResult);
@@ -363,6 +396,54 @@ const RadarViewer: React.FC = () => {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // Zoom / pan handlers
+  // ---------------------------------------------------------------------------
+  const handleWheel = useCallback((e: ReactWheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    setZoom((prev) => {
+      const next = clamp(prev * factor, MIN_ZOOM, MAX_ZOOM);
+      // Zoom toward cursor position
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      setPanX((px) => mouseX - (mouseX - px) * (next / prev));
+      setPanY((py) => mouseY - (mouseY - py) * (next / prev));
+      return next;
+    });
+  }, []);
+
+  const handleMouseDown = useCallback((e: ReactMouseEvent<HTMLCanvasElement>) => {
+    if (e.button !== 1 && !(e.button === 0 && e.altKey)) return; // middle or alt+left
+    e.preventDefault();
+    isDragging.current = true;
+    dragStart.current = { x: e.clientX, y: e.clientY, px: panX, py: panY };
+  }, [panX, panY]);
+
+  const handleMouseMove = useCallback((e: ReactMouseEvent<HTMLCanvasElement>) => {
+    if (!isDragging.current) return;
+    setPanX(dragStart.current.px + e.clientX - dragStart.current.x);
+    setPanY(dragStart.current.py + e.clientY - dragStart.current.y);
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    isDragging.current = false;
+  }, []);
+
+  const resetView = useCallback(() => {
+    setZoom(1);
+    setPanX(0);
+    setPanY(0);
+  }, []);
+
+  // Clamp pan so we can't drag beyond the scaled canvas
+  useEffect(() => {
+    const maxPan = canvasSize * (zoom - 1);
+    setPanX((px) => clamp(px, -maxPan, 0));
+    setPanY((py) => clamp(py, -maxPan, 0));
+  }, [zoom, canvasSize]);
 
   // ---------------------------------------------------------------------------
   // Per-round index for multi-round mode (O(n) one pass)
@@ -446,6 +527,11 @@ const RadarViewer: React.FC = () => {
 
     ctx.clearRect(0, 0, canvasSize, canvasSize);
 
+    // Apply zoom / pan transform for the whole frame
+    ctx.save();
+    ctx.translate(panX, panY);
+    ctx.scale(zoom, zoom);
+
     // Background
     if (radarImgRef.current) {
       ctx.drawImage(radarImgRef.current, 0, 0, canvasSize, canvasSize);
@@ -466,11 +552,13 @@ const RadarViewer: React.FC = () => {
       );
     }
 
-    if (!calibration) return;
+    if (!calibration) { ctx.restore(); return; }
+
+    // Player markers scale inversely with zoom so they stay visually constant size
+    const markerR = MARKER_RADIUS / zoom;
 
     // ---- Heatmap mode ----
     if (isHeatmapMode && heatmapImgRef.current) {
-      ctx.save();
       ctx.globalAlpha = 0.75;
       ctx.drawImage(heatmapImgRef.current, 0, 0, canvasSize, canvasSize);
       ctx.restore();
@@ -494,7 +582,7 @@ const RadarViewer: React.FC = () => {
         for (const [pid, pos] of snap.entries()) {
           const alive = pos.is_alive === 1;
           const { cx, cy } = worldToCanvas(pos.x, pos.y, calibration, canvasSize);
-          drawPlayerMarker(ctx, cx, cy, MULTI_DOT_COLOR, playerLabel(pid), 1, alive, false);
+          drawPlayerMarker(ctx, cx, cy, MULTI_DOT_COLOR, playerLabel(pid), 1, alive, false, markerR);
         }
       }
 
@@ -532,11 +620,12 @@ const RadarViewer: React.FC = () => {
           }
         }
       }
+      ctx.restore();
       return;
     }
 
     // ---- Single-round mode ----
-    if (!snapshot) return;
+    if (!snapshot) { ctx.restore(); return; }
 
     // Trails
     if (showTrails && trailSnapshots.length > 1) {
@@ -579,12 +668,18 @@ const RadarViewer: React.FC = () => {
       const isSelected = selectedPlayerIds.has(pid);
       const color = pos.team_num === 3 ? TEAM_COLORS.CT : TEAM_COLORS.T;
       const { cx, cy } = worldToCanvas(pos.x, pos.y, calibration, canvasSize);
-      drawPlayerMarker(ctx, cx, cy, color, playerLabel(pid), 1, alive, isSelected);
+      drawPlayerMarker(
+        ctx, cx, cy, color, playerLabel(pid), 1, alive, isSelected,
+        markerR,
+        showYaw && pos.yaw !== undefined ? pos.yaw : undefined,
+      );
     }
+
+    ctx.restore();
   }, [
     canvasSize, calibration, snapshot, showDeadPlayers, showTrails, trailSnapshots,
-    selectedPlayerIds, playerLabel, isHeatmapMode, demo, showGrenades, visibleGrenades,
-    tickIndex, sortedTicks, currentTick,
+    selectedPlayerIds, playerLabel, isHeatmapMode, demo, showGrenades, showYaw,
+    visibleGrenades, tickIndex, sortedTicks, currentTick, zoom, panX, panY,
     isMultiRoundMode, perRoundData, multiRoundSelectedRounds, multiRoundRelativeTick,
     multiRoundSelectedPlayers, rounds, grenades,
   ]);
@@ -592,24 +687,27 @@ const RadarViewer: React.FC = () => {
   useEffect(() => { drawFrame(); }, [drawFrame]);
 
   // ---------------------------------------------------------------------------
-  // Click handler
+  // Click handler  (accounts for zoom/pan transform)
   // ---------------------------------------------------------------------------
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!snapshot || !calibration || isMultiRoundMode) return;
+      if (isDragging.current) return;  // suppress click after pan
       const rect = canvasRef.current!.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const clickY = e.clientY - rect.top;
+      // Convert screen coords → world-space canvas coords
+      const clickX = (e.clientX - rect.left - panX) / zoom;
+      const clickY = (e.clientY - rect.top  - panY) / zoom;
       const togglePlayer = useAppStore.getState().togglePlayerSelection;
+      const hitRadius = (MARKER_RADIUS + 4) / zoom;
       for (const [pid, pos] of snapshot.entries()) {
         const { cx, cy } = worldToCanvas(pos.x, pos.y, calibration, canvasSize);
-        if (Math.hypot(clickX - cx, clickY - cy) < MARKER_RADIUS + 4) {
+        if (Math.hypot(clickX - cx, clickY - cy) < hitRadius) {
           togglePlayer(pid);
           break;
         }
       }
     },
-    [snapshot, calibration, canvasSize, isMultiRoundMode],
+    [snapshot, calibration, canvasSize, isMultiRoundMode, zoom, panX, panY],
   );
 
   // ---------------------------------------------------------------------------
@@ -617,13 +715,29 @@ const RadarViewer: React.FC = () => {
   // ---------------------------------------------------------------------------
   return (
     <div ref={containerRef} className={styles.container}>
+      {zoom > 1 && (
+        <button
+          className={styles.resetZoomBtn}
+          onClick={resetView}
+          title="Reset zoom (double-click canvas)"
+        >
+          {zoom.toFixed(1)}× Reset
+        </button>
+      )}
       <canvas
         ref={canvasRef}
         width={canvasSize}
         height={canvasSize}
         className={styles.canvas}
+        style={{ cursor: isDragging.current ? 'grabbing' : zoom > 1 ? 'grab' : 'default' }}
         onClick={handleCanvasClick}
-        title={isMultiRoundMode ? 'Multi-round overlay active' : 'Click a player marker to select/deselect'}
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onDoubleClick={resetView}
+        title={isMultiRoundMode ? 'Multi-round overlay active' : 'Scroll to zoom · Alt+drag or middle-drag to pan · Double-click to reset'}
       />
       {demo && !isHeatmapMode && !isMultiRoundMode && <Killfeed />}
       {heatmapLoading && (

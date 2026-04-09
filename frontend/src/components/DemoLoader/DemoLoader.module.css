@@ -20,6 +20,8 @@
   padding: 40px 48px;
   width: 420px;
   max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -91,6 +93,24 @@
 
 .hiddenInput {
   display: none;
+}
+
+.libraryToggle {
+  background: none;
+  border: 1px solid #2a3a52;
+  color: #6a7a8a;
+  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s;
+  width: 100%;
+}
+.libraryToggle:hover {
+  background: #1a2535;
+  color: #c0cfe0;
+  border-color: #3a5a7a;
 }
 
 .progressWrapper {
