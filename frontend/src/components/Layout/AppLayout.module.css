@@ -149,7 +149,7 @@
 
 /* ---- Right panel ---- */
 .rightPanel {
-  width: 200px;
+  width: 280px;
   flex-shrink: 0;
   border-left: 1px solid #1e2d3f;
   background: #0f1620;

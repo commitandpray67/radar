@@ -19,6 +19,18 @@ import { TEAM_COLORS } from '../../types';
 type SideTab  = 'rounds' | 'heatmap' | 'multi';
 type RightTab = 'players' | 'info';
 
+function getDisplaySideScore(
+  roundNumber: number,
+  halftimeRoundNumber: number | null,
+  ctScore: number,
+  tScore: number,
+): { ct: number; t: number } {
+  if (halftimeRoundNumber !== null && roundNumber > halftimeRoundNumber) {
+    return { ct: tScore, t: ctScore };
+  }
+  return { ct: ctScore, t: tScore };
+}
+
 const AppLayout: React.FC = () => {
   const demo        = useAppStore((s) => s.demo);
   const players     = useAppStore((s) => s.players);
@@ -49,6 +61,17 @@ const AppLayout: React.FC = () => {
   const roundInfo = rounds.find((r) => r.round_number === activeRound);
   const displayRoundNumber =
     displayRounds.findIndex((r) => r.round_number === activeRound) + 1 || null;
+  const halftimeRoundNumber = displayRounds.length > 12
+    ? displayRounds[11]?.round_number ?? null
+    : null;
+  const score = roundInfo
+    ? getDisplaySideScore(
+      roundInfo.round_number,
+      halftimeRoundNumber,
+      roundInfo.ct_score,
+      roundInfo.t_score,
+    )
+    : null;
 
   return (
     <div className={styles.root}>
@@ -74,7 +97,7 @@ const AppLayout: React.FC = () => {
               )}
               &nbsp;·&nbsp;
               <span className={styles.score}>
-                CT {roundInfo.ct_score} : {roundInfo.t_score} T
+                CT {score?.ct ?? 0} : {score?.t ?? 0} T
               </span>
             </span>
           )}
