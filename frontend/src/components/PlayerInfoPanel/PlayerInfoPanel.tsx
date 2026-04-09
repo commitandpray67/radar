@@ -147,8 +147,8 @@ const PlayerInfoPanel: React.FC = () => {
 
       if (ev.event_type === 'spawn') {
         state.set(ev.player_id, {
-          hp: 100,
-          armor: ev.armor ?? 0,
+          hp: ev.hp ?? 100,
+          armor: ev.armor ?? cur.armor,
           activeWeapon: cur.activeWeapon,
           pistols: new Set(),
           primaries: new Set(),

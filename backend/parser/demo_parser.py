@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 9
+PARSER_VERSION = 10
 
 
 # ---------------------------------------------------------------------------
@@ -1075,7 +1075,7 @@ def _extract_player_state_events(
     try:
         purchase_df = parser.parse_event(
             "item_purchase",
-            other=["tick", "user_steamid", "weapon"],
+            other=["tick", "user_steamid", "weapon", "item"],
         )
         for row in _rows(purchase_df):
             tick = int(row.get("tick", 0) or 0)
@@ -1085,7 +1085,7 @@ def _extract_player_state_events(
             player_id = int(row.get("user_steamid", 0) or 0)
             if player_id == 0:
                 continue
-            weapon = str(row.get("weapon", "") or "")
+            weapon = str(row.get("weapon", row.get("item", "")) or "")
             if not weapon:
                 continue
             state_events.append(PlayerStateEvent(
@@ -1102,7 +1102,7 @@ def _extract_player_state_events(
     try:
         spawn_df = parser.parse_event(
             "player_spawn",
-            other=["tick", "user_steamid"],
+            other=["tick", "user_steamid", "health", "hp", "armor"],
         )
         for row in _rows(spawn_df):
             tick = int(row.get("tick", 0) or 0)
@@ -1117,8 +1117,8 @@ def _extract_player_state_events(
                 round_number=rn,
                 player_id=player_id,
                 event_type="spawn",
-                hp=100,
-                armor=0,
+                hp=_optional_nonnegative_int(row.get("health", row.get("hp", 100))),
+                armor=_optional_nonnegative_int(row.get("armor")),
             ))
     except Exception as exc:
         logger.debug("Could not parse player_spawn: %s", exc)
