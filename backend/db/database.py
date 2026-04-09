@@ -121,7 +121,8 @@ async def init_db() -> None:
                 x               REAL,
                 y               REAL,
                 z               REAL,
-                expire_tick     INTEGER
+                expire_tick     INTEGER,
+                trajectory      TEXT
             );
 
             CREATE TABLE IF NOT EXISTS player_state_events (
@@ -150,6 +151,7 @@ async def init_db() -> None:
         # Migrations: add columns / tables that older DBs may be missing
         for migration in [
             "ALTER TABLE rounds ADD COLUMN is_knife_round INTEGER DEFAULT 0",
+            "ALTER TABLE grenades ADD COLUMN trajectory TEXT",
         ]:
             try:
                 await conn.execute(migration)
@@ -273,12 +275,13 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
             await conn.executemany(
                 """INSERT INTO grenades
                    (demo_id, round_number, thrower_id, grenade_type, throw_tick,
-                    detonate_tick, x, y, z, expire_tick)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    detonate_tick, x, y, z, expire_tick, trajectory)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     (
                         demo_id, g.round_number, g.thrower_id, g.grenade_type,
                         g.throw_tick, g.detonate_tick, g.x, g.y, g.z, g.expire_tick,
+                        json.dumps(g.trajectory) if g.trajectory else None,
                     )
                     for g in parsed.grenades
                 ],

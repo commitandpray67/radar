@@ -37,7 +37,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 8
+PARSER_VERSION = 9
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +137,7 @@ class GrenadeEvent:
     y: float = 0.0
     z: float = 0.0
     expire_tick: Optional[int] = None  # when effect ends (smoke, fire)
+    trajectory: list[dict] = field(default_factory=list)  # optional bounce points
 
 
 @dataclass
@@ -846,6 +847,32 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         except Exception as exc:
             logger.debug("Could not parse %s: %s", event_name, exc)
 
+    # -- Bounce points (for more realistic trajectories) --
+    bounce_rows: list[dict] = []
+    for event_name in ("grenade_bounce", "grenade_projectile_bounce"):
+        try:
+            b_df = parser.parse_event(
+                event_name,
+                other=["tick", "x", "y", "z", "user_steamid"],
+            )
+            for row in _rows(b_df):
+                tick = int(row.get("tick", 0) or 0)
+                rn = _rn(tick)
+                if rn == 0:
+                    continue
+                bounce_rows.append({
+                    "tick": tick,
+                    "round_number": rn,
+                    "x": float(row.get("x", row.get("X", 0)) or 0),
+                    "y": float(row.get("y", row.get("Y", 0)) or 0),
+                    "z": float(row.get("z", row.get("Z", 0)) or 0),
+                    "thrower_id": int(row.get("user_steamid", 0) or 0),
+                })
+            if bounce_rows:
+                break
+        except Exception:
+            continue
+
     # -- Match throws to detonations --
     MAX_FLIGHT_TICKS = 448   # ~7 s max flight time
     used_det: set[int] = set()
@@ -909,6 +936,21 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             y=det["y"],
             z=det["z"],
             expire_tick=expire_tick,
+            trajectory=[
+                {
+                    "tick": b["tick"],
+                    "x": b["x"],
+                    "y": b["y"],
+                    "z": b["z"],
+                }
+                for b in bounce_rows
+                if b["round_number"] == throw["round_number"]
+                and throw["tick"] < b["tick"] < det["tick"]
+                and (
+                    (throw["thrower_id"] and b["thrower_id"] and b["thrower_id"] == throw["thrower_id"])
+                    or (not throw["thrower_id"])
+                )
+            ],
         ))
 
     logger.info("Extracted %d grenade events", len(grenades))
@@ -933,6 +975,18 @@ def _extract_player_state_events(
 
     state_events: list[PlayerStateEvent] = []
 
+    def _optional_nonnegative_int(value: object) -> Optional[int]:
+        """Parse an event numeric field without collapsing missing values to 0."""
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0, parsed)
+
     # -- player_hurt: records victim HP/armor after taking damage --
     try:
         hurt_df = parser.parse_event(
@@ -952,8 +1006,12 @@ def _extract_player_state_events(
                 round_number=rn,
                 player_id=player_id,
                 event_type="hurt",
-                hp=max(0, int(row.get("hp", 0) or 0)),
-                armor=max(0, int(row.get("armor", 0) or 0)),
+                hp=_optional_nonnegative_int(
+                    row.get("hp", row.get("health", row.get("user_health")))
+                ),
+                armor=_optional_nonnegative_int(
+                    row.get("armor", row.get("user_armor"))
+                ),
                 weapon=str(row.get("weapon", "") or ""),
             ))
     except Exception as exc:
@@ -985,6 +1043,60 @@ def _extract_player_state_events(
             ))
     except Exception as exc:
         logger.warning("Could not parse item_equip: %s", exc)
+
+    # -- item_pickup: helps reconstruct grenade / loadout ownership --
+    try:
+        pickup_df = parser.parse_event(
+            "item_pickup",
+            other=["tick", "user_steamid", "item"],
+        )
+        for row in _rows(pickup_df):
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            player_id = int(row.get("user_steamid", 0) or 0)
+            if player_id == 0:
+                continue
+            item = str(row.get("item", "") or "")
+            if not item:
+                continue
+            state_events.append(PlayerStateEvent(
+                tick=tick,
+                round_number=rn,
+                player_id=player_id,
+                event_type="equip",
+                weapon=item,
+            ))
+    except Exception as exc:
+        logger.debug("Could not parse item_pickup: %s", exc)
+
+    # -- item_purchase: captures armor and bought pistols/primaries --
+    try:
+        purchase_df = parser.parse_event(
+            "item_purchase",
+            other=["tick", "user_steamid", "weapon"],
+        )
+        for row in _rows(purchase_df):
+            tick = int(row.get("tick", 0) or 0)
+            rn = _rn(tick)
+            if rn == 0:
+                continue
+            player_id = int(row.get("user_steamid", 0) or 0)
+            if player_id == 0:
+                continue
+            weapon = str(row.get("weapon", "") or "")
+            if not weapon:
+                continue
+            state_events.append(PlayerStateEvent(
+                tick=tick,
+                round_number=rn,
+                player_id=player_id,
+                event_type="equip",
+                weapon=weapon,
+            ))
+    except Exception as exc:
+        logger.debug("Could not parse item_purchase: %s", exc)
 
     # -- player_spawn: reset HP/armor to round-start values --
     try:

@@ -148,6 +148,7 @@ function drawGrenade(
   detonateCx: number,
   detonateCy: number,
   canvasSize: number,
+  trajectoryPoints: Array<{ tick: number; cx: number; cy: number }> = [],
 ): void {
   const { throw_tick, detonate_tick, expire_tick, grenade_type } = g;
   const inFlight   = detonate_tick !== null && currentTick >= throw_tick && currentTick < detonate_tick;
@@ -157,17 +158,36 @@ function drawGrenade(
   ctx.save();
 
   if (inFlight && detonate_tick !== null) {
-    // Animate grenade dot along trajectory
-    const progress = (currentTick - throw_tick) / (detonate_tick - throw_tick);
-    const gx = throwCx + (detonateCx - throwCx) * progress;
-    const gy = throwCy + (detonateCy - throwCy) * progress;
+    const path = [
+      { tick: throw_tick, cx: throwCx, cy: throwCy },
+      ...trajectoryPoints.filter((p) => p.tick > throw_tick && p.tick < detonate_tick),
+      { tick: detonate_tick, cx: detonateCx, cy: detonateCy },
+    ].sort((a, b) => a.tick - b.tick);
+
+    let gx = throwCx;
+    let gy = throwCy;
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      if (currentTick <= b.tick) {
+        const segTicks = Math.max(1, b.tick - a.tick);
+        const t = Math.max(0, Math.min(1, (currentTick - a.tick) / segTicks));
+        gx = a.cx + (b.cx - a.cx) * t;
+        gy = a.cy + (b.cy - a.cy) * t;
+        break;
+      }
+      gx = b.cx;
+      gy = b.cy;
+    }
 
     // Dashed trajectory line
     ctx.setLineDash([3, 4]);
     ctx.globalAlpha = 0.45;
     ctx.beginPath();
-    ctx.moveTo(throwCx, throwCy);
-    ctx.lineTo(detonateCx, detonateCy);
+    ctx.moveTo(path[0].cx, path[0].cy);
+    for (let i = 1; i < path.length; i++) {
+      ctx.lineTo(path[i].cx, path[i].cy);
+    }
     ctx.strokeStyle = grenadeLineColor(grenade_type);
     ctx.lineWidth = 1.5;
     ctx.stroke();
@@ -502,7 +522,13 @@ const RadarViewer: React.FC = () => {
               ? worldToCanvas(throwerPos.x, throwerPos.y, calibration, canvasSize)
               : worldToCanvas(g.x, g.y, calibration, canvasSize);
             const { cx: dxCx, cy: dxCy } = worldToCanvas(g.x, g.y, calibration, canvasSize);
-            drawGrenade(ctx, g, absoluteTick, txCx, txCy, dxCx, dxCy, canvasSize);
+            const trajectoryPoints = (g.trajectory ?? []).map((pt) => {
+              const { cx, cy } = worldToCanvas(pt.x, pt.y, calibration, canvasSize);
+              return { tick: pt.tick, cx, cy };
+            });
+            drawGrenade(
+              ctx, g, absoluteTick, txCx, txCy, dxCx, dxCy, canvasSize, trajectoryPoints,
+            );
           }
         }
       }
@@ -538,7 +564,11 @@ const RadarViewer: React.FC = () => {
         const { cx: txCx, cy: txCy } = throwerPos
           ? worldToCanvas(throwerPos.x, throwerPos.y, calibration, canvasSize)
           : { cx: dxCx, cy: dxCy };
-        drawGrenade(ctx, g, currentTick, txCx, txCy, dxCx, dxCy, canvasSize);
+        const trajectoryPoints = (g.trajectory ?? []).map((pt) => {
+          const { cx, cy } = worldToCanvas(pt.x, pt.y, calibration, canvasSize);
+          return { tick: pt.tick, cx, cy };
+        });
+        drawGrenade(ctx, g, currentTick, txCx, txCy, dxCx, dxCy, canvasSize, trajectoryPoints);
       }
     }
 
