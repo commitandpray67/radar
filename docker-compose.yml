@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  radar:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the SQLite database across container restarts
+      - radar-data:/app/backend/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DB_PATH=/app/backend/data/demos.db
+      - UPLOAD_DIR=/tmp/cs2radar_uploads
+      # Override to expose the app on a public domain:
+      # - ALLOWED_ORIGINS=https://radar.example.com
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  radar-data:

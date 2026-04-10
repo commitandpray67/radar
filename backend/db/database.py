@@ -39,10 +39,13 @@ async def get_db_path() -> Path:
 @asynccontextmanager
 async def get_connection() -> AsyncIterator[aiosqlite.Connection]:
     db_path = await get_db_path()
-    async with aiosqlite.connect(str(db_path)) as conn:
+    async with aiosqlite.connect(str(db_path), timeout=30) as conn:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("PRAGMA synchronous=NORMAL")   # safe with WAL, faster
+        await conn.execute("PRAGMA busy_timeout=10000")   # 10 s retry on lock
+        await conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         yield conn
 
 
@@ -57,7 +60,8 @@ async def init_db() -> None:
                 tick_rate   REAL NOT NULL,
                 total_ticks INTEGER NOT NULL,
                 parsed_at   TEXT NOT NULL,      -- ISO timestamp
-                meta_json   TEXT DEFAULT '{}'   -- spare JSON blob
+                meta_json   TEXT DEFAULT '{}',  -- spare JSON blob
+                file_size   INTEGER DEFAULT 0   -- bytes
             );
 
             CREATE TABLE IF NOT EXISTS rounds (
@@ -74,7 +78,9 @@ async def init_db() -> None:
                 bomb_planted_tick   INTEGER,
                 bomb_defused_tick   INTEGER,
                 bomb_exploded_tick  INTEGER,
-                is_knife_round      INTEGER DEFAULT 0
+                is_knife_round      INTEGER DEFAULT 0,
+                ct_equip_value      INTEGER DEFAULT 0,
+                t_equip_value       INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS players (
@@ -95,7 +101,8 @@ async def init_db() -> None:
                 y               REAL NOT NULL,
                 z               REAL NOT NULL,
                 team_num        INTEGER,
-                is_alive        INTEGER          -- 0/1
+                is_alive        INTEGER,         -- 0/1
+                yaw             REAL DEFAULT 0   -- view angle degrees
             );
 
             CREATE TABLE IF NOT EXISTS events (
@@ -141,6 +148,8 @@ async def init_db() -> None:
                 ON player_positions(demo_id, round_number);
             CREATE INDEX IF NOT EXISTS idx_pos_player
                 ON player_positions(demo_id, player_id);
+            CREATE INDEX IF NOT EXISTS idx_pos_tick
+                ON player_positions(demo_id, round_number, tick);
             CREATE INDEX IF NOT EXISTS idx_events_demo
                 ON events(demo_id, round_number);
             CREATE INDEX IF NOT EXISTS idx_grenades_demo
@@ -152,6 +161,12 @@ async def init_db() -> None:
         for migration in [
             "ALTER TABLE rounds ADD COLUMN is_knife_round INTEGER DEFAULT 0",
             "ALTER TABLE grenades ADD COLUMN trajectory TEXT",
+            "ALTER TABLE rounds ADD COLUMN ct_equip_value INTEGER DEFAULT 0",
+            "ALTER TABLE rounds ADD COLUMN t_equip_value INTEGER DEFAULT 0",
+            "ALTER TABLE player_positions ADD COLUMN yaw REAL DEFAULT 0",
+            "ALTER TABLE demos ADD COLUMN file_size INTEGER DEFAULT 0",
+            # Index migrations (CREATE INDEX IF NOT EXISTS is idempotent)
+            "CREATE INDEX IF NOT EXISTS idx_pos_tick ON player_positions(demo_id, round_number, tick)",
         ]:
             try:
                 await conn.execute(migration)
@@ -181,7 +196,7 @@ async def demo_exists(demo_id: str) -> bool:
         return row is not None
 
 
-async def store_demo(parsed, demo_id: str, filename: str) -> None:
+async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) -> None:
     """Persist a ParsedDemo into the database."""
     from parser.demo_parser import ParsedDemo, PARSER_VERSION
     from datetime import datetime, timezone
@@ -191,8 +206,8 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
         # demos — store parser_version in meta_json so stale caches are detected
         await conn.execute(
             """INSERT OR REPLACE INTO demos
-               (id, filename, map_name, tick_rate, total_ticks, parsed_at, meta_json)
-               VALUES (?,?,?,?,?,?,?)""",
+               (id, filename, map_name, tick_rate, total_ticks, parsed_at, meta_json, file_size)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 demo_id,
                 filename,
@@ -201,6 +216,7 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
                 parsed.match_info.total_ticks,
                 datetime.now(timezone.utc).isoformat(),
                 _json.dumps({"parser_version": PARSER_VERSION}),
+                file_size,
             ),
         )
 
@@ -211,15 +227,15 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
                (demo_id, round_number, start_tick, end_tick, freeze_end_tick,
                 winner_team, win_reason, ct_score, t_score,
                 bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick,
-                is_knife_round)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                is_knife_round, ct_equip_value, t_equip_value)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
                 (
                     demo_id, r.round_number, r.start_tick, r.end_tick,
                     r.freeze_end_tick, r.winner_team, r.win_reason,
                     r.ct_score, r.t_score,
                     r.bomb_planted_tick, r.bomb_defused_tick, r.bomb_exploded_tick,
-                    int(r.is_knife_round),
+                    int(r.is_knife_round), r.ct_equip_value, r.t_equip_value,
                 )
                 for r in parsed.rounds
             ],
@@ -242,14 +258,15 @@ async def store_demo(parsed, demo_id: str, filename: str) -> None:
             (
                 demo_id, pos.tick, pos.round_number, pos.player_id,
                 pos.x, pos.y, pos.z, pos.team_num, int(pos.is_alive),
+                getattr(pos, 'yaw', 0.0),
             )
             for pos in parsed.positions
         ]
         for i in range(0, len(pos_rows), BATCH):
             await conn.executemany(
                 """INSERT INTO player_positions
-                   (demo_id, tick, round_number, player_id, x, y, z, team_num, is_alive)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                   (demo_id, tick, round_number, player_id, x, y, z, team_num, is_alive, yaw)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 pos_rows[i : i + BATCH],
             )
 

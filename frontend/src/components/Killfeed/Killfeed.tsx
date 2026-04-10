@@ -2,55 +2,28 @@
  * Killfeed — overlays the last N kills of the current round up to the current tick.
  *
  * Positioned in the top-right corner of the radar canvas via CSS absolute.
- * Each entry shows:  [attacker name] ──[weapon]──▶ [victim name]  (HS star if applicable)
+ * Each entry shows:  [attacker name] ──[weapon icon]──▶ [victim name]  (HS star if applicable)
  */
 
 import React, { useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import { TEAM_COLORS } from '../../types';
+import { weaponIconSrc } from '../../utils/weaponIcons';
 import styles from './Killfeed.module.css';
 
 const MAX_ENTRIES = 6;
 
 const WEAPON_ABBREV: Record<string, string> = {
-  ak47: 'AK',
-  m4a1: 'M4',
-  m4a1_silencer: 'M4S',
-  awp: 'AWP',
-  deagle: 'DEG',
-  glock: 'GLK',
-  usp_silencer: 'USP',
-  p250: 'P250',
-  mp9: 'MP9',
-  mac10: 'MAC',
-  ump45: 'UMP',
-  famas: 'FAM',
-  galil: 'GAL',
-  sg556: 'SG5',
-  aug: 'AUG',
-  ssg08: 'SSG',
-  g3sg1: 'G3',
-  scar20: 'SC2',
-  p90: 'P90',
-  bizon: 'BIZ',
-  mp7: 'MP7',
-  mp5sd: 'MP5',
-  negev: 'NEG',
-  m249: 'M249',
-  nova: 'NOV',
-  xm1014: 'XM',
-  mag7: 'MAG',
-  sawedoff: 'SAW',
-  tec9: 'T9',
-  cz75a: 'CZ',
-  p2000: 'P2K',
-  r8_revolver: 'R8',
-  five_seven: '57',
-  inferno: 'NADE',
-  hegrenade: 'HE',
-  flashbang: 'FLASH',
-  smokegrenade: 'SMOKE',
-  molotov: 'MOLO',
+  ak47: 'AK', m4a1: 'M4', m4a1_silencer: 'M4S', awp: 'AWP',
+  deagle: 'DEG', glock: 'GLK', usp_silencer: 'USP', p250: 'P250',
+  mp9: 'MP9', mac10: 'MAC', ump45: 'UMP', famas: 'FAM',
+  galil: 'GAL', sg556: 'SG5', aug: 'AUG', ssg08: 'SSG',
+  g3sg1: 'G3', scar20: 'SC2', p90: 'P90', bizon: 'BIZ',
+  mp7: 'MP7', mp5sd: 'MP5', negev: 'NEG', m249: 'M249',
+  nova: 'NOV', xm1014: 'XM', mag7: 'MAG', sawedoff: 'SAW',
+  tec9: 'T9', cz75a: 'CZ', p2000: 'P2K', r8_revolver: 'R8',
+  five_seven: '57', inferno: 'NADE', hegrenade: 'HE',
+  flashbang: 'FLASH', smokegrenade: 'SMOKE', molotov: 'MOLO',
   world: 'FALL',
 };
 
@@ -68,15 +41,12 @@ const Killfeed: React.FC = () => {
   const currentTick   = useAppStore((s) => s.currentTick);
   const positions     = useAppStore((s) => s.positions);
 
-  // Map player_id → nickname for display
   const playerName = useMemo(() => {
     const map = new Map<number, string>();
     players.forEach((p) => map.set(p.player_id, p.name));
     return map;
   }, [players]);
 
-  // Use tick range rather than round_number so kills show correctly even when
-  // event.round_number is 0 (stale cache from an old broken parse).
   const roundInfo = useMemo(
     () => rounds.find((r) => r.round_number === activeRound),
     [rounds, activeRound],
@@ -95,7 +65,6 @@ const Killfeed: React.FC = () => {
       .slice(-MAX_ENTRIES);
   }, [events, roundInfo, currentTick]);
 
-  // For color correctness after side swaps, infer each player's side at kill tick.
   const roundPositionsByPlayer = useMemo(() => {
     const byPlayer = new Map<number, Array<{ tick: number; team_num: number }>>();
     if (!roundInfo) return byPlayer;
@@ -133,20 +102,31 @@ const Killfeed: React.FC = () => {
         const victim   = playerName.get(k.victim_id ?? 0) ?? '?';
         const attackerTeam = teamAtTick(k.attacker_id, k.tick);
         const victimTeam = teamAtTick(k.victim_id, k.tick);
-        const attackerColor = attackerTeam === 'CT'
-          ? TEAM_COLORS.CT
-          : attackerTeam === 'T'
-            ? TEAM_COLORS.T
-            : '#9aa8b6';
-        const victimColor = victimTeam === 'CT'
-          ? TEAM_COLORS.CT
-          : victimTeam === 'T'
-            ? TEAM_COLORS.T
-            : '#9aa8b6';
+        const attackerColor = attackerTeam === 'CT' ? TEAM_COLORS.CT : attackerTeam === 'T' ? TEAM_COLORS.T : '#9aa8b6';
+        const victimColor   = victimTeam   === 'CT' ? TEAM_COLORS.CT : victimTeam   === 'T' ? TEAM_COLORS.T : '#9aa8b6';
+        const iconSrc = weaponIconSrc(k.weapon);
+        const label = weaponLabel(k.weapon);
         return (
           <div key={k.id} className={styles.entry}>
             <span className={styles.attacker} style={{ color: attackerColor }} title={attacker}>{attacker}</span>
-            <span className={styles.weapon}>{weaponLabel(k.weapon)}</span>
+            <span className={styles.weapon}>
+              {iconSrc ? (
+                <>
+                  <img
+                    src={iconSrc}
+                    alt={label}
+                    className={styles.weaponIcon}
+                    onError={(e) => {
+                      const img = e.currentTarget as HTMLImageElement;
+                      img.style.display = 'none';
+                      const fb = img.nextElementSibling as HTMLElement | null;
+                      if (fb) fb.style.display = 'inline';
+                    }}
+                  />
+                  <span style={{ display: 'none' }}>{label}</span>
+                </>
+              ) : label}
+            </span>
             <span className={styles.victim} style={{ color: victimColor }} title={victim}>{victim}</span>
             {k.headshot === 1 && <span className={styles.hs} title="Headshot">★</span>}
           </div>
