@@ -365,7 +365,7 @@ const RadarViewer: React.FC = () => {
   useEffect(() => {
     if (!demo) return;
     const img = new Image();
-    img.src = `/maps/${demo.map_name}_radar.png`;
+    img.src = `/maps/${demo.map_name}.png`;
     img.onload = () => { radarImgRef.current = img; drawFrame(); };
     img.onerror = () => { radarImgRef.current = null; drawFrame(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
