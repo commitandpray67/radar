@@ -52,10 +52,13 @@ interface DemoState {
 
   parseStatus: ParseJobStatus | null;
 
+  positionsLoading: boolean;
+
   setDemo: (demo: DemoMeta) => void;
   setRounds: (rounds: RoundInfo[]) => void;
   setPlayers: (players: PlayerInfo[]) => void;
   setPositions: (positions: PlayerPosition[], roundNumbers?: number[]) => void;
+  setPositionsLoading: (loading: boolean) => void;
   setEvents: (events: GameEvent[]) => void;
   setGrenades: (grenades: GrenadeEvent[]) => void;
   setPlayerStateEvents: (events: PlayerStateEvent[]) => void;
@@ -76,6 +79,7 @@ interface PlaybackState {
   trailLengthTicks: number;
   showBomb: boolean;
   showGrenades: boolean;
+  showYaw: boolean;
 
   selectedPlayerIds: Set<number>;
 
@@ -88,6 +92,7 @@ interface PlaybackState {
   setTrailLength: (ticks: number) => void;
   toggleShowBomb: () => void;
   toggleShowGrenades: () => void;
+  toggleShowYaw: () => void;
   togglePlayerSelection: (playerId: number) => void;
   setSelectedPlayers: (ids: number[]) => void;
   clearSelectedPlayers: () => void;
@@ -155,6 +160,7 @@ export const useAppStore = create<AppStore>()(
       rounds: [],
       players: [],
       positions: [],
+      positionsLoading: false,
       events: [],
       grenades: [],
       playerStateEvents: [],
@@ -172,6 +178,8 @@ export const useAppStore = create<AppStore>()(
         const sortedTicks = getSortedTicks(tickIndex);
         set({ positions, tickIndex, sortedTicks }, false, 'setPositions');
       },
+      setPositionsLoading: (positionsLoading) =>
+        set({ positionsLoading }, false, 'setPositionsLoading'),
       setEvents: (events) => set({ events }, false, 'setEvents'),
       setGrenades: (grenades) => set({ grenades }, false, 'setGrenades'),
       setPlayerStateEvents: (playerStateEvents) =>
@@ -187,6 +195,7 @@ export const useAppStore = create<AppStore>()(
             rounds: [],
             players: [],
             positions: [],
+            positionsLoading: false,
             events: [],
             grenades: [],
             playerStateEvents: [],
@@ -222,6 +231,7 @@ export const useAppStore = create<AppStore>()(
       trailLengthTicks: 192,
       showBomb: true,
       showGrenades: true,
+      showYaw: false,
       selectedPlayerIds: new Set(),
 
       setActiveRound: (round) => {
@@ -251,6 +261,8 @@ export const useAppStore = create<AppStore>()(
         set((s) => ({ showBomb: !s.showBomb }), false, 'toggleShowBomb'),
       toggleShowGrenades: () =>
         set((s) => ({ showGrenades: !s.showGrenades }), false, 'toggleShowGrenades'),
+      toggleShowYaw: () =>
+        set((s) => ({ showYaw: !s.showYaw }), false, 'toggleShowYaw'),
       togglePlayerSelection: (playerId) =>
         set((s) => {
           const next = new Set(s.selectedPlayerIds);

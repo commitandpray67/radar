@@ -38,6 +38,17 @@
   font-size: 10px;
   min-width: 32px;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.weaponIcon {
+  height: 11px;
+  width: auto;
+  max-width: 44px;
+  object-fit: contain;
+  filter: brightness(0) invert(0.45);
 }
 
 .victim {

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import uuid
 from pathlib import Path
 from typing import Optional, AsyncIterator
@@ -39,8 +40,39 @@ from analytics.heatmap import HeatmapRequest, compute_heatmap, heatmap_to_base64
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory parse job status store (MVP; replace with Redis for production)
+
+def _sanitize_nan(obj):
+    """Recursively replace NaN/Inf floats with 0 for JSON safety."""
+    if isinstance(obj, float):
+        return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_nan(v) for v in obj]
+    return obj
+
+# In-memory parse job status store
 _parse_jobs: dict[str, dict] = {}
+
+# Per-demo-id lock: prevents concurrent parses of the same file
+_parse_locks: dict[str, asyncio.Lock] = {}
+_parse_locks_mu = asyncio.Lock()
+
+
+async def _get_parse_lock(demo_id: str) -> asyncio.Lock:
+    async with _parse_locks_mu:
+        if demo_id not in _parse_locks:
+            _parse_locks[demo_id] = asyncio.Lock()
+        return _parse_locks[demo_id]
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+@router.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -167,13 +199,22 @@ async def upload_demo(
             demo_id, cached_version, PARSER_VERSION,
         )
 
-    # Start background parse
-    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename))
+    # Start background parse (pass file size so it can be stored)
+    file_size = tmp_path.stat().st_size
+    lock = await _get_parse_lock(demo_id)
+    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename, file_size, lock))
 
     return {"job_id": job_id, "demo_id": demo_id, "cached": False}
 
 
-async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str) -> None:
+async def _parse_task(
+    job_id: str,
+    demo_id: str,
+    tmp_path: Path,
+    filename: str,
+    file_size: int = 0,
+    lock: asyncio.Lock | None = None,
+) -> None:
     """Background task: parse demo and store results."""
     import concurrent.futures
 
@@ -182,40 +223,47 @@ async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str) 
         _parse_jobs[job_id]["message"] = msg
         _parse_jobs[job_id]["status"] = "running"
 
-    try:
-        _progress(0.0, "Starting parse")
+    async def _run():
+        try:
+            _progress(0.0, "Starting parse")
 
-        # Run the blocking parse in a thread pool so we don't block the event loop
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            from parser.demo_parser import parse_demo
-            parsed = await loop.run_in_executor(
-                pool,
-                lambda: parse_demo(str(tmp_path), progress_callback=_progress),
-            )
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                from parser.demo_parser import parse_demo
+                parsed = await loop.run_in_executor(
+                    pool,
+                    lambda: parse_demo(str(tmp_path), progress_callback=_progress),
+                )
 
-        _progress(0.95, "Storing to database")
-        await store_demo(parsed, demo_id, filename)
+            _progress(0.95, "Storing to database")
+            await store_demo(parsed, demo_id, filename, file_size=file_size)
 
-        _parse_jobs[job_id] = {
-            "status": "complete",
-            "progress": 1.0,
-            "message": "Done",
-            "demo_id": demo_id,
-            "filename": filename,
-            "map_name": parsed.match_info.map_name,
-        }
-    except Exception as exc:
-        logger.exception("Parse failed for job %s", job_id)
-        _parse_jobs[job_id] = {
-            "status": "error",
-            "progress": 0.0,
-            "message": str(exc),
-            "demo_id": demo_id,
-            "filename": filename,
-        }
-    finally:
-        tmp_path.unlink(missing_ok=True)
+            _parse_jobs[job_id] = {
+                "status": "complete",
+                "progress": 1.0,
+                "message": "Done",
+                "demo_id": demo_id,
+                "filename": filename,
+                "map_name": parsed.match_info.map_name,
+            }
+        except Exception as exc:
+            logger.exception("Parse failed for job %s", job_id)
+            # Surface a clean message to the client; full details go to the log
+            _parse_jobs[job_id] = {
+                "status": "error",
+                "progress": 0.0,
+                "message": "Parse failed — check server logs for details.",
+                "demo_id": demo_id,
+                "filename": filename,
+            }
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    if lock is not None:
+        async with lock:
+            await _run()
+    else:
+        await _run()
 
 
 @router.get("/parse-status/{job_id}")
@@ -256,14 +304,14 @@ async def parse_status_stream(job_id: str):
                     "filename": row["filename"],
                     "map_name": row["map_name"],
                 }
-                yield f"data: {json.dumps(synthetic)}\n\n"
+                yield f"data: {json.dumps(_sanitize_nan(synthetic))}\n\n"
             else:
                 yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': 'Server restarted and job was lost. Please upload the demo again.', 'demo_id': '', 'filename': ''})}\n\n"
             return
 
         while True:
             job = _parse_jobs.get(job_id, job)  # keep last known if removed
-            yield f"data: {json.dumps(job)}\n\n"
+            yield f"data: {json.dumps(_sanitize_nan(job))}\n\n"
             if job["status"] in ("complete", "error"):
                 return
             await asyncio.sleep(0.5)
@@ -286,10 +334,32 @@ async def parse_status_stream(job_id: str):
 async def list_demos():
     async with get_connection() as conn:
         cursor = await conn.execute(
-            "SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at FROM demos"
+            "SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at, file_size FROM demos"
         )
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+@router.delete("/demos/{demo_id}")
+async def delete_demo(demo_id: str):
+    """Delete a demo and all associated data from the database."""
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT id FROM demos WHERE id = ?", (demo_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Demo not found")
+
+        for table in [
+            "player_positions", "events", "rounds", "players",
+            "grenades", "player_state_events",
+        ]:
+            await conn.execute(f"DELETE FROM {table} WHERE demo_id = ?", (demo_id,))
+        # demos table uses `id` as primary key, not `demo_id`
+        await conn.execute("DELETE FROM demos WHERE id = ?", (demo_id,))
+        await conn.commit()
+    return {"deleted": demo_id}
 
 
 @router.get("/demos/{demo_id}")
@@ -375,7 +445,7 @@ async def get_positions(
 
     async with get_connection() as conn:
         cursor = await conn.execute(
-            f"SELECT tick, round_number, player_id, x, y, z, team_num, is_alive "
+            f"SELECT tick, round_number, player_id, x, y, z, team_num, is_alive, yaw "
             f"FROM player_positions WHERE {where} ORDER BY tick, player_id",
             params,
         )
@@ -491,7 +561,13 @@ async def get_player_state_events(
 # ---------------------------------------------------------------------------
 
 @router.post("/demos/{demo_id}/heatmap")
-async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
+async def generate_heatmap(demo_id: str, payload: HeatmapPayload):  # noqa: C901
+    if len(payload.player_ids) > 20:
+        raise HTTPException(422, "player_ids must contain at most 20 entries")
+    if len(payload.round_numbers) > 40:
+        raise HTTPException(422, "round_numbers must contain at most 40 entries")
+    if not payload.round_numbers:
+        raise HTTPException(422, "round_numbers must not be empty")
     """
     Generate a heatmap PNG for the given player(s) and rounds.
     Returns a base64-encoded PNG data URL.

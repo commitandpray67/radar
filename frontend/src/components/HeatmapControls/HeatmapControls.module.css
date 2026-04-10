@@ -323,3 +323,43 @@
   border-color: #5a2828;
   color: #c08080;
 }
+
+/* ── Heatmap legend ─────────────────────────────────────────── */
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.legendLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6a7a8a;
+  font-family: 'Inter', sans-serif;
+}
+
+.legendGradient {
+  height: 10px;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    #000080,   /* low — deep blue */
+    #0000ff,
+    #00ffff,
+    #00ff00,
+    #ffff00,
+    #ff8000,
+    #ff0000    /* high — red */
+  );
+  border: 1px solid #2a3a52;
+}
+
+.legendTicks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #4a5a6a;
+  font-family: 'JetBrains Mono', monospace;
+}

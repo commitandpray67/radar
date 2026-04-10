@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
+import { GRENADE_ICON_PATH, weaponIconSrc } from '../../utils/weaponIcons';
 import styles from './PlayerInfoPanel.module.css';
 
 interface PlayerState {
@@ -76,18 +77,27 @@ function isPrimaryWeapon(raw: string): boolean {
   return PRIMARY_HINTS.some((hint) => key.includes(hint));
 }
 
-function defaultPistolForTeam(team: 'CT' | 'T'): string {
-  return team === 'CT' ? 'usp silencer / p2000' : 'glock';
+/** Renders a weapon icon with text as fallback (shown only if image fails to load). */
+function WeaponImg({ weaponKey, label }: { weaponKey: string; label: string }) {
+  const src = weaponIconSrc(weaponKey);
+  if (!src) return <>{label}</>;
+  return (
+    <>
+      <img
+        src={src}
+        alt={label}
+        className={styles.weaponIcon}
+        onError={(e) => {
+          const img = e.currentTarget as HTMLImageElement;
+          img.style.display = 'none';
+          const fb = img.nextElementSibling as HTMLElement | null;
+          if (fb) fb.style.display = 'inline';
+        }}
+      />
+      <span style={{ display: 'none' }}>{label}</span>
+    </>
+  );
 }
-
-const GRENADE_ICON_PATH: Record<string, string> = {
-  weapon_hegrenade: '/icons/grenades/hegrenade.png',
-  weapon_flashbang: '/icons/grenades/flashbang.png',
-  weapon_smokegrenade: '/icons/grenades/smokegrenade.png',
-  weapon_molotov: '/icons/grenades/molotov.png',
-  weapon_incgrenade: '/icons/grenades/incgrenade.png',
-  weapon_decoy: '/icons/grenades/decoy.png',
-};
 
 const PlayerInfoPanel: React.FC = () => {
   const players = useAppStore((s) => s.players);
@@ -231,10 +241,15 @@ const PlayerInfoPanel: React.FC = () => {
 
     const pistolList = Array.from(st.pistols);
     const primaryList = Array.from(st.primaries);
-    const pistol = pistolList.length
+    // Use the detected pistol, or fall back to team default (glock / usp)
+    const pistolKey = pistolList.length
+      ? pistolList[pistolList.length - 1]
+      : (team === 'T' ? 'weapon_glock' : 'weapon_usp_silencer');
+    const pistolLabel = pistolList.length
       ? formatWeapon(pistolList[pistolList.length - 1])
-      : defaultPistolForTeam(team);
-    const primary = primaryList.length ? formatWeapon(primaryList[primaryList.length - 1]) : '—';
+      : (team === 'CT' ? 'usp / p2000' : 'glock');
+    const primaryKey = primaryList.length ? primaryList[primaryList.length - 1] : null;
+    const primaryLabel = primaryKey ? formatWeapon(primaryKey) : '—';
     const grenades = Array.from(st.grenades.values());
     const armorPct = Math.max(0, Math.min(100, st.armor));
 
@@ -275,10 +290,15 @@ const PlayerInfoPanel: React.FC = () => {
                     alt={grenadeShortName(nade)}
                     className={styles.nadeIcon}
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                      const img = e.currentTarget as HTMLImageElement;
+                      img.style.display = 'none';
+                      const fb = img.nextElementSibling as HTMLElement | null;
+                      if (fb) fb.style.display = 'inline';
                     }}
                   />
-                  <span className={styles.nadeFallback}>{grenadeShortName(nade)}</span>
+                  <span className={styles.nadeFallback} style={{ display: 'none' }}>
+                    {grenadeShortName(nade)}
+                  </span>
                 </span>
               )) : ' —'}
             </span>
