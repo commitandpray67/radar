@@ -277,15 +277,9 @@ const PlayerInfoPanel: React.FC = () => {
         </div>
 
         <div className={styles.rowBottom}>
-          <span className={styles.loadoutItem}>
-            <strong>Pistol:</strong>{' '}
-            {isAlive ? <WeaponImg weaponKey={pistolKey} label={pistolLabel} /> : '—'}
-          </span>
-          <span className={styles.loadoutItem}>
-            <strong>Primary:</strong>{' '}
-            {isAlive
-              ? (primaryKey ? <WeaponImg weaponKey={primaryKey} label={primaryLabel} /> : '—')
-              : '—'}
+          <span className={styles.loadoutItem}><strong>Pistol:</strong> {isAlive ? pistol : '—'}</span>
+          <span className={`${styles.loadoutItem} ${styles.loadoutSummary}`}>
+            <strong>Primary:</strong> {isAlive ? primary : '—'}
             <span className={styles.loadoutSep}> · </span>
             <strong>Nades:</strong>
             <span className={styles.nadesInline}>
