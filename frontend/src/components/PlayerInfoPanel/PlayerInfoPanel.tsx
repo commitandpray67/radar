@@ -277,7 +277,9 @@ const PlayerInfoPanel: React.FC = () => {
         </div>
 
         <div className={styles.rowBottom}>
-          <span className={styles.loadoutItem}><strong>Pistol:</strong> {isAlive ? pistol : '—'}</span>
+          <span className={`${styles.loadoutItem} ${styles.pistolItem}`}>
+            <strong>Pistol:</strong> {isAlive ? pistol : '—'}
+          </span>
           <span className={`${styles.loadoutItem} ${styles.loadoutSummary}`}>
             <strong>Primary:</strong> {isAlive ? primary : '—'}
             <span className={styles.loadoutSep}> · </span>
