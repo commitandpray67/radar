@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 14
+PARSER_VERSION = 19
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +123,8 @@ class RoundInfo:
     bomb_defused_tick: Optional[int] = None
     bomb_exploded_tick: Optional[int] = None
     is_knife_round: bool = False
+    ct_equip_value: int = 0   # CT team total equipment value at freeze_end
+    t_equip_value: int = 0    # T team total equipment value at freeze_end
 
 
 @dataclass
@@ -142,6 +144,7 @@ class PlayerPosition:
     z: float
     team_num: int             # 2 = T, 3 = CT
     is_alive: bool
+    yaw: float = 0.0          # view angle in degrees (0=East, 90=North in game coords)
 
 
 @dataclass
@@ -271,6 +274,10 @@ def parse_demo(
     # ---- Grenades ------------------------------------------------------
     _progress(0.92, "Extracting grenade events")
     grenades = _extract_grenades(parser, rounds)
+
+    # ---- Economy (equipment values at freeze end) ----------------------
+    _progress(0.93, "Extracting economy data")
+    rounds = _extract_economy(parser, rounds)
 
     # ---- Player state events (HP, armor, weapon equip) -----------------
     _progress(0.94, "Extracting player state events")
@@ -655,7 +662,7 @@ def _extract_positions(
 
     try:
         df = parser.parse_ticks(
-            ["X", "Y", "Z", "team_num", "is_alive", "steamid"],
+            ["X", "Y", "Z", "yaw", "team_num", "is_alive", "steamid"],
             ticks=all_ticks,
         )
     except Exception as exc:
@@ -710,6 +717,7 @@ def _extract_positions(
             z=z,
             team_num=_to_int(row.get("team_num", 0) or 0),
             is_alive=bool(row.get("is_alive", False)),
+            yaw=_to_float(row.get("yaw"), 0.0),
         ))
 
     return positions
@@ -787,8 +795,11 @@ _DETONATE_EVENTS: dict[str, str] = {
     "inferno_startburn": "molotov",   # covers both molotov & incendiary
 }
 
-# Normalise the grenade_type strings returned by parse_grenades() to our schema
+# Normalise the grenade_type strings returned by parse_grenades() to our schema.
+# parse_grenades() returns CS2 entity class names ("CHEGrenadeProjectile", etc.)
+# which we normalise to lowercase with spaces/underscores stripped.
 _TRAJ_TYPE_MAP: dict[str, str] = {
+    # Short names (older demoparser2 / CS:GO)
     "hegrenade": "he",
     "flashbang": "flash",
     "smokegrenade": "smoke",
@@ -798,7 +809,39 @@ _TRAJ_TYPE_MAP: dict[str, str] = {
     "incendiary": "incendiary",
     "decoygrenade": "decoy",
     "decoy": "decoy",
+    # CS2 entity class names as returned by demoparser2
+    "chegrenadeprojectile": "he",
+    "cflashbangprojectile": "flash",
+    "csmokegrenadeprojectile": "smoke",
+    "cmolotovprojectile": "molotov",
+    "cincendiaryprojectile": "incendiary",
+    "cdecoyprojectile": "decoy",
+    "cdecoyprojector": "decoy",
 }
+
+# Substring fallback for entity class names (order matters — most specific first)
+_TRAJ_SUBSTR_FALLBACK: list[tuple[str, str]] = [
+    ("hegrenade", "he"),
+    ("flashbang", "flash"),
+    ("smokegrenade", "smoke"),
+    ("smoke", "smoke"),
+    ("molotov", "molotov"),
+    ("incendiary", "incendiary"),
+    ("decoy", "decoy"),
+]
+
+
+def _map_grenade_type(raw: str) -> str | None:
+    """Map a raw grenade_type string from parse_grenades() to our schema type."""
+    key = raw.lower().replace(" ", "").replace("_", "")
+    result = _TRAJ_TYPE_MAP.get(key)
+    if result is not None:
+        return result
+    # Substring fallback
+    for substr, gtype in _TRAJ_SUBSTR_FALLBACK:
+        if substr in key:
+            return gtype
+    return None
 
 # Effect duration in ticks (64-tick default; scaled if tick_rate differs)
 _EFFECT_TICKS: dict[str, int] = {
@@ -856,10 +899,13 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 rn = _rn(tick)
                 if rn == 0:
                     continue
-                # demoparser2 may return uppercase or lowercase coordinate keys
-                x = float(row.get("x", row.get("X", 0)) or 0)
-                y = float(row.get("y", row.get("Y", 0)) or 0)
-                z = float(row.get("z", row.get("Z", 0)) or 0)
+                # demoparser2 may return uppercase or lowercase coordinate keys;
+                # skip rows where x or y is missing/NaN — they would map to (0,0)
+                x = _coord(row, "x", "X")
+                y = _coord(row, "y", "Y")
+                if x is None or y is None:
+                    continue
+                z = _coord(row, "z", "Z") or 0.0
                 thrower_id = int(row.get("user_steamid", 0) or 0)
                 detonations.append({
                     "tick": tick, "round_number": rn,
@@ -880,8 +926,10 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 rn = _rn(tick)
                 if rn == 0:
                     continue
-                x = float(row.get("x", row.get("X", 0)) or 0)
-                y = float(row.get("y", row.get("Y", 0)) or 0)
+                x = _coord(row, "x", "X")
+                y = _coord(row, "y", "Y")
+                if x is None or y is None:
+                    continue
                 # Round coords to nearest 10 units for fuzzy matching
                 key = (rn, round(x / 10) * 10, round(y / 10) * 10)
                 if key not in expire_map or expire_map[key] > tick:
@@ -898,17 +946,41 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
     try:
         import math as _math
         traj_df = parser.parse_grenades()
+        # Log a sample of raw grenade_type values to diagnose mapping issues
+        _seen_raw_types: set[str] = set()
         for row in _rows(traj_df):
-            raw_type = (str(row.get("grenade_type", "") or "")
-                        .lower().replace(" ", "").replace("_", ""))
-            gtype = _TRAJ_TYPE_MAP.get(raw_type)
+            raw_type = str(row.get("grenade_type", "") or "")
+            _seen_raw_types.add(raw_type)
+            gtype = _map_grenade_type(raw_type)
             if gtype is None:
                 continue
             tick = int(row.get("tick", 0) or 0)
             rn = _rn(tick)
             if rn == 0:
                 continue
-            z = float(row.get("Z", row.get("z", 0)) or 0)
+
+            # Validate coordinates — demoparser2 emits NaN for ticks where the
+            # entity position hasn't been updated.  NaN is truthy so `val or 0`
+            # returns NaN unchanged; we must check explicitly and skip bad rows.
+            def _fv(key_upper, key_lower):
+                v = row.get(key_upper)
+                if v is None:
+                    v = row.get(key_lower)
+                if v is None:
+                    return None
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    return None
+                return None if _math.isnan(f) or _math.isinf(f) else f
+
+            x = _fv("X", "x")
+            y = _fv("Y", "y")
+            z_val = _fv("Z", "z")
+            if x is None or y is None:
+                continue  # skip rows without valid 2-D coordinates
+            z = z_val if z_val is not None else 0.0
+
             # Skip "parked" positions (grenade entity stored below map while in inventory)
             if z < -4096:
                 continue
@@ -921,11 +993,13 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 thrower_id = 0
             raw_traj.append({
                 "gtype": gtype, "tick": tick, "rn": rn,
-                "x": float(row.get("X", row.get("x", 0)) or 0),
-                "y": float(row.get("Y", row.get("y", 0)) or 0),
-                "z": z,
+                "x": x, "y": y, "z": z,
                 "thrower_id": thrower_id,
             })
+        logger.info(
+            "parse_grenades() raw grenade_type values seen: %s",
+            sorted(_seen_raw_types),
+        )
         logger.info("parse_grenades() yielded %d usable rows", len(raw_traj))
     except Exception as exc:
         logger.warning("Could not extract grenade trajectories via parse_grenades(): %s", exc)
@@ -997,40 +1071,109 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         ))
 
     # -- Attach trajectory waypoints to each grenade --
-    # Directly filter raw_traj rows to each grenade's flight window.
-    # No instance-grouping is needed: filtering by [throw_tick, detonate_tick]
-    # naturally excludes the pre-throw "parked" positions.
     if raw_traj:
         MAX_TRAJ_WP = 48
+        import math as _imath
+        from collections import defaultdict as _dd
+
+        # ── Step 1: separate raw rows into per-entity tracks ──────────────────
+        # parse_grenades() returns multiple rows per tick when several grenades
+        # of the same type fly simultaneously.  A simple tick-deduplicate (keep
+        # one per tick) arbitrarily discards real data.  Instead we use greedy
+        # nearest-neighbour multi-object tracking to group rows by entity.
+        #
+        # Within each (gtype, round_number) bucket we maintain a set of
+        # "active tracks".  Each incoming row is assigned to the track whose
+        # last known position is closest (and within MATCH_DIST units); if none
+        # qualifies a new track is started.  Tracks not updated for > GAP ticks
+        # are retired.
+
+        MATCH_DIST_SQ = 500 ** 2   # max sq-distance to continue a track
+        TRACK_GAP     = 16          # retire a track after this many idle ticks
+
+        def _build_tracks(bucket_sorted: list[dict]) -> list[list[dict]]:
+            active: list[dict] = []   # {pts, last_x, last_y, last_tick}
+            finished: list[list[dict]] = []
+
+            for row in bucket_sorted:
+                tick = row["tick"]
+                x, y = row["x"], row["y"]
+
+                # Retire stale tracks
+                live, stale = [], []
+                for t in active:
+                    (live if tick - t["last_tick"] <= TRACK_GAP else stale).append(t)
+                for t in stale:
+                    finished.append(t["pts"])
+                active = live
+
+                # Greedy nearest-neighbour match (one row consumed per track)
+                best_i, best_dsq = None, MATCH_DIST_SQ
+                for i, t in enumerate(active):
+                    dsq = (x - t["last_x"]) ** 2 + (y - t["last_y"]) ** 2
+                    if dsq < best_dsq:
+                        best_dsq = dsq
+                        best_i = i
+
+                if best_i is not None:
+                    t = active[best_i]
+                    t["pts"].append(row)
+                    t["last_x"], t["last_y"], t["last_tick"] = x, y, tick
+                else:
+                    active.append({"pts": [row], "last_x": x,
+                                   "last_y": y, "last_tick": tick})
+
+            for t in active:
+                finished.append(t["pts"])
+            return [pts for pts in finished if len(pts) >= 2]
+
+        # Build track index: (gtype, rn) → list of entity tracks
+        raw_by_key: dict[tuple, list[dict]] = _dd(list)
+        for r in raw_traj:
+            raw_by_key[(r["gtype"], r["rn"])].append(r)
+
+        track_index: dict[tuple, list[list[dict]]] = {}
+        for key, bucket in raw_by_key.items():
+            bucket.sort(key=lambda r: r["tick"])
+            track_index[key] = _build_tracks(bucket)
+
+        # ── Step 2: assign best-matching track to each grenade ────────────────
         for g in grenades:
             if g.detonate_tick is None:
                 continue
-            # Collect rows inside the flight window, matching type + round
-            flight: list[dict] = []
-            for r in raw_traj:
-                if r["gtype"] != g.grenade_type or r["rn"] != g.round_number:
-                    continue
-                if r["tick"] < g.throw_tick or r["tick"] > g.detonate_tick:
-                    continue
-                # Skip rows from another player when thrower IDs are known
-                if r["thrower_id"] and g.thrower_id and r["thrower_id"] != g.thrower_id:
-                    continue
-                flight.append(r)
-
-            if len(flight) < 2:
+            all_tracks = track_index.get((g.grenade_type, g.round_number), [])
+            if not all_tracks:
                 continue
 
-            # Deduplicate ticks (keep last X/Y/Z per tick) then sort
-            seen_t: dict[int, dict] = {}
-            for r in flight:
-                seen_t[r["tick"]] = r
-            flight_dedup = sorted(seen_t.values(), key=lambda r: r["tick"])
+            # Filter tracks to those with ≥2 points inside the flight window,
+            # optionally filtered by thrower_id when available.
+            candidates: list[list[dict]] = []
+            for track in all_tracks:
+                window = [
+                    r for r in track
+                    if g.throw_tick <= r["tick"] <= g.detonate_tick
+                    and not (r["thrower_id"] and g.thrower_id
+                             and r["thrower_id"] != g.thrower_id)
+                ]
+                if len(window) >= 2:
+                    candidates.append(window)
+
+            if not candidates:
+                continue
+
+            # Pick the candidate whose last point is nearest to the detonation
+            best = min(
+                candidates,
+                key=lambda pts: (
+                    (pts[-1]["x"] - g.x) ** 2 + (pts[-1]["y"] - g.y) ** 2
+                ),
+            )
 
             # Sample evenly, always keeping first and last
-            step = max(1, len(flight_dedup) // MAX_TRAJ_WP)
-            sampled = flight_dedup[::step]
-            if sampled[-1] is not flight_dedup[-1]:
-                sampled.append(flight_dedup[-1])
+            step = max(1, len(best) // MAX_TRAJ_WP)
+            sampled = best[::step]
+            if sampled[-1] is not best[-1]:
+                sampled.append(best[-1])
 
             g.trajectory = [
                 {"tick": r["tick"], "x": r["x"], "y": r["y"], "z": r["z"]}
@@ -1042,6 +1185,51 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
 
     logger.info("Extracted %d grenade events", len(grenades))
     return grenades
+
+
+# ---------------------------------------------------------------------------
+# Economy extraction
+# ---------------------------------------------------------------------------
+
+def _extract_economy(parser, rounds: list[RoundInfo]) -> list[RoundInfo]:
+    """
+    Fill ct_equip_value / t_equip_value on each RoundInfo by reading
+    current_equip_value at the freeze_end_tick of each round.
+    """
+    if not rounds:
+        return rounds
+
+    freeze_ticks = [r.freeze_end_tick for r in rounds if r.freeze_end_tick > 0]
+    if not freeze_ticks:
+        return rounds
+
+    try:
+        df = parser.parse_ticks(
+            ["current_equip_value", "team_num", "steamid"],
+            ticks=freeze_ticks,
+        )
+    except Exception as exc:
+        logger.warning("Could not extract economy data: %s", exc)
+        return rounds
+
+    # Build {freeze_end_tick: {team_num: total_value}} mapping
+    from collections import defaultdict
+    economy: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+
+    for row in _rows(df):
+        tick = int(row.get("tick", 0) or 0)
+        team = int(row.get("team_num", 0) or 0)
+        val = int(row.get("current_equip_value", 0) or 0)
+        if team in (2, 3) and val > 0:
+            economy[tick][team] += val
+
+    for r in rounds:
+        snap = economy.get(r.freeze_end_tick, {})
+        r.ct_equip_value = snap.get(3, 0)  # team_num 3 = CT
+        r.t_equip_value  = snap.get(2, 0)  # team_num 2 = T
+
+    logger.info("Economy extracted for %d rounds", len(rounds))
+    return rounds
 
 
 # ---------------------------------------------------------------------------

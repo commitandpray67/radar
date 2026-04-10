@@ -20,13 +20,14 @@ import {
   watchParseStatus,
   getRounds,
   getPlayers,
-  getPositions,
   getEvents,
   getGrenades,
   getPlayerStateEvents,
   getMaps,
+  getDemo,
 } from '../../utils/api';
 import type { ParseJobStatus } from '../../types';
+import DemoLibrary from '../DemoLibrary/DemoLibrary';
 import styles from './DemoLoader.module.css';
 
 type LoadPhase =
@@ -45,11 +46,11 @@ const DemoLoader: React.FC = () => {
   const [parseStatus, setParseStatus] = useState<ParseJobStatus | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
+  const [showLibrary, setShowLibrary] = useState(false);
 
   const setDemo              = useAppStore((s) => s.setDemo);
   const setRounds            = useAppStore((s) => s.setRounds);
   const setPlayers           = useAppStore((s) => s.setPlayers);
-  const setPositions         = useAppStore((s) => s.setPositions);
   const setEvents            = useAppStore((s) => s.setEvents);
   const setGrenades          = useAppStore((s) => s.setGrenades);
   const setPlayerStateEvents = useAppStore((s) => s.setPlayerStateEvents);
@@ -94,13 +95,12 @@ const DemoLoader: React.FC = () => {
           });
         }
 
-        // 3. Fetch all data
+        // 3. Fetch all data (positions are loaded per-round by useRoundPositions)
         setPhase('fetching');
-        const [rounds, players, positions, events, grenades, playerStateEvts, freshMaps] =
+        const [rounds, players, events, grenades, playerStateEvts, freshMaps] =
           await Promise.all([
             getRounds(demo_id),
             getPlayers(demo_id),
-            getPositions(demo_id),
             getEvents(demo_id),
             getGrenades(demo_id),
             getPlayerStateEvents(demo_id),
@@ -109,7 +109,6 @@ const DemoLoader: React.FC = () => {
 
         setRounds(rounds);
         setPlayers(players);
-        setPositions(positions);
         setEvents(events);
         setGrenades(grenades);
         setPlayerStateEvents(playerStateEvts);
@@ -117,7 +116,6 @@ const DemoLoader: React.FC = () => {
 
         // Set current map calibration
         // Fetch accurate demo metadata from the server
-        const { getDemo } = await import('../../utils/api');
         const freshDemo = await getDemo(demo_id);
         setDemo(freshDemo);
 
@@ -141,6 +139,41 @@ const DemoLoader: React.FC = () => {
     [maps],
   );
 
+
+  // Load a previously parsed demo directly from the library (by demo_id)
+  const loadFromLibrary = useCallback(async (demoId: string) => {
+    setPhase('fetching');
+    setErrorMsg('');
+    try {
+      const [rounds, players, events, grenades, playerStateEvts, freshMaps] =
+        await Promise.all([
+          getRounds(demoId),
+          getPlayers(demoId),
+          getEvents(demoId),
+          getGrenades(demoId),
+          getPlayerStateEvents(demoId),
+          getMaps(),
+        ]);
+
+      setRounds(rounds);
+      setPlayers(players);
+      setEvents(events);
+      setGrenades(grenades);
+      setPlayerStateEvents(playerStateEvts);
+      setMaps(freshMaps);
+
+      const freshDemo = await getDemo(demoId);
+      setDemo(freshDemo);
+      const mapMeta = freshMaps.find((m) => m.name === freshDemo.map_name);
+      setCurrentMap(mapMeta ?? null);
+      if (rounds.length > 0) setActiveRound(rounds[0].round_number);
+      setPhase('done');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to load demo');
+      setPhase('error');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Drag-and-drop handlers
   const onDragOver = (e: React.DragEvent) => {
@@ -215,6 +248,15 @@ const DemoLoader: React.FC = () => {
               className={styles.hiddenInput}
               onChange={onFileChange}
             />
+            <button
+              className={styles.libraryToggle}
+              onClick={() => setShowLibrary((s) => !s)}
+            >
+              {showLibrary ? 'Hide library' : 'Load from library'}
+            </button>
+            {showLibrary && (
+              <DemoLibrary onLoad={loadFromLibrary} />
+            )}
           </>
         )}
 

@@ -24,6 +24,7 @@ const PlaybackControls: React.FC = () => {
   const showTrails    = useAppStore((s) => s.showTrails);
   const showBomb      = useAppStore((s) => s.showBomb);
   const showGrenades  = useAppStore((s) => s.showGrenades);
+  const showYaw       = useAppStore((s) => s.showYaw);
 
   // Multi-round mode
   const isMultiRoundMode       = useAppStore((s) => s.isMultiRoundMode);
@@ -39,6 +40,7 @@ const PlaybackControls: React.FC = () => {
   const toggleShowTrails        = useAppStore((s) => s.toggleShowTrails);
   const toggleShowBomb          = useAppStore((s) => s.toggleShowBomb);
   const toggleShowGrenades      = useAppStore((s) => s.toggleShowGrenades);
+  const toggleShowYaw           = useAppStore((s) => s.toggleShowYaw);
   const setMultiRoundRelTick    = useAppStore((s) => s.setMultiRoundRelativeTick);
   const setMultiRoundIsPlaying  = useAppStore((s) => s.setMultiRoundIsPlaying);
 
@@ -48,6 +50,12 @@ const PlaybackControls: React.FC = () => {
   const roundInfo  = rounds.find((r) => r.round_number === activeRound);
   const roundStart = roundInfo?.freeze_end_tick ?? 0;
   const roundEnd   = roundInfo?.end_tick ?? 0;
+
+  // Display round number = position among non-knife rounds (1-indexed)
+  const displayRounds = rounds.filter((r) => !r.is_knife_round);
+  const displayRoundNumber = activeRound !== null
+    ? displayRounds.findIndex((r) => r.round_number === activeRound) + 1
+    : null;
 
   // ---- Multi-round mode: max relative tick across selected rounds ----
   const multiMaxRelTick = useMemo(() => {
@@ -174,7 +182,7 @@ const PlaybackControls: React.FC = () => {
             ‹
           </button>
           <span className={styles.roundLabel}>
-            {activeRound !== null ? `Round ${activeRound}` : 'No round'}
+            {displayRoundNumber ? `Round ${displayRoundNumber}` : 'No round'}
           </span>
           <button
             className={styles.iconBtn}
@@ -264,6 +272,13 @@ const PlaybackControls: React.FC = () => {
           title="Show/hide grenades"
         >
           💥
+        </button>
+        <button
+          className={`${styles.toggleBtn} ${showYaw ? styles.on : ''}`}
+          onClick={toggleShowYaw}
+          title="Show/hide player view direction"
+        >
+          ↗
         </button>
       </div>
     </div>

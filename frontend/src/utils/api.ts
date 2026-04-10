@@ -50,6 +50,10 @@ export async function getDemo(demoId: string): Promise<DemoMeta> {
   return res.data;
 }
 
+export async function deleteDemo(demoId: string): Promise<void> {
+  await http.delete(`/demos/${demoId}`);
+}
+
 // ---------------------------------------------------------------------------
 // Parse-status SSE
 // ---------------------------------------------------------------------------

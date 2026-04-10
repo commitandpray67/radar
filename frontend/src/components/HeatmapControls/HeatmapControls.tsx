@@ -322,11 +322,23 @@ const HeatmapControls: React.FC = () => {
 
           {/* ── Result ───────────────────────────────────────────── */}
           {heatmapResult && !heatmapError && (
-            <p className={heatmapResult.sample_count === 0 ? styles.warningMeta : styles.resultMeta}>
-              {heatmapResult.sample_count === 0
-                ? 'No data — try different rounds or players'
-                : `${heatmapResult.sample_count.toLocaleString()} position samples`}
-            </p>
+            <>
+              <p className={heatmapResult.sample_count === 0 ? styles.warningMeta : styles.resultMeta}>
+                {heatmapResult.sample_count === 0
+                  ? 'No data — try different rounds or players'
+                  : `${heatmapResult.sample_count.toLocaleString()} position samples`}
+              </p>
+              {heatmapResult.sample_count > 0 && (
+                <div className={styles.legend}>
+                  <span className={styles.legendLabel}>Density</span>
+                  <div className={styles.legendGradient} />
+                  <div className={styles.legendTicks}>
+                    <span>Low</span>
+                    <span>High</span>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* ── Actions ──────────────────────────────────────────── */}

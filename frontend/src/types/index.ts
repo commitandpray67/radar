@@ -9,6 +9,7 @@ export interface DemoMeta {
   tick_rate: number;
   total_ticks: number;
   parsed_at: string;     // ISO timestamp
+  file_size?: number;    // bytes
 }
 
 export interface RoundInfo {
@@ -26,6 +27,8 @@ export interface RoundInfo {
   bomb_defused_tick: number | null;
   bomb_exploded_tick: number | null;
   is_knife_round?: boolean;
+  ct_equip_value?: number;
+  t_equip_value?: number;
 }
 
 export interface PlayerInfo {
@@ -45,6 +48,7 @@ export interface PlayerPosition {
   z: number;
   team_num: number;     // 2 = T, 3 = CT
   is_alive: number;     // 0 | 1 (from SQLite)
+  yaw?: number;         // view angle degrees (0=East)
 }
 
 export interface GameEvent {
