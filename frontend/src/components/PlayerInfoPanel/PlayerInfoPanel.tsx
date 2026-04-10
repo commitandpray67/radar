@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
+import { GRENADE_ICON_PATH, weaponIconSrc } from '../../utils/weaponIcons';
 import styles from './PlayerInfoPanel.module.css';
 
 interface PlayerState {
@@ -76,73 +77,26 @@ function isPrimaryWeapon(raw: string): boolean {
   return PRIMARY_HINTS.some((hint) => key.includes(hint));
 }
 
-function defaultPistolForTeam(team: 'CT' | 'T'): string {
-  return team === 'CT' ? 'usp silencer / p2000' : 'glock';
-}
-
-const GRENADE_ICON_PATH: Record<string, string> = {
-  weapon_hegrenade:    '/icons/he-grenade-icon.svg',
-  weapon_flashbang:    '/icons/flashbang-icon.svg',
-  weapon_smokegrenade: '/icons/smoke-grenade-icon.svg',
-  weapon_molotov:      '/icons/molotov-icon.svg',
-  weapon_incgrenade:   '/icons/incendiary-grenade-icon.svg',
-  weapon_decoy:        '/icons/decoy-icon.svg',
-};
-
-const WEAPON_ICON_PATH: Record<string, string> = {
-  // Pistols
-  weapon_glock:         '/icons/glock-icon.svg',
-  weapon_hkp2000:       '/icons/p2000-icon.svg',
-  weapon_usp_silencer:  '/icons/usps-icon.svg',
-  weapon_p250:          '/icons/p250-icon.svg',
-  weapon_fiveseven:     '/icons/five-seven-icon.svg',
-  weapon_cz75a:         '/icons/cz75a-icon.svg',
-  weapon_deagle:        '/icons/deagle-icon.svg',
-  weapon_revolver:      '/icons/revolver-icon.svg',
-  weapon_tec9:          '/icons/tec9-icon.svg',
-  weapon_elite:         '/icons/dual-elite-icon.svg',
-  // Rifles
-  weapon_ak47:          '/icons/ak47-icon.svg',
-  weapon_m4a1:          '/icons/m4a4-icon.svg',
-  weapon_m4a1_silencer: '/icons/m4a1-icon.svg',
-  weapon_famas:         '/icons/famas-icon.svg',
-  weapon_galilar:       '/icons/galilar-icon.svg',
-  weapon_aug:           '/icons/aug-icon.svg',
-  weapon_sg556:         '/icons/sg553-icon.svg',
-  // Snipers
-  weapon_awp:           '/icons/awp-icon.svg',
-  weapon_ssg08:         '/icons/ssg08-icon.svg',
-  weapon_scar20:        '/icons/scar20-icon.svg',
-  weapon_g3sg1:         '/icons/g3sg1-icon.svg',
-  // Shotguns
-  weapon_xm1014:        '/icons/xm1014-icon.svg',
-  weapon_nova:          '/icons/nova-icon.svg',
-  weapon_mag7:          '/icons/mag7-icon.svg',
-  weapon_sawedoff:      '/icons/sawed-off-icon.svg',
-  // SMGs
-  weapon_mp9:           '/icons/mp9-icon.svg',
-  weapon_mac10:         '/icons/mac10-icon.svg',
-  weapon_ump45:         '/icons/ump45-icon.svg',
-  weapon_mp7:           '/icons/mp7-icon.svg',
-  weapon_mp5sd:         '/icons/mp5sd-icon.svg',
-  weapon_p90:           '/icons/p90-icon.svg',
-  weapon_bizon:         '/icons/bizon-icon.svg',
-  // Machine guns
-  weapon_m249:          '/icons/m249-icon.svg',
-  weapon_negev:         '/icons/negev-icon.svg',
-  // Knife (fallback for all knife variants)
-  weapon_knife:         '/icons/knife-icon.svg',
-  weapon_knife_t:       '/icons/knife-icon.svg',
-};
-
-function weaponIcon(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const key = normalizeWeaponName(raw);
-  // Exact match first; fall back to knife generic for any knife variant
-  if (WEAPON_ICON_PATH[key]) return WEAPON_ICON_PATH[key];
-  if (key.includes('knife') || key.includes('bayonet'))
-    return '/icons/knife-icon.svg';
-  return null;
+/** Renders a weapon icon with text as fallback (shown only if image fails to load). */
+function WeaponImg({ weaponKey, label }: { weaponKey: string; label: string }) {
+  const src = weaponIconSrc(weaponKey);
+  if (!src) return <>{label}</>;
+  return (
+    <>
+      <img
+        src={src}
+        alt={label}
+        className={styles.weaponIcon}
+        onError={(e) => {
+          const img = e.currentTarget as HTMLImageElement;
+          img.style.display = 'none';
+          const fb = img.nextElementSibling as HTMLElement | null;
+          if (fb) fb.style.display = 'inline';
+        }}
+      />
+      <span style={{ display: 'none' }}>{label}</span>
+    </>
+  );
 }
 
 const PlayerInfoPanel: React.FC = () => {
@@ -287,10 +241,15 @@ const PlayerInfoPanel: React.FC = () => {
 
     const pistolList = Array.from(st.pistols);
     const primaryList = Array.from(st.primaries);
-    const pistol = pistolList.length
+    // Use the detected pistol, or fall back to team default (glock / usp)
+    const pistolKey = pistolList.length
+      ? pistolList[pistolList.length - 1]
+      : (team === 'T' ? 'weapon_glock' : 'weapon_usp_silencer');
+    const pistolLabel = pistolList.length
       ? formatWeapon(pistolList[pistolList.length - 1])
-      : defaultPistolForTeam(team);
-    const primary = primaryList.length ? formatWeapon(primaryList[primaryList.length - 1]) : '—';
+      : (team === 'CT' ? 'usp / p2000' : 'glock');
+    const primaryKey = primaryList.length ? primaryList[primaryList.length - 1] : null;
+    const primaryLabel = primaryKey ? formatWeapon(primaryKey) : '—';
     const grenades = Array.from(st.grenades.values());
     const armorPct = Math.max(0, Math.min(100, st.armor));
 
@@ -320,30 +279,12 @@ const PlayerInfoPanel: React.FC = () => {
         <div className={styles.rowBottom}>
           <span className={styles.loadoutItem}>
             <strong>Pistol:</strong>{' '}
-            {isAlive
-              ? (() => {
-                  const src = pistolList.length
-                    ? weaponIcon(pistolList[pistolList.length - 1])
-                    : null;
-                  return src
-                    ? <img src={src} alt={pistol} className={styles.weaponIcon}
-                           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-                    : pistol;
-                })()
-              : '—'}
+            {isAlive ? <WeaponImg weaponKey={pistolKey} label={pistolLabel} /> : '—'}
           </span>
           <span className={styles.loadoutItem}>
             <strong>Primary:</strong>{' '}
             {isAlive
-              ? (() => {
-                  const src = primaryList.length
-                    ? weaponIcon(primaryList[primaryList.length - 1])
-                    : null;
-                  return src
-                    ? <img src={src} alt={primary} className={styles.weaponIcon}
-                           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-                    : primary;
-                })()
+              ? (primaryKey ? <WeaponImg weaponKey={primaryKey} label={primaryLabel} /> : '—')
               : '—'}
             <span className={styles.loadoutSep}> · </span>
             <strong>Nades:</strong>
@@ -355,10 +296,15 @@ const PlayerInfoPanel: React.FC = () => {
                     alt={grenadeShortName(nade)}
                     className={styles.nadeIcon}
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                      const img = e.currentTarget as HTMLImageElement;
+                      img.style.display = 'none';
+                      const fb = img.nextElementSibling as HTMLElement | null;
+                      if (fb) fb.style.display = 'inline';
                     }}
                   />
-                  <span className={styles.nadeFallback}>{grenadeShortName(nade)}</span>
+                  <span className={styles.nadeFallback} style={{ display: 'none' }}>
+                    {grenadeShortName(nade)}
+                  </span>
                 </span>
               )) : ' —'}
             </span>
