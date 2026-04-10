@@ -81,58 +81,58 @@ function defaultPistolForTeam(team: 'CT' | 'T'): string {
 }
 
 const GRENADE_ICON_PATH: Record<string, string> = {
-  weapon_hegrenade:   '/icons/grenades/hegrenade.png',
-  weapon_flashbang:   '/icons/grenades/flashbang.png',
-  weapon_smokegrenade:'/icons/grenades/smokegrenade.png',
-  weapon_molotov:     '/icons/grenades/molotov.png',
-  weapon_incgrenade:  '/icons/grenades/incgrenade.png',
-  weapon_decoy:       '/icons/grenades/decoy.png',
+  weapon_hegrenade:    '/icons/hegrenade.svg',
+  weapon_flashbang:    '/icons/flashbang.svg',
+  weapon_smokegrenade: '/icons/smokegrenade.svg',
+  weapon_molotov:      '/icons/molotov.svg',
+  weapon_incgrenade:   '/icons/incgrenade.svg',
+  weapon_decoy:        '/icons/decoy.svg',
 };
 
 const WEAPON_ICON_PATH: Record<string, string> = {
   // Pistols
-  weapon_glock:         '/icons/weapons/glock.png',
-  weapon_hkp2000:       '/icons/weapons/hkp2000.png',
-  weapon_usp_silencer:  '/icons/weapons/usp_silencer.png',
-  weapon_p250:          '/icons/weapons/p250.png',
-  weapon_fiveseven:     '/icons/weapons/fiveseven.png',
-  weapon_cz75a:         '/icons/weapons/cz75a.png',
-  weapon_deagle:        '/icons/weapons/deagle.png',
-  weapon_revolver:      '/icons/weapons/revolver.png',
-  weapon_tec9:          '/icons/weapons/tec9.png',
-  weapon_elite:         '/icons/weapons/elite.png',
+  weapon_glock:         '/icons/glock.svg',
+  weapon_hkp2000:       '/icons/hkp2000.svg',
+  weapon_usp_silencer:  '/icons/usp_silencer.svg',
+  weapon_p250:          '/icons/p250.svg',
+  weapon_fiveseven:     '/icons/fiveseven.svg',
+  weapon_cz75a:         '/icons/cz75a.svg',
+  weapon_deagle:        '/icons/deagle.svg',
+  weapon_revolver:      '/icons/revolver.svg',
+  weapon_tec9:          '/icons/tec9.svg',
+  weapon_elite:         '/icons/elite.svg',
   // Rifles
-  weapon_ak47:          '/icons/weapons/ak47.png',
-  weapon_m4a1:          '/icons/weapons/m4a1.png',
-  weapon_m4a1_silencer: '/icons/weapons/m4a1_silencer.png',
-  weapon_famas:         '/icons/weapons/famas.png',
-  weapon_galilar:       '/icons/weapons/galilar.png',
-  weapon_aug:           '/icons/weapons/aug.png',
-  weapon_sg556:         '/icons/weapons/sg556.png',
+  weapon_ak47:          '/icons/ak47.svg',
+  weapon_m4a1:          '/icons/m4a1.svg',
+  weapon_m4a1_silencer: '/icons/m4a1_silencer.svg',
+  weapon_famas:         '/icons/famas.svg',
+  weapon_galilar:       '/icons/galilar.svg',
+  weapon_aug:           '/icons/aug.svg',
+  weapon_sg556:         '/icons/sg556.svg',
   // Snipers
-  weapon_awp:           '/icons/weapons/awp.png',
-  weapon_ssg08:         '/icons/weapons/ssg08.png',
-  weapon_scar20:        '/icons/weapons/scar20.png',
-  weapon_g3sg1:         '/icons/weapons/g3sg1.png',
+  weapon_awp:           '/icons/awp.svg',
+  weapon_ssg08:         '/icons/ssg08.svg',
+  weapon_scar20:        '/icons/scar20.svg',
+  weapon_g3sg1:         '/icons/g3sg1.svg',
   // Shotguns
-  weapon_xm1014:        '/icons/weapons/xm1014.png',
-  weapon_nova:          '/icons/weapons/nova.png',
-  weapon_mag7:          '/icons/weapons/mag7.png',
-  weapon_sawedoff:      '/icons/weapons/sawedoff.png',
+  weapon_xm1014:        '/icons/xm1014.svg',
+  weapon_nova:          '/icons/nova.svg',
+  weapon_mag7:          '/icons/mag7.svg',
+  weapon_sawedoff:      '/icons/sawedoff.svg',
   // SMGs
-  weapon_mp9:           '/icons/weapons/mp9.png',
-  weapon_mac10:         '/icons/weapons/mac10.png',
-  weapon_ump45:         '/icons/weapons/ump45.png',
-  weapon_mp7:           '/icons/weapons/mp7.png',
-  weapon_mp5sd:         '/icons/weapons/mp5sd.png',
-  weapon_p90:           '/icons/weapons/p90.png',
-  weapon_bizon:         '/icons/weapons/bizon.png',
+  weapon_mp9:           '/icons/mp9.svg',
+  weapon_mac10:         '/icons/mac10.svg',
+  weapon_ump45:         '/icons/ump45.svg',
+  weapon_mp7:           '/icons/mp7.svg',
+  weapon_mp5sd:         '/icons/mp5sd.svg',
+  weapon_p90:           '/icons/p90.svg',
+  weapon_bizon:         '/icons/bizon.svg',
   // Machine guns
-  weapon_m249:          '/icons/weapons/m249.png',
-  weapon_negev:         '/icons/weapons/negev.png',
+  weapon_m249:          '/icons/m249.svg',
+  weapon_negev:         '/icons/negev.svg',
   // Knife (fallback for all knife variants)
-  weapon_knife:         '/icons/weapons/knife.png',
-  weapon_knife_t:       '/icons/weapons/knife.png',
+  weapon_knife:         '/icons/knife.svg',
+  weapon_knife_t:       '/icons/knife.svg',
 };
 
 function weaponIcon(raw: string | null | undefined): string | null {
@@ -141,7 +141,7 @@ function weaponIcon(raw: string | null | undefined): string | null {
   // Exact match first; fall back to knife generic for any knife variant
   if (WEAPON_ICON_PATH[key]) return WEAPON_ICON_PATH[key];
   if (key.includes('knife') || key.includes('bayonet'))
-    return '/icons/weapons/knife.png';
+    return '/icons/knife.svg';
   return null;
 }
 
