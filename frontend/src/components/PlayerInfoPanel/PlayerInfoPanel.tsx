@@ -81,13 +81,69 @@ function defaultPistolForTeam(team: 'CT' | 'T'): string {
 }
 
 const GRENADE_ICON_PATH: Record<string, string> = {
-  weapon_hegrenade: '/icons/grenades/hegrenade.png',
-  weapon_flashbang: '/icons/grenades/flashbang.png',
-  weapon_smokegrenade: '/icons/grenades/smokegrenade.png',
-  weapon_molotov: '/icons/grenades/molotov.png',
-  weapon_incgrenade: '/icons/grenades/incgrenade.png',
-  weapon_decoy: '/icons/grenades/decoy.png',
+  weapon_hegrenade:   '/icons/grenades/hegrenade.png',
+  weapon_flashbang:   '/icons/grenades/flashbang.png',
+  weapon_smokegrenade:'/icons/grenades/smokegrenade.png',
+  weapon_molotov:     '/icons/grenades/molotov.png',
+  weapon_incgrenade:  '/icons/grenades/incgrenade.png',
+  weapon_decoy:       '/icons/grenades/decoy.png',
 };
+
+const WEAPON_ICON_PATH: Record<string, string> = {
+  // Pistols
+  weapon_glock:         '/icons/weapons/glock.png',
+  weapon_hkp2000:       '/icons/weapons/hkp2000.png',
+  weapon_usp_silencer:  '/icons/weapons/usp_silencer.png',
+  weapon_p250:          '/icons/weapons/p250.png',
+  weapon_fiveseven:     '/icons/weapons/fiveseven.png',
+  weapon_cz75a:         '/icons/weapons/cz75a.png',
+  weapon_deagle:        '/icons/weapons/deagle.png',
+  weapon_revolver:      '/icons/weapons/revolver.png',
+  weapon_tec9:          '/icons/weapons/tec9.png',
+  weapon_elite:         '/icons/weapons/elite.png',
+  // Rifles
+  weapon_ak47:          '/icons/weapons/ak47.png',
+  weapon_m4a1:          '/icons/weapons/m4a1.png',
+  weapon_m4a1_silencer: '/icons/weapons/m4a1_silencer.png',
+  weapon_famas:         '/icons/weapons/famas.png',
+  weapon_galilar:       '/icons/weapons/galilar.png',
+  weapon_aug:           '/icons/weapons/aug.png',
+  weapon_sg556:         '/icons/weapons/sg556.png',
+  // Snipers
+  weapon_awp:           '/icons/weapons/awp.png',
+  weapon_ssg08:         '/icons/weapons/ssg08.png',
+  weapon_scar20:        '/icons/weapons/scar20.png',
+  weapon_g3sg1:         '/icons/weapons/g3sg1.png',
+  // Shotguns
+  weapon_xm1014:        '/icons/weapons/xm1014.png',
+  weapon_nova:          '/icons/weapons/nova.png',
+  weapon_mag7:          '/icons/weapons/mag7.png',
+  weapon_sawedoff:      '/icons/weapons/sawedoff.png',
+  // SMGs
+  weapon_mp9:           '/icons/weapons/mp9.png',
+  weapon_mac10:         '/icons/weapons/mac10.png',
+  weapon_ump45:         '/icons/weapons/ump45.png',
+  weapon_mp7:           '/icons/weapons/mp7.png',
+  weapon_mp5sd:         '/icons/weapons/mp5sd.png',
+  weapon_p90:           '/icons/weapons/p90.png',
+  weapon_bizon:         '/icons/weapons/bizon.png',
+  // Machine guns
+  weapon_m249:          '/icons/weapons/m249.png',
+  weapon_negev:         '/icons/weapons/negev.png',
+  // Knife (fallback for all knife variants)
+  weapon_knife:         '/icons/weapons/knife.png',
+  weapon_knife_t:       '/icons/weapons/knife.png',
+};
+
+function weaponIcon(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const key = normalizeWeaponName(raw);
+  // Exact match first; fall back to knife generic for any knife variant
+  if (WEAPON_ICON_PATH[key]) return WEAPON_ICON_PATH[key];
+  if (key.includes('knife') || key.includes('bayonet'))
+    return '/icons/weapons/knife.png';
+  return null;
+}
 
 const PlayerInfoPanel: React.FC = () => {
   const players = useAppStore((s) => s.players);
@@ -262,9 +318,33 @@ const PlayerInfoPanel: React.FC = () => {
         </div>
 
         <div className={styles.rowBottom}>
-          <span className={styles.loadoutItem}><strong>Pistol:</strong> {isAlive ? pistol : '—'}</span>
           <span className={styles.loadoutItem}>
-            <strong>Primary:</strong> {isAlive ? primary : '—'}
+            <strong>Pistol:</strong>{' '}
+            {isAlive
+              ? (() => {
+                  const src = pistolList.length
+                    ? weaponIcon(pistolList[pistolList.length - 1])
+                    : null;
+                  return src
+                    ? <img src={src} alt={pistol} className={styles.weaponIcon}
+                           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                    : pistol;
+                })()
+              : '—'}
+          </span>
+          <span className={styles.loadoutItem}>
+            <strong>Primary:</strong>{' '}
+            {isAlive
+              ? (() => {
+                  const src = primaryList.length
+                    ? weaponIcon(primaryList[primaryList.length - 1])
+                    : null;
+                  return src
+                    ? <img src={src} alt={primary} className={styles.weaponIcon}
+                           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                    : primary;
+                })()
+              : '—'}
             <span className={styles.loadoutSep}> · </span>
             <strong>Nades:</strong>
             <span className={styles.nadesInline}>

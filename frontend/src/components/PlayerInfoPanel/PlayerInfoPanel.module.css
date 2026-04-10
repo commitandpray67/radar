@@ -201,3 +201,11 @@
   font-size: 9px;
   color: #8fb0c8;
 }
+
+.weaponIcon {
+  width: 36px;
+  height: 14px;
+  object-fit: contain;
+  vertical-align: middle;
+  filter: brightness(0.9);
+}
