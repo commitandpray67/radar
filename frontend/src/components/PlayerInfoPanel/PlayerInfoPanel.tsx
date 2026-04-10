@@ -48,13 +48,13 @@ const ARMOR_ITEMS = new Set([
   'kevlar',
 ]);
 
-function formatWeapon(raw: string | null | undefined): string {
-  if (!raw) return '—';
+function formatWeapon(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) return '—';
   return raw.replace(/^weapon_/, '').replace(/_/g, ' ');
 }
 
-function normalizeWeaponName(raw: string | null | undefined): string {
-  if (!raw) return '';
+function normalizeWeaponName(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) return '';
   const s = raw.toLowerCase().trim();
   if (!s) return '';
   if (s.startsWith('weapon_') || s.startsWith('item_')) return s;
@@ -98,6 +98,19 @@ function WeaponImg({ weaponKey, label }: { weaponKey: string; label: string }) {
     </>
   );
 }
+
+function safeNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+const GRENADE_ICON_PATH: Record<string, string> = {
+  weapon_hegrenade: '/icons/grenades/hegrenade.png',
+  weapon_flashbang: '/icons/grenades/flashbang.png',
+  weapon_smokegrenade: '/icons/grenades/smokegrenade.png',
+  weapon_molotov: '/icons/grenades/molotov.png',
+  weapon_incgrenade: '/icons/grenades/incgrenade.png',
+  weapon_decoy: '/icons/grenades/decoy.png',
+};
 
 const PlayerInfoPanel: React.FC = () => {
   const players = useAppStore((s) => s.players);
@@ -157,8 +170,8 @@ const PlayerInfoPanel: React.FC = () => {
 
       if (ev.event_type === 'spawn') {
         state.set(ev.player_id, {
-          hp: ev.hp ?? 100,
-          armor: ev.armor ?? cur.armor,
+          hp: safeNumber(ev.hp, 100),
+          armor: safeNumber(ev.armor, cur.armor),
           activeWeapon: cur.activeWeapon,
           pistols: new Set(),
           primaries: new Set(),
@@ -170,8 +183,8 @@ const PlayerInfoPanel: React.FC = () => {
       if (ev.event_type === 'hurt') {
         state.set(ev.player_id, {
           ...cur,
-          hp: ev.hp ?? cur.hp,
-          armor: ev.armor ?? cur.armor,
+          hp: safeNumber(ev.hp, cur.hp),
+          armor: safeNumber(ev.armor, cur.armor),
         });
         continue;
       }

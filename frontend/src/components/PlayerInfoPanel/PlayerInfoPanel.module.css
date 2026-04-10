@@ -187,6 +187,17 @@
   text-overflow: ellipsis;
 }
 
+.pistolItem {
+  white-space: nowrap;
+}
+
+.loadoutSummary {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .loadoutItem strong {
   color: #a3bed8;
   font-weight: 700;
