@@ -30,6 +30,7 @@ events : list[dict]
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Callable
@@ -66,6 +67,34 @@ def _is_empty(df) -> bool:
         return df.is_empty()                # Polars
     except AttributeError:
         return len(df) == 0                 # Pandas / anything with len()
+
+
+def _to_int(value, default: int = 0) -> int:
+    """Best-effort integer conversion that treats NaN/invalid values as default."""
+    if value is None:
+        return default
+    try:
+        if isinstance(value, float) and math.isnan(value):
+            return default
+    except TypeError:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError, OverflowError):
+        return default
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    """Best-effort float conversion that treats NaN/invalid values as default."""
+    if value is None:
+        return default
+    try:
+        result = float(value)
+    except (ValueError, TypeError, OverflowError):
+        return default
+    if math.isnan(result):
+        return default
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -661,14 +690,14 @@ def _extract_positions(
         if steam_id == 0:
             continue
 
-        tick = int(row.get("tick", 0) or 0)
+        tick = _to_int(row.get("tick", 0) or 0)
         rn   = tick_to_round.get(tick, 0)
         if rn == 0:
             continue
 
-        x = float(row.get("X", 0) or 0)
-        y = float(row.get("Y", 0) or 0)
-        z = float(row.get("Z", 0) or 0)
+        x = _to_float(row.get("X", 0) or 0)
+        y = _to_float(row.get("Y", 0) or 0)
+        z = _to_float(row.get("Z", 0) or 0)
         if x == 0 and y == 0 and z == 0:
             continue  # player not yet spawned
 
@@ -679,7 +708,7 @@ def _extract_positions(
             x=x,
             y=y,
             z=z,
-            team_num=int(row.get("team_num", 0) or 0),
+            team_num=_to_int(row.get("team_num", 0) or 0),
             is_alive=bool(row.get("is_alive", False)),
         ))
 
