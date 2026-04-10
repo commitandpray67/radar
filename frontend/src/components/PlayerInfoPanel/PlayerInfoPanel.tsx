@@ -47,13 +47,13 @@ const ARMOR_ITEMS = new Set([
   'kevlar',
 ]);
 
-function formatWeapon(raw: string | null | undefined): string {
-  if (!raw) return '—';
+function formatWeapon(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) return '—';
   return raw.replace(/^weapon_/, '').replace(/_/g, ' ');
 }
 
-function normalizeWeaponName(raw: string | null | undefined): string {
-  if (!raw) return '';
+function normalizeWeaponName(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) return '';
   const s = raw.toLowerCase().trim();
   if (!s) return '';
   if (s.startsWith('weapon_') || s.startsWith('item_')) return s;
@@ -78,6 +78,10 @@ function isPrimaryWeapon(raw: string): boolean {
 
 function defaultPistolForTeam(team: 'CT' | 'T'): string {
   return team === 'CT' ? 'usp silencer / p2000' : 'glock';
+}
+
+function safeNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 const GRENADE_ICON_PATH: Record<string, string> = {
@@ -147,8 +151,8 @@ const PlayerInfoPanel: React.FC = () => {
 
       if (ev.event_type === 'spawn') {
         state.set(ev.player_id, {
-          hp: ev.hp ?? 100,
-          armor: ev.armor ?? cur.armor,
+          hp: safeNumber(ev.hp, 100),
+          armor: safeNumber(ev.armor, cur.armor),
           activeWeapon: cur.activeWeapon,
           pistols: new Set(),
           primaries: new Set(),
@@ -160,8 +164,8 @@ const PlayerInfoPanel: React.FC = () => {
       if (ev.event_type === 'hurt') {
         state.set(ev.player_id, {
           ...cur,
-          hp: ev.hp ?? cur.hp,
-          armor: ev.armor ?? cur.armor,
+          hp: safeNumber(ev.hp, cur.hp),
+          armor: safeNumber(ev.armor, cur.armor),
         });
         continue;
       }
@@ -262,8 +266,10 @@ const PlayerInfoPanel: React.FC = () => {
         </div>
 
         <div className={styles.rowBottom}>
-          <span className={styles.loadoutItem}><strong>Pistol:</strong> {isAlive ? pistol : '—'}</span>
-          <span className={styles.loadoutItem}>
+          <span className={`${styles.loadoutItem} ${styles.pistolItem}`}>
+            <strong>Pistol:</strong> {isAlive ? pistol : '—'}
+          </span>
+          <span className={`${styles.loadoutItem} ${styles.loadoutSummary}`}>
             <strong>Primary:</strong> {isAlive ? primary : '—'}
             <span className={styles.loadoutSep}> · </span>
             <strong>Nades:</strong>
