@@ -644,7 +644,7 @@ def _extract_players(parser) -> list[PlayerInfo]:
             continue
         seen.add(steam_id)
 
-        team_num = int(row.get("team_number", 0) or 0)
+        team_num = _to_int(row.get("team_number", 0))
         team = {2: "T", 3: "CT"}.get(team_num, "") or str(row.get("team_name", "") or "")
 
         players.append(PlayerInfo(
@@ -713,7 +713,7 @@ def _extract_positions(
         if steam_id == 0:
             continue
 
-        tick = _to_int(row.get("tick", 0) or 0)
+        tick = _to__to_int(row.get("tick", 0))
         rn   = tick_to_round.get(tick, 0)
         if rn == 0:
             continue
@@ -731,7 +731,7 @@ def _extract_positions(
             x=x,
             y=y,
             z=z,
-            team_num=_to_int(row.get("team_num", 0) or 0),
+            team_num=_to_int(row.get("team_num", 0)),
             is_alive=bool(row.get("is_alive", False)),
             yaw=_to_float(row.get("yaw"), 0.0),
         ))
@@ -758,13 +758,13 @@ def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
             other=["tick", "attacker_steamid", "user_steamid", "weapon", "headshot"],
         )
         for row in _rows(kills_df):
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             events.append(GameEvent(
                 tick=tick,
                 round_number=_rn(tick),
                 event_type="player_death",
-                attacker_id=int(row.get("attacker_steamid", 0) or 0) or None,
-                victim_id=int(row.get("user_steamid", 0) or 0) or None,
+                attacker_id=_to_int(row.get("attacker_steamid", 0)) or None,
+                victim_id=_to_int(row.get("user_steamid", 0)) or None,
                 weapon=str(row.get("weapon", "") or ""),
                 headshot=bool(row.get("headshot", False)),
             ))
@@ -776,7 +776,7 @@ def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
         try:
             df = parser.parse_event(event_name, other=["tick"])
             for row in _rows(df):
-                tick = int(row.get("tick", 0) or 0)
+                tick = _to_int(row.get("tick", 0))
                 events.append(GameEvent(
                     tick=tick,
                     round_number=_rn(tick),
@@ -892,11 +892,11 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             nade_type = _GRENADE_WEAPONS.get(weapon)
             if nade_type is None:
                 continue
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             rn = _rn(tick)
             if rn == 0:
                 continue
-            thrower_id = int(row.get("user_steamid", 0) or 0)
+            thrower_id = _to_int(row.get("user_steamid", 0))
             throws.append({"tick": tick, "round_number": rn,
                            "thrower_id": thrower_id, "grenade_type": nade_type})
     except Exception as exc:
@@ -911,7 +911,7 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 other=["tick", "x", "y", "z", "user_steamid"],
             )
             for row in _rows(det_df):
-                tick = int(row.get("tick", 0) or 0)
+                tick = _to_int(row.get("tick", 0))
                 rn = _rn(tick)
                 if rn == 0:
                     continue
@@ -922,7 +922,7 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 if x is None or y is None:
                     continue
                 z = _coord(row, "z", "Z") or 0.0
-                thrower_id = int(row.get("user_steamid", 0) or 0)
+                thrower_id = _to_int(row.get("user_steamid", 0))
                 detonations.append({
                     "tick": tick, "round_number": rn,
                     "grenade_type": nade_type,
@@ -938,7 +938,7 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         try:
             exp_df = parser.parse_event(event_name, other=["tick", "x", "y"])
             for row in _rows(exp_df):
-                tick = int(row.get("tick", 0) or 0)
+                tick = _to_int(row.get("tick", 0))
                 rn = _rn(tick)
                 if rn == 0:
                     continue
@@ -970,7 +970,7 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             gtype = _map_grenade_type(raw_type)
             if gtype is None:
                 continue
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             rn = _rn(tick)
             if rn == 0:
                 continue
@@ -1233,9 +1233,9 @@ def _extract_economy(parser, rounds: list[RoundInfo]) -> list[RoundInfo]:
     economy: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
 
     for row in _rows(df):
-        tick = int(row.get("tick", 0) or 0)
-        team = int(row.get("team_num", 0) or 0)
-        val = int(row.get("current_equip_value", 0) or 0)
+        tick = _to_int(row.get("tick", 0))
+        team = _to_int(row.get("team_num", 0))
+        val = _to_int(row.get("current_equip_value", 0))
         if team in (2, 3) and val > 0:
             economy[tick][team] += val
 
@@ -1306,7 +1306,7 @@ def _extract_player_state_events(
             other=["tick", "user_steamid", "hp", "armor", "weapon"],
         )
         for row in _rows(hurt_df):
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             rn = _rn(tick)
             if rn == 0:
                 continue
@@ -1332,7 +1332,7 @@ def _extract_player_state_events(
             other=["tick", "user_steamid", "item"],
         )
         for row in _rows(equip_df):
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             rn = _rn(tick)
             if rn == 0:
                 continue
@@ -1359,7 +1359,7 @@ def _extract_player_state_events(
             other=["tick", "user_steamid", "item"],
         )
         for row in _rows(pickup_df):
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             rn = _rn(tick)
             if rn == 0:
                 continue
@@ -1386,7 +1386,7 @@ def _extract_player_state_events(
             other=["tick", "user_steamid", "weapon", "item"],
         )
         for row in _rows(purchase_df):
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             rn = _rn(tick)
             if rn == 0:
                 continue
@@ -1413,7 +1413,7 @@ def _extract_player_state_events(
             other=["tick", "user_steamid", "health", "hp", "armor", "armor_value"],
         )
         for row in _rows(spawn_df):
-            tick = int(row.get("tick", 0) or 0)
+            tick = _to_int(row.get("tick", 0))
             rn = _rn(tick)
             if rn == 0:
                 continue
@@ -1440,7 +1440,7 @@ def _extract_player_state_events(
                 ticks=freeze_ticks,
             )
             for row in _rows(tick_df):
-                tick = int(row.get("tick", 0) or 0)
+                tick = _to_int(row.get("tick", 0))
                 rn = _rn(tick)
                 if rn == 0:
                     continue
