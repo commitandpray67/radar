@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 18
+PARSER_VERSION = 19
 
 
 # ---------------------------------------------------------------------------
@@ -1087,76 +1087,109 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         ))
 
     # -- Attach trajectory waypoints to each grenade --
-    # Directly filter raw_traj rows to each grenade's flight window.
-    # No instance-grouping is needed: filtering by [throw_tick, detonate_tick]
-    # naturally excludes the pre-throw "parked" positions.
     if raw_traj:
         MAX_TRAJ_WP = 48
-        # Pre-build a spatial index: (gtype, rn) → sorted list of traj rows.
-        # This avoids re-scanning all of raw_traj for every grenade.
+        import math as _imath
         from collections import defaultdict as _dd
-        traj_index: dict[tuple, list[dict]] = _dd(list)
-        for r in raw_traj:
-            traj_index[(r["gtype"], r["rn"])].append(r)
 
+        # ── Step 1: separate raw rows into per-entity tracks ──────────────────
+        # parse_grenades() returns multiple rows per tick when several grenades
+        # of the same type fly simultaneously.  A simple tick-deduplicate (keep
+        # one per tick) arbitrarily discards real data.  Instead we use greedy
+        # nearest-neighbour multi-object tracking to group rows by entity.
+        #
+        # Within each (gtype, round_number) bucket we maintain a set of
+        # "active tracks".  Each incoming row is assigned to the track whose
+        # last known position is closest (and within MATCH_DIST units); if none
+        # qualifies a new track is started.  Tracks not updated for > GAP ticks
+        # are retired.
+
+        MATCH_DIST_SQ = 500 ** 2   # max sq-distance to continue a track
+        TRACK_GAP     = 16          # retire a track after this many idle ticks
+
+        def _build_tracks(bucket_sorted: list[dict]) -> list[list[dict]]:
+            active: list[dict] = []   # {pts, last_x, last_y, last_tick}
+            finished: list[list[dict]] = []
+
+            for row in bucket_sorted:
+                tick = row["tick"]
+                x, y = row["x"], row["y"]
+
+                # Retire stale tracks
+                live, stale = [], []
+                for t in active:
+                    (live if tick - t["last_tick"] <= TRACK_GAP else stale).append(t)
+                for t in stale:
+                    finished.append(t["pts"])
+                active = live
+
+                # Greedy nearest-neighbour match (one row consumed per track)
+                best_i, best_dsq = None, MATCH_DIST_SQ
+                for i, t in enumerate(active):
+                    dsq = (x - t["last_x"]) ** 2 + (y - t["last_y"]) ** 2
+                    if dsq < best_dsq:
+                        best_dsq = dsq
+                        best_i = i
+
+                if best_i is not None:
+                    t = active[best_i]
+                    t["pts"].append(row)
+                    t["last_x"], t["last_y"], t["last_tick"] = x, y, tick
+                else:
+                    active.append({"pts": [row], "last_x": x,
+                                   "last_y": y, "last_tick": tick})
+
+            for t in active:
+                finished.append(t["pts"])
+            return [pts for pts in finished if len(pts) >= 2]
+
+        # Build track index: (gtype, rn) → list of entity tracks
+        raw_by_key: dict[tuple, list[dict]] = _dd(list)
+        for r in raw_traj:
+            raw_by_key[(r["gtype"], r["rn"])].append(r)
+
+        track_index: dict[tuple, list[list[dict]]] = {}
+        for key, bucket in raw_by_key.items():
+            bucket.sort(key=lambda r: r["tick"])
+            track_index[key] = _build_tracks(bucket)
+
+        # ── Step 2: assign best-matching track to each grenade ────────────────
         for g in grenades:
             if g.detonate_tick is None:
                 continue
-            bucket = traj_index.get((g.grenade_type, g.round_number))
-            if not bucket:
+            all_tracks = track_index.get((g.grenade_type, g.round_number), [])
+            if not all_tracks:
                 continue
 
-            # Collect rows inside the flight window for this grenade
-            flight: list[dict] = []
-            for r in bucket:
-                if r["tick"] < g.throw_tick or r["tick"] > g.detonate_tick:
-                    continue
-                # Exclude a different thrower when both IDs are known
-                if r["thrower_id"] and g.thrower_id and r["thrower_id"] != g.thrower_id:
-                    continue
-                flight.append(r)
+            # Filter tracks to those with ≥2 points inside the flight window,
+            # optionally filtered by thrower_id when available.
+            candidates: list[list[dict]] = []
+            for track in all_tracks:
+                window = [
+                    r for r in track
+                    if g.throw_tick <= r["tick"] <= g.detonate_tick
+                    and not (r["thrower_id"] and g.thrower_id
+                             and r["thrower_id"] != g.thrower_id)
+                ]
+                if len(window) >= 2:
+                    candidates.append(window)
 
-            if len(flight) < 2:
+            if not candidates:
                 continue
 
-            # Deduplicate ticks (keep last X/Y/Z per tick) then sort by tick
-            seen_t: dict[int, dict] = {}
-            for r in flight:
-                seen_t[r["tick"]] = r
-            flight_dedup = sorted(seen_t.values(), key=lambda r: r["tick"])
-
-            # --- Spatial continuity filter ---
-            # When multiple grenades of the same type fly simultaneously and
-            # thrower_id is unknown for both, their trajectory rows get mixed
-            # together.  Consecutive rows from different grenade entities show
-            # large positional jumps ("teleports").  Split the path at jumps
-            # and keep the segment whose final point is closest to the known
-            # detonation position (g.x, g.y).
-            TELEPORT_SQ = 350 ** 2   # 350 world units squared
-            segments: list[list[dict]] = [[flight_dedup[0]]]
-            for r in flight_dedup[1:]:
-                prev = segments[-1][-1]
-                dsq = (r["x"] - prev["x"]) ** 2 + (r["y"] - prev["y"]) ** 2
-                if dsq > TELEPORT_SQ:
-                    segments.append([r])
-                else:
-                    segments[-1].append(r)
-
-            # Pick the segment whose last point is nearest to the detonation
-            best_seg = min(
-                segments,
-                key=lambda seg: (
-                    (seg[-1]["x"] - g.x) ** 2 + (seg[-1]["y"] - g.y) ** 2
+            # Pick the candidate whose last point is nearest to the detonation
+            best = min(
+                candidates,
+                key=lambda pts: (
+                    (pts[-1]["x"] - g.x) ** 2 + (pts[-1]["y"] - g.y) ** 2
                 ),
             )
-            if len(best_seg) < 2:
-                continue
 
             # Sample evenly, always keeping first and last
-            step = max(1, len(best_seg) // MAX_TRAJ_WP)
-            sampled = best_seg[::step]
-            if sampled[-1] is not best_seg[-1]:
-                sampled.append(best_seg[-1])
+            step = max(1, len(best) // MAX_TRAJ_WP)
+            sampled = best[::step]
+            if sampled[-1] is not best[-1]:
+                sampled.append(best[-1])
 
             g.trajectory = [
                 {"tick": r["tick"], "x": r["x"], "y": r["y"], "z": r["z"]}
