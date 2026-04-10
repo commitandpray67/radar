@@ -78,20 +78,20 @@ const RoundPanel: React.FC = () => {
     [rounds],
   );
 
-  // Halftime separator — first half is ALWAYS 12 rounds (MR12).
-  // Place divider before the 13th display round (index 12).
+  // Halftime separator — find the boundary by round_number rather than array
+  // index so knife-round filtering doesn't shift the divider incorrectly.
+  // Standard MR12: first half is rounds 1-12, second half starts at 13.
+  // Overtime (rounds 25+): we don't add extra dividers for simplicity.
   const halftimeAfter = useMemo(() => {
-    if (displayRounds.length > 12) {
-      return displayRounds[12]?.round_number ?? null;
-    }
-    return null;
+    // First round_number that belongs to the second half (> 12)
+    const secondHalfStart = displayRounds.find((r) => r.round_number > 12);
+    return secondHalfStart?.round_number ?? null;
   }, [displayRounds]);
 
   const halftimeRoundNumber = useMemo(() => {
-    if (displayRounds.length > 12) {
-      return displayRounds[11]?.round_number ?? null;
-    }
-    return null;
+    // Last round_number that still belongs to the first half (≤ 12)
+    const firstHalf = displayRounds.filter((r) => r.round_number <= 12);
+    return firstHalf.length > 0 ? firstHalf[firstHalf.length - 1].round_number : null;
   }, [displayRounds]);
 
   if (!rounds.length) {
@@ -157,7 +157,7 @@ const RoundPanel: React.FC = () => {
               {/* Economy + score column */}
               <span className={styles.midCol}>
                 {/* Economy bars */}
-                {(r.ct_equip_value || r.t_equip_value) ? (
+                {(r.ct_equip_value !== undefined || r.t_equip_value !== undefined) ? (
                   <EconomyBars ct={r.ct_equip_value ?? 0} t={r.t_equip_value ?? 0} />
                 ) : null}
                 {/* Score */}

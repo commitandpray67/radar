@@ -25,6 +25,35 @@ import uuid
 from pathlib import Path
 from typing import Optional, AsyncIterator
 
+# Persistent job→demo mapping so we can recover after a server restart.
+_JOB_MAP_FILE = Path("/tmp/cs2radar_job_map.json")
+
+
+def _persist_job_mapping(job_id: str, demo_id: str) -> None:
+    """Write job_id→demo_id to disk so parse-status can survive restarts."""
+    try:
+        data: dict = {}
+        if _JOB_MAP_FILE.exists():
+            try:
+                data = json.loads(_JOB_MAP_FILE.read_text())
+            except Exception:
+                data = {}
+        data[job_id] = demo_id
+        _JOB_MAP_FILE.write_text(json.dumps(data))
+    except Exception:
+        pass  # non-fatal
+
+
+def _load_job_demo_id(job_id: str) -> Optional[str]:
+    """Look up demo_id for a job_id from the persistent mapping file."""
+    try:
+        if _JOB_MAP_FILE.exists():
+            data = json.loads(_JOB_MAP_FILE.read_text())
+            return data.get(job_id)
+    except Exception:
+        pass
+    return None
+
 import numpy as np
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -42,9 +71,10 @@ router = APIRouter()
 
 
 def _sanitize_nan(obj):
-    """Recursively replace NaN/Inf floats with 0 for JSON safety."""
+    """Recursively replace NaN/Inf floats with None (→ JSON null) for JSON safety.
+    Using None rather than 0 prevents coordinates like (0,0) appearing on the map."""
     if isinstance(obj, float):
-        return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
     if isinstance(obj, dict):
         return {k: _sanitize_nan(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -199,6 +229,9 @@ async def upload_demo(
             demo_id, cached_version, PARSER_VERSION,
         )
 
+    # Persist job→demo mapping so parse-status survives a server restart
+    _persist_job_mapping(job_id, demo_id)
+
     # Start background parse (pass file size so it can be stored)
     file_size = tmp_path.stat().st_size
     lock = await _get_parse_lock(demo_id)
@@ -246,13 +279,37 @@ async def _parse_task(
                 "filename": filename,
                 "map_name": parsed.match_info.map_name,
             }
-        except Exception as exc:
-            logger.exception("Parse failed for job %s", job_id)
-            # Surface a clean message to the client; full details go to the log
+        except MemoryError:
+            logger.exception("Parse OOM for job %s", job_id)
             _parse_jobs[job_id] = {
                 "status": "error",
                 "progress": 0.0,
-                "message": "Parse failed — check server logs for details.",
+                "message": "Parse failed — demo file is too large (out of memory).",
+                "demo_id": demo_id,
+                "filename": filename,
+            }
+        except FileNotFoundError:
+            logger.exception("Parse file not found for job %s", job_id)
+            _parse_jobs[job_id] = {
+                "status": "error",
+                "progress": 0.0,
+                "message": "Parse failed — demo file was not found on disk.",
+                "demo_id": demo_id,
+                "filename": filename,
+            }
+        except Exception as exc:
+            logger.exception("Parse failed for job %s", job_id)
+            exc_str = str(exc).lower()
+            if any(w in exc_str for w in ("corrupt", "invalid", "truncat", "eof")):
+                msg = "Parse failed — demo file appears to be corrupt or incomplete."
+            elif "import" in exc_str or "module" in exc_str:
+                msg = "Parse failed — a required server dependency is missing; check server logs."
+            else:
+                msg = f"Parse failed ({type(exc).__name__}) — see server logs for details."
+            _parse_jobs[job_id] = {
+                "status": "error",
+                "progress": 0.0,
+                "message": msg,
                 "demo_id": demo_id,
                 "filename": filename,
             }
@@ -284,18 +341,25 @@ async def parse_status_stream(job_id: str):
             await asyncio.sleep(0.5)
 
         if job is None:
-            # Job not in memory — check whether the demo already exists in DB
-            # (this happens when the server reloaded mid-parse)
-            # We can't know which demo_id this job_id belonged to, so we
-            # look at the most recently parsed demo as a heuristic.
+            # Job not in memory — the server likely restarted while parsing.
+            # First try the persistent job→demo map for an exact match.
+            demo_id_hint = _load_job_demo_id(job_id)
+            row = None
             async with get_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT id, filename, map_name FROM demos ORDER BY parsed_at DESC LIMIT 1"
-                )
-                row = await cursor.fetchone()
+                if demo_id_hint:
+                    cursor = await conn.execute(
+                        "SELECT id, filename, map_name FROM demos WHERE id = ?",
+                        (demo_id_hint,),
+                    )
+                    row = await cursor.fetchone()
+                if row is None:
+                    # Fallback: most recently parsed demo (best-effort heuristic)
+                    cursor = await conn.execute(
+                        "SELECT id, filename, map_name FROM demos ORDER BY parsed_at DESC LIMIT 1"
+                    )
+                    row = await cursor.fetchone()
 
             if row:
-                # Return complete with the last known demo
                 synthetic = {
                     "status": "complete",
                     "progress": 1.0,
@@ -351,14 +415,19 @@ async def delete_demo(demo_id: str):
         if not row:
             raise HTTPException(404, "Demo not found")
 
-        for table in [
-            "player_positions", "events", "rounds", "players",
-            "grenades", "player_state_events",
-        ]:
-            await conn.execute(f"DELETE FROM {table} WHERE demo_id = ?", (demo_id,))
-        # demos table uses `id` as primary key, not `demo_id`
-        await conn.execute("DELETE FROM demos WHERE id = ?", (demo_id,))
-        await conn.commit()
+        try:
+            await conn.execute("BEGIN")
+            for table in [
+                "player_positions", "events", "rounds", "players",
+                "grenades", "player_state_events",
+            ]:
+                await conn.execute(f"DELETE FROM {table} WHERE demo_id = ?", (demo_id,))
+            # demos table uses `id` as primary key, not `demo_id`
+            await conn.execute("DELETE FROM demos WHERE id = ?", (demo_id,))
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
     return {"deleted": demo_id}
 
 
@@ -516,7 +585,11 @@ async def get_grenades(
         if raw_traj:
             try:
                 d["trajectory"] = _json.loads(raw_traj)
-            except Exception:
+            except Exception as _exc:
+                logger.warning(
+                    "Failed to parse trajectory JSON for grenade id=%s: %s",
+                    d.get("id"), _exc,
+                )
                 d["trajectory"] = None
         else:
             d["trajectory"] = None

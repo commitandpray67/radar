@@ -580,7 +580,7 @@ const RadarViewer: React.FC = () => {
         if (!snap) continue;
 
         for (const [pid, pos] of snap.entries()) {
-          const alive = pos.is_alive === 1;
+          const alive = Boolean(pos.is_alive);
           const { cx, cy } = worldToCanvas(pos.x, pos.y, calibration, canvasSize);
           drawPlayerMarker(ctx, cx, cy, MULTI_DOT_COLOR, playerLabel(pid), 1, alive, false, markerR);
         }
@@ -663,7 +663,7 @@ const RadarViewer: React.FC = () => {
 
     // Player markers
     for (const [pid, pos] of snapshot.entries()) {
-      const alive = pos.is_alive === 1 || pos.is_alive === (true as unknown as number);
+      const alive = Boolean(pos.is_alive);
       if (!showDeadPlayers && !alive) continue;
       const isSelected = selectedPlayerIds.has(pid);
       const color = pos.team_num === 3 ? TEAM_COLORS.CT : TEAM_COLORS.T;

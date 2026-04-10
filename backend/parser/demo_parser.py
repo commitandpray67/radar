@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 19
+PARSER_VERSION = 20
 
 
 # ---------------------------------------------------------------------------
@@ -933,7 +933,9 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             logger.debug("Could not parse %s: %s", event_name, exc)
 
     # -- Expire events (smoke / fire end) --
-    expire_map: dict[tuple, int] = {}
+    # Stored as lists per round for distance-based lookup (more robust than
+    # fixed-grid rounding which fails when coords differ by >10 units).
+    expire_list: dict[int, list[dict]] = {}
     for event_name in ("smokegrenade_expired", "inferno_expire"):
         try:
             exp_df = parser.parse_event(event_name, other=["tick", "x", "y"])
@@ -946,10 +948,7 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 y = _coord(row, "y", "Y")
                 if x is None or y is None:
                     continue
-                # Round coords to nearest 10 units for fuzzy matching
-                key = (rn, round(x / 10) * 10, round(y / 10) * 10)
-                if key not in expire_map or expire_map[key] > tick:
-                    expire_map[key] = tick
+                expire_list.setdefault(rn, []).append({"tick": tick, "x": x, "y": y})
         except Exception as exc:
             logger.debug("Could not parse %s: %s", event_name, exc)
 
@@ -1064,11 +1063,16 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         det = detonations[best_idx]
         nade_type = throw["grenade_type"]
 
-        # Find expire tick via fuzzy position match, else use default duration
-        expire_key = (det["round_number"],
-                      round(det["x"] / 10) * 10,
-                      round(det["y"] / 10) * 10)
-        expire_tick: int | None = expire_map.get(expire_key)
+        # Find expire tick via nearest-neighbour position search.
+        # Use 200-unit radius to handle coordinate drift between events.
+        expire_tick: int | None = None
+        _EXPIRE_MATCH_DIST_SQ = 200 ** 2
+        for candidate in expire_list.get(det["round_number"], []):
+            dx = candidate["x"] - det["x"]
+            dy = candidate["y"] - det["y"]
+            if dx * dx + dy * dy <= _EXPIRE_MATCH_DIST_SQ:
+                if expire_tick is None or candidate["tick"] < expire_tick:
+                    expire_tick = candidate["tick"]
         if expire_tick is None:
             duration = _EFFECT_TICKS.get(nade_type, 64)
             expire_tick = det["tick"] + duration

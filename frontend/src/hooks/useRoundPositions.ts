@@ -33,15 +33,22 @@ export function useRoundPositions(): void {
     fetchKeyRef.current = key;
     setPositionsLoading(true);
 
-    getPositions(demo.id, { round_number: activeRound })
+    const controller = new AbortController();
+
+    getPositions(demo.id, { round_number: activeRound }, controller.signal)
       .then((positions) => {
         if (fetchKeyRef.current !== key) return;
         setPositions(positions, [activeRound]);
       })
-      .catch((err) => console.error('Failed to load positions for round', activeRound, err))
+      .catch((err) => {
+        if (err?.name === 'CanceledError' || err?.name === 'AbortError') return;
+        console.error('Failed to load positions for round', activeRound, err);
+      })
       .finally(() => {
         if (fetchKeyRef.current === key) setPositionsLoading(false);
       });
+
+    return () => { controller.abort(); };
   }, [demo?.id, activeRound, isMultiRoundMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Multi-round mode ─────────────────────────────────────────────────────
@@ -52,10 +59,12 @@ export function useRoundPositions(): void {
     fetchKeyRef.current = key;
     setPositionsLoading(true);
 
+    const controller = new AbortController();
+
     // Fetch each round in parallel, then merge into one array
     Promise.all(
       multiRoundRounds.map((rn) =>
-        getPositions(demo.id, { round_number: rn })
+        getPositions(demo.id, { round_number: rn }, controller.signal)
       )
     )
       .then((perRound: PlayerPosition[][]) => {
@@ -63,9 +72,14 @@ export function useRoundPositions(): void {
         const merged = ([] as PlayerPosition[]).concat(...perRound);
         setPositions(merged, multiRoundRounds);
       })
-      .catch((err) => console.error('Failed to load multi-round positions', err))
+      .catch((err) => {
+        if (err?.name === 'CanceledError' || err?.name === 'AbortError') return;
+        console.error('Failed to load multi-round positions', err);
+      })
       .finally(() => {
         if (fetchKeyRef.current === key) setPositionsLoading(false);
       });
+
+    return () => { controller.abort(); };
   }, [demo?.id, isMultiRoundMode, multiRoundRounds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 }

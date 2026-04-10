@@ -148,6 +148,7 @@ export async function getPositions(
     tick_min?: number;
     tick_max?: number;
   } = {},
+  signal?: AbortSignal,
 ): Promise<PlayerPosition[]> {
   const query: Record<string, string | number> = {};
   if (params.round_number !== undefined) query.round_number = params.round_number;
@@ -155,7 +156,7 @@ export async function getPositions(
   if (params.tick_min !== undefined) query.tick_min = params.tick_min;
   if (params.tick_max !== undefined) query.tick_max = params.tick_max;
 
-  const res = await http.get(`/demos/${demoId}/positions`, { params: query });
+  const res = await http.get(`/demos/${demoId}/positions`, { params: query, signal });
   return res.data;
 }
 

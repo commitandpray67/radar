@@ -33,10 +33,11 @@ export function worldToRadar(
   let px = (worldX - cal.pos_x) / cal.scale;
   let py = (cal.pos_y - worldY) / cal.scale; // Y-axis inversion
 
-  if (cal.rotate !== 0) {
+  const rotate = (Math.floor(cal.rotate) & 3) as 0 | 1 | 2 | 3; // clamp to valid [0,3]
+  if (rotate !== 0) {
     const cx = imageSize / 2;
     const cy = imageSize / 2;
-    const angleRad = -(cal.rotate * Math.PI) / 2;
+    const angleRad = -(rotate * Math.PI) / 2;
     const cosA = Math.cos(angleRad);
     const sinA = Math.sin(angleRad);
     const dx = px - cx;
