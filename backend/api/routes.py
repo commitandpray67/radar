@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import uuid
 from pathlib import Path
 from typing import Optional, AsyncIterator
@@ -38,6 +39,17 @@ from analytics.heatmap import HeatmapRequest, compute_heatmap, heatmap_to_base64
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _sanitize_nan(obj):
+    """Recursively replace NaN/Inf floats with 0 for JSON safety."""
+    if isinstance(obj, float):
+        return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_nan(v) for v in obj]
+    return obj
 
 # In-memory parse job status store (MVP; replace with Redis for production)
 _parse_jobs: dict[str, dict] = {}
@@ -257,14 +269,14 @@ async def parse_status_stream(job_id: str):
                     "filename": row["filename"],
                     "map_name": row["map_name"],
                 }
-                yield f"data: {json.dumps(synthetic)}\n\n"
+                yield f"data: {json.dumps(_sanitize_nan(synthetic))}\n\n"
             else:
                 yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': 'Server restarted and job was lost. Please upload the demo again.', 'demo_id': '', 'filename': ''})}\n\n"
             return
 
         while True:
             job = _parse_jobs.get(job_id, job)  # keep last known if removed
-            yield f"data: {json.dumps(job)}\n\n"
+            yield f"data: {json.dumps(_sanitize_nan(job))}\n\n"
             if job["status"] in ("complete", "error"):
                 return
             await asyncio.sleep(0.5)

@@ -2,14 +2,41 @@
 CS2 Demo Radar — FastAPI application entry point.
 """
 
+import json
 import logging
 import logging.handlers
+import math
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+
+def _sanitize_nan(obj):
+    """Recursively replace NaN/Inf floats with 0 so JSON serialization never crashes."""
+    if isinstance(obj, float):
+        return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_nan(v) for v in obj]
+    return obj
+
+
+class NaNSafeJSONResponse(JSONResponse):
+    """JSONResponse that converts NaN/Inf floats to 0 before serialising."""
+
+    def render(self, content) -> bytes:  # type: ignore[override]
+        return json.dumps(
+            _sanitize_nan(content),
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 from api.routes import router
 from db.database import init_db
@@ -49,6 +76,7 @@ app = FastAPI(
     version="1.0.0",
     description="Parse CS2 demo files and visualise player positions on the radar.",
     lifespan=lifespan,
+    default_response_class=NaNSafeJSONResponse,
 )
 
 # Allow the Vite dev server (localhost:5173) to talk to the API
