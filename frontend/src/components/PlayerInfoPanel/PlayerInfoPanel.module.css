@@ -154,11 +154,25 @@
 }
 
 .rowBottom {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.loadoutLabel {
+  font-size: 10px;
+  color: #a3bed8;
+  font-weight: 700;
+  font-family: 'Inter', sans-serif;
+  white-space: nowrap;
+}
+
+.loadoutDash {
+  font-size: 10px;
+  color: #87a4be;
+  font-family: 'Inter', sans-serif;
 }
 
 .loadoutItem {
@@ -167,35 +181,6 @@
   font-family: 'Inter', sans-serif;
   line-height: 1.2;
   white-space: nowrap;
-}
-
-.loadoutSummary {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pistolItem {
-  white-space: nowrap;
-}
-
-.loadoutSummary {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pistolItem {
-  white-space: nowrap;
-}
-
-.loadoutSummary {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .loadoutItem strong {

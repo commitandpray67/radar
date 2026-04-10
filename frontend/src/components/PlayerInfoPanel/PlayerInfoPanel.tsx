@@ -103,15 +103,6 @@ function safeNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-const GRENADE_ICON_PATH: Record<string, string> = {
-  weapon_hegrenade: '/icons/grenades/hegrenade.png',
-  weapon_flashbang: '/icons/grenades/flashbang.png',
-  weapon_smokegrenade: '/icons/grenades/smokegrenade.png',
-  weapon_molotov: '/icons/grenades/molotov.png',
-  weapon_incgrenade: '/icons/grenades/incgrenade.png',
-  weapon_decoy: '/icons/grenades/decoy.png',
-};
-
 const PlayerInfoPanel: React.FC = () => {
   const players = useAppStore((s) => s.players);
   const activeRound = useAppStore((s) => s.activeRound);
@@ -290,33 +281,34 @@ const PlayerInfoPanel: React.FC = () => {
         </div>
 
         <div className={styles.rowBottom}>
-          <span className={`${styles.loadoutItem} ${styles.pistolItem}`}>
-            <strong>Pistol:</strong> {isAlive ? pistol : '—'}
-          </span>
-          <span className={`${styles.loadoutItem} ${styles.loadoutSummary}`}>
-            <strong>Primary:</strong> {isAlive ? primary : '—'}
-            <span className={styles.loadoutSep}> · </span>
-            <strong>Nades:</strong>
-            <span className={styles.nadesInline}>
-              {isAlive && grenades.length > 0 ? grenades.map((nade) => (
-                <span key={`${p.player_id}-${nade}`} className={styles.nadeChip} title={grenadeShortName(nade)}>
-                  <img
-                    src={GRENADE_ICON_PATH[nade]}
-                    alt={grenadeShortName(nade)}
-                    className={styles.nadeIcon}
-                    onError={(e) => {
-                      const img = e.currentTarget as HTMLImageElement;
-                      img.style.display = 'none';
-                      const fb = img.nextElementSibling as HTMLElement | null;
-                      if (fb) fb.style.display = 'inline';
-                    }}
-                  />
-                  <span className={styles.nadeFallback} style={{ display: 'none' }}>
-                    {grenadeShortName(nade)}
-                  </span>
+          <strong className={styles.loadoutLabel}>Pistol:</strong>
+          {isAlive ? <WeaponImg weaponKey={pistolKey} label={pistolLabel} /> : <span className={styles.loadoutDash}>—</span>}
+          <span className={styles.loadoutSep}>·</span>
+          <strong className={styles.loadoutLabel}>Primary:</strong>
+          {isAlive
+            ? (primaryKey ? <WeaponImg weaponKey={primaryKey} label={primaryLabel} /> : <span className={styles.loadoutDash}>—</span>)
+            : <span className={styles.loadoutDash}>—</span>}
+          <span className={styles.loadoutSep}>·</span>
+          <strong className={styles.loadoutLabel}>Nades:</strong>
+          <span className={styles.nadesInline}>
+            {isAlive && grenades.length > 0 ? grenades.map((nade) => (
+              <span key={`${p.player_id}-${nade}`} className={styles.nadeChip} title={grenadeShortName(nade)}>
+                <img
+                  src={GRENADE_ICON_PATH[nade]}
+                  alt={grenadeShortName(nade)}
+                  className={styles.nadeIcon}
+                  onError={(e) => {
+                    const img = e.currentTarget as HTMLImageElement;
+                    img.style.display = 'none';
+                    const fb = img.nextElementSibling as HTMLElement | null;
+                    if (fb) fb.style.display = 'inline';
+                  }}
+                />
+                <span className={styles.nadeFallback} style={{ display: 'none' }}>
+                  {grenadeShortName(nade)}
                 </span>
-              )) : ' —'}
-            </span>
+              </span>
+            )) : <span className={styles.loadoutDash}>—</span>}
           </span>
         </div>
       </div>

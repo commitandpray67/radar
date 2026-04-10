@@ -97,6 +97,22 @@ def _to_float(value, default: float = 0.0) -> float:
     return result
 
 
+def _coord(row: dict, *keys: str) -> float | None:
+    """Return the first valid finite float found among the given keys, or None."""
+    for key in keys:
+        v = row.get(key)
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(f) or math.isinf(f):
+            continue
+        return f
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Data classes for the normalised schema
 # ---------------------------------------------------------------------------
