@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 16
+PARSER_VERSION = 17
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +95,22 @@ def _to_float(value, default: float = 0.0) -> float:
     if math.isnan(result):
         return default
     return result
+
+
+def _coord(row: dict, *keys: str) -> float | None:
+    """Return the first valid finite float found among the given keys, or None."""
+    for key in keys:
+        v = row.get(key)
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(f) or math.isinf(f):
+            continue
+        return f
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -899,10 +915,13 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 rn = _rn(tick)
                 if rn == 0:
                     continue
-                # demoparser2 may return uppercase or lowercase coordinate keys
-                x = float(row.get("x", row.get("X", 0)) or 0)
-                y = float(row.get("y", row.get("Y", 0)) or 0)
-                z = float(row.get("z", row.get("Z", 0)) or 0)
+                # demoparser2 may return uppercase or lowercase coordinate keys;
+                # skip rows where x or y is missing/NaN — they would map to (0,0)
+                x = _coord(row, "x", "X")
+                y = _coord(row, "y", "Y")
+                if x is None or y is None:
+                    continue
+                z = _coord(row, "z", "Z") or 0.0
                 thrower_id = int(row.get("user_steamid", 0) or 0)
                 detonations.append({
                     "tick": tick, "round_number": rn,
@@ -923,8 +942,10 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 rn = _rn(tick)
                 if rn == 0:
                     continue
-                x = float(row.get("x", row.get("X", 0)) or 0)
-                y = float(row.get("y", row.get("Y", 0)) or 0)
+                x = _coord(row, "x", "X")
+                y = _coord(row, "y", "Y")
+                if x is None or y is None:
+                    continue
                 # Round coords to nearest 10 units for fuzzy matching
                 key = (rn, round(x / 10) * 10, round(y / 10) * 10)
                 if key not in expire_map or expire_map[key] > tick:
@@ -953,7 +974,29 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             rn = _rn(tick)
             if rn == 0:
                 continue
-            z = float(row.get("Z", row.get("z", 0)) or 0)
+
+            # Validate coordinates — demoparser2 emits NaN for ticks where the
+            # entity position hasn't been updated.  NaN is truthy so `val or 0`
+            # returns NaN unchanged; we must check explicitly and skip bad rows.
+            def _fv(key_upper, key_lower):
+                v = row.get(key_upper)
+                if v is None:
+                    v = row.get(key_lower)
+                if v is None:
+                    return None
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    return None
+                return None if _math.isnan(f) or _math.isinf(f) else f
+
+            x = _fv("X", "x")
+            y = _fv("Y", "y")
+            z_val = _fv("Z", "z")
+            if x is None or y is None:
+                continue  # skip rows without valid 2-D coordinates
+            z = z_val if z_val is not None else 0.0
+
             # Skip "parked" positions (grenade entity stored below map while in inventory)
             if z < -4096:
                 continue
@@ -966,9 +1009,7 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 thrower_id = 0
             raw_traj.append({
                 "gtype": gtype, "tick": tick, "rn": rn,
-                "x": float(row.get("X", row.get("x", 0)) or 0),
-                "y": float(row.get("Y", row.get("y", 0)) or 0),
-                "z": z,
+                "x": x, "y": y, "z": z,
                 "thrower_id": thrower_id,
             })
         logger.info(
