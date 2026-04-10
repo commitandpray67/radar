@@ -71,8 +71,16 @@ const MOLOTOV_RADIUS_PX  = 28;
 const HE_RADIUS_PX       = 18;
 const FLASH_RADIUS_PX    = 14;
 
-// Multi-round overlay dot colour (neutral, same for all teams / rounds)
-const MULTI_DOT_COLOR = '#c8d8e8';
+// Default effect durations in ticks (at 64 ticks/s) when expire_tick is absent.
+// These mirror the backend _EFFECT_TICKS defaults in demo_parser.py.
+const DEFAULT_EFFECT_TICKS: Record<string, number> = {
+  smoke:      1152,   // ~18 s
+  molotov:     448,   // ~7 s
+  incendiary:  448,
+  he:           32,   // ~0.5 s
+  flash:        64,   // ~1 s
+  decoy:       256,   // ~4 s
+};
 
 // ---------------------------------------------------------------------------
 // Drawing helpers
@@ -172,7 +180,14 @@ function drawGrenade(
   canvasSize: number,
   trajectoryPoints: Array<{ tick: number; cx: number; cy: number }> = [],
 ): void {
-  const { throw_tick, detonate_tick, expire_tick, grenade_type } = g;
+  const { throw_tick, detonate_tick, grenade_type } = g;
+  // Use expire_tick if set, otherwise default so age never grows without bound.
+  const effectiveExpire =
+    g.expire_tick ??
+    (detonate_tick !== null
+      ? detonate_tick + (DEFAULT_EFFECT_TICKS[grenade_type] ?? 64)
+      : null);
+  const expire_tick = effectiveExpire;
   const inFlight   = detonate_tick !== null && currentTick >= throw_tick && currentTick < detonate_tick;
   const detonated  = detonate_tick !== null && currentTick >= detonate_tick;
   const expired    = expire_tick !== null && currentTick >= expire_tick;
@@ -261,7 +276,9 @@ function drawGrenade(
         break;
       }
       case 'he': {
-        const r = HE_RADIUS_PX * (1 + age / 32) * (canvasSize / 1024);
+        // Burst grows to full size in 8 ticks, then fades — cap growth so
+        // grenades with null expire_tick can't produce a runaway radius.
+        const r = HE_RADIUS_PX * (1 + Math.min(1, age / 8)) * (canvasSize / 1024);
         ctx.globalAlpha = 0.7 * fadeRatio;
         ctx.beginPath();
         ctx.arc(detonateCx, detonateCy, r, 0, Math.PI * 2);
@@ -270,7 +287,8 @@ function drawGrenade(
         break;
       }
       case 'flash': {
-        const r = FLASH_RADIUS_PX * (1 + age / 24) * (canvasSize / 1024);
+        // Reaches full size in 6 ticks, then fades.
+        const r = FLASH_RADIUS_PX * (1 + Math.min(1, age / 6)) * (canvasSize / 1024);
         ctx.globalAlpha = 0.65 * fadeRatio;
         ctx.beginPath();
         ctx.arc(detonateCx, detonateCy, r, 0, Math.PI * 2);
@@ -511,7 +529,15 @@ const RadarViewer: React.FC = () => {
     return grenades.filter((g) => {
       if (g.round_number !== activeRound) return false;
       if (currentTick < g.throw_tick) return false;
-      if (g.expire_tick !== null && currentTick >= g.expire_tick) return false;
+      // Use expire_tick if set; otherwise fall back to detonate_tick + default duration.
+      // Without this, grenades with null expire_tick never disappear and their
+      // radius formula grows unboundedly.
+      const effectiveExpire =
+        g.expire_tick ??
+        (g.detonate_tick !== null
+          ? g.detonate_tick + (DEFAULT_EFFECT_TICKS[g.grenade_type] ?? 64)
+          : null);
+      if (effectiveExpire !== null && currentTick >= effectiveExpire) return false;
       return true;
     });
   }, [showGrenades, grenades, activeRound, currentTick]);
