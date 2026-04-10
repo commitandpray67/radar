@@ -20,7 +20,6 @@ import {
   watchParseStatus,
   getRounds,
   getPlayers,
-  getPositions,
   getEvents,
   getGrenades,
   getPlayerStateEvents,
@@ -52,7 +51,6 @@ const DemoLoader: React.FC = () => {
   const setDemo              = useAppStore((s) => s.setDemo);
   const setRounds            = useAppStore((s) => s.setRounds);
   const setPlayers           = useAppStore((s) => s.setPlayers);
-  const setPositions         = useAppStore((s) => s.setPositions);
   const setEvents            = useAppStore((s) => s.setEvents);
   const setGrenades          = useAppStore((s) => s.setGrenades);
   const setPlayerStateEvents = useAppStore((s) => s.setPlayerStateEvents);
@@ -97,13 +95,12 @@ const DemoLoader: React.FC = () => {
           });
         }
 
-        // 3. Fetch all data
+        // 3. Fetch all data (positions are loaded per-round by useRoundPositions)
         setPhase('fetching');
-        const [rounds, players, positions, events, grenades, playerStateEvts, freshMaps] =
+        const [rounds, players, events, grenades, playerStateEvts, freshMaps] =
           await Promise.all([
             getRounds(demo_id),
             getPlayers(demo_id),
-            getPositions(demo_id),
             getEvents(demo_id),
             getGrenades(demo_id),
             getPlayerStateEvents(demo_id),
@@ -112,7 +109,6 @@ const DemoLoader: React.FC = () => {
 
         setRounds(rounds);
         setPlayers(players);
-        setPositions(positions);
         setEvents(events);
         setGrenades(grenades);
         setPlayerStateEvents(playerStateEvts);
@@ -149,11 +145,10 @@ const DemoLoader: React.FC = () => {
     setPhase('fetching');
     setErrorMsg('');
     try {
-      const [rounds, players, positions, events, grenades, playerStateEvts, freshMaps] =
+      const [rounds, players, events, grenades, playerStateEvts, freshMaps] =
         await Promise.all([
           getRounds(demoId),
           getPlayers(demoId),
-          getPositions(demoId),
           getEvents(demoId),
           getGrenades(demoId),
           getPlayerStateEvents(demoId),
@@ -162,7 +157,6 @@ const DemoLoader: React.FC = () => {
 
       setRounds(rounds);
       setPlayers(players);
-      setPositions(positions);
       setEvents(events);
       setGrenades(grenades);
       setPlayerStateEvents(playerStateEvts);

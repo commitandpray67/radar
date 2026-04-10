@@ -52,10 +52,13 @@ interface DemoState {
 
   parseStatus: ParseJobStatus | null;
 
+  positionsLoading: boolean;
+
   setDemo: (demo: DemoMeta) => void;
   setRounds: (rounds: RoundInfo[]) => void;
   setPlayers: (players: PlayerInfo[]) => void;
   setPositions: (positions: PlayerPosition[], roundNumbers?: number[]) => void;
+  setPositionsLoading: (loading: boolean) => void;
   setEvents: (events: GameEvent[]) => void;
   setGrenades: (grenades: GrenadeEvent[]) => void;
   setPlayerStateEvents: (events: PlayerStateEvent[]) => void;
@@ -157,6 +160,7 @@ export const useAppStore = create<AppStore>()(
       rounds: [],
       players: [],
       positions: [],
+      positionsLoading: false,
       events: [],
       grenades: [],
       playerStateEvents: [],
@@ -174,6 +178,8 @@ export const useAppStore = create<AppStore>()(
         const sortedTicks = getSortedTicks(tickIndex);
         set({ positions, tickIndex, sortedTicks }, false, 'setPositions');
       },
+      setPositionsLoading: (positionsLoading) =>
+        set({ positionsLoading }, false, 'setPositionsLoading'),
       setEvents: (events) => set({ events }, false, 'setEvents'),
       setGrenades: (grenades) => set({ grenades }, false, 'setGrenades'),
       setPlayerStateEvents: (playerStateEvents) =>
@@ -189,6 +195,7 @@ export const useAppStore = create<AppStore>()(
             rounds: [],
             players: [],
             positions: [],
+            positionsLoading: false,
             events: [],
             grenades: [],
             playerStateEvents: [],

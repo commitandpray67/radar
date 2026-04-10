@@ -743,6 +743,9 @@ const RadarViewer: React.FC = () => {
       {heatmapLoading && (
         <div className={styles.loadingOverlay}><span>Generating heatmap…</span></div>
       )}
+      {useAppStore((s) => s.positionsLoading) && !heatmapLoading && (
+        <div className={styles.loadingOverlay}><span>Loading round…</span></div>
+      )}
       {isMultiRoundMode && (
         <div className={styles.multiRoundBadge}>
           Multi-round overlay — {multiRoundSelectedRounds.length} rounds

@@ -51,8 +51,28 @@ def _sanitize_nan(obj):
         return [_sanitize_nan(v) for v in obj]
     return obj
 
-# In-memory parse job status store (MVP; replace with Redis for production)
+# In-memory parse job status store
 _parse_jobs: dict[str, dict] = {}
+
+# Per-demo-id lock: prevents concurrent parses of the same file
+_parse_locks: dict[str, asyncio.Lock] = {}
+_parse_locks_mu = asyncio.Lock()
+
+
+async def _get_parse_lock(demo_id: str) -> asyncio.Lock:
+    async with _parse_locks_mu:
+        if demo_id not in _parse_locks:
+            _parse_locks[demo_id] = asyncio.Lock()
+        return _parse_locks[demo_id]
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+@router.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +201,20 @@ async def upload_demo(
 
     # Start background parse (pass file size so it can be stored)
     file_size = tmp_path.stat().st_size
-    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename, file_size))
+    lock = await _get_parse_lock(demo_id)
+    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename, file_size, lock))
 
     return {"job_id": job_id, "demo_id": demo_id, "cached": False}
 
 
-async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str, file_size: int = 0) -> None:
+async def _parse_task(
+    job_id: str,
+    demo_id: str,
+    tmp_path: Path,
+    filename: str,
+    file_size: int = 0,
+    lock: asyncio.Lock | None = None,
+) -> None:
     """Background task: parse demo and store results."""
     import concurrent.futures
 
@@ -195,40 +223,47 @@ async def _parse_task(job_id: str, demo_id: str, tmp_path: Path, filename: str, 
         _parse_jobs[job_id]["message"] = msg
         _parse_jobs[job_id]["status"] = "running"
 
-    try:
-        _progress(0.0, "Starting parse")
+    async def _run():
+        try:
+            _progress(0.0, "Starting parse")
 
-        # Run the blocking parse in a thread pool so we don't block the event loop
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            from parser.demo_parser import parse_demo
-            parsed = await loop.run_in_executor(
-                pool,
-                lambda: parse_demo(str(tmp_path), progress_callback=_progress),
-            )
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                from parser.demo_parser import parse_demo
+                parsed = await loop.run_in_executor(
+                    pool,
+                    lambda: parse_demo(str(tmp_path), progress_callback=_progress),
+                )
 
-        _progress(0.95, "Storing to database")
-        await store_demo(parsed, demo_id, filename, file_size=file_size)
+            _progress(0.95, "Storing to database")
+            await store_demo(parsed, demo_id, filename, file_size=file_size)
 
-        _parse_jobs[job_id] = {
-            "status": "complete",
-            "progress": 1.0,
-            "message": "Done",
-            "demo_id": demo_id,
-            "filename": filename,
-            "map_name": parsed.match_info.map_name,
-        }
-    except Exception as exc:
-        logger.exception("Parse failed for job %s", job_id)
-        _parse_jobs[job_id] = {
-            "status": "error",
-            "progress": 0.0,
-            "message": str(exc),
-            "demo_id": demo_id,
-            "filename": filename,
-        }
-    finally:
-        tmp_path.unlink(missing_ok=True)
+            _parse_jobs[job_id] = {
+                "status": "complete",
+                "progress": 1.0,
+                "message": "Done",
+                "demo_id": demo_id,
+                "filename": filename,
+                "map_name": parsed.match_info.map_name,
+            }
+        except Exception as exc:
+            logger.exception("Parse failed for job %s", job_id)
+            # Surface a clean message to the client; full details go to the log
+            _parse_jobs[job_id] = {
+                "status": "error",
+                "progress": 0.0,
+                "message": "Parse failed — check server logs for details.",
+                "demo_id": demo_id,
+                "filename": filename,
+            }
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    if lock is not None:
+        async with lock:
+            await _run()
+    else:
+        await _run()
 
 
 @router.get("/parse-status/{job_id}")
@@ -526,7 +561,13 @@ async def get_player_state_events(
 # ---------------------------------------------------------------------------
 
 @router.post("/demos/{demo_id}/heatmap")
-async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
+async def generate_heatmap(demo_id: str, payload: HeatmapPayload):  # noqa: C901
+    if len(payload.player_ids) > 20:
+        raise HTTPException(422, "player_ids must contain at most 20 entries")
+    if len(payload.round_numbers) > 40:
+        raise HTTPException(422, "round_numbers must contain at most 40 entries")
+    if not payload.round_numbers:
+        raise HTTPException(422, "round_numbers must not be empty")
     """
     Generate a heatmap PNG for the given player(s) and rounds.
     Returns a base64-encoded PNG data URL.

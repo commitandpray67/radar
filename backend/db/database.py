@@ -39,10 +39,13 @@ async def get_db_path() -> Path:
 @asynccontextmanager
 async def get_connection() -> AsyncIterator[aiosqlite.Connection]:
     db_path = await get_db_path()
-    async with aiosqlite.connect(str(db_path)) as conn:
+    async with aiosqlite.connect(str(db_path), timeout=30) as conn:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("PRAGMA synchronous=NORMAL")   # safe with WAL, faster
+        await conn.execute("PRAGMA busy_timeout=10000")   # 10 s retry on lock
+        await conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         yield conn
 
 
@@ -145,6 +148,8 @@ async def init_db() -> None:
                 ON player_positions(demo_id, round_number);
             CREATE INDEX IF NOT EXISTS idx_pos_player
                 ON player_positions(demo_id, player_id);
+            CREATE INDEX IF NOT EXISTS idx_pos_tick
+                ON player_positions(demo_id, round_number, tick);
             CREATE INDEX IF NOT EXISTS idx_events_demo
                 ON events(demo_id, round_number);
             CREATE INDEX IF NOT EXISTS idx_grenades_demo
@@ -160,6 +165,8 @@ async def init_db() -> None:
             "ALTER TABLE rounds ADD COLUMN t_equip_value INTEGER DEFAULT 0",
             "ALTER TABLE player_positions ADD COLUMN yaw REAL DEFAULT 0",
             "ALTER TABLE demos ADD COLUMN file_size INTEGER DEFAULT 0",
+            # Index migrations (CREATE INDEX IF NOT EXISTS is idempotent)
+            "CREATE INDEX IF NOT EXISTS idx_pos_tick ON player_positions(demo_id, round_number, tick)",
         ]:
             try:
                 await conn.execute(migration)

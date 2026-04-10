@@ -6,6 +6,7 @@ import json
 import logging
 import logging.handlers
 import math
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 
 def _sanitize_nan(obj):
-    """Recursively replace NaN/Inf floats with 0 so JSON serialization never crashes."""
+    """Recursively replace NaN/Inf floats with 0 to make JSON-safe."""
     if isinstance(obj, float):
         return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
     if isinstance(obj, dict):
@@ -38,11 +39,11 @@ class NaNSafeJSONResponse(JSONResponse):
             separators=(",", ":"),
         ).encode("utf-8")
 
-from api.routes import router
-from db.database import init_db
 
-# Write logs to both console and a rotating log file so errors are
-# preserved even after the CMD window scrolls or the server restarts.
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
 _log_dir = Path(__file__).parent / "logs"
 _log_dir.mkdir(exist_ok=True)
 _log_file = _log_dir / "backend.log"
@@ -61,15 +62,59 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Startup / shutdown
+# ---------------------------------------------------------------------------
+
+def _cleanup_stale_uploads() -> None:
+    """Remove any temp upload files left over from a previous crashed run."""
+    upload_dir = Path(os.environ.get("UPLOAD_DIR", "/tmp/cs2radar_uploads"))
+    if not upload_dir.exists():
+        return
+    removed = 0
+    for f in upload_dir.glob("*.dem"):
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            pass
+    if removed:
+        logger.info("Cleaned up %d stale upload file(s) from %s", removed, upload_dir)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
+    _cleanup_stale_uploads()
     logger.info("Initialising database")
+    from db.database import init_db
     await init_db()
     logger.info("CS2 Radar backend ready")
     yield
     logger.info("Shutting down")
 
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
+# CORS origins: defaults to localhost dev servers; override via ALLOWED_ORIGINS
+# env var as a comma-separated list, e.g.:
+#   ALLOWED_ORIGINS=https://radar.example.com,https://www.radar.example.com
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS: list[str] = (
+    [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    if _raw_origins
+    else [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
+)
+
+from api.routes import router  # noqa: E402
 
 app = FastAPI(
     title="CS2 Demo Radar",
@@ -79,26 +124,17 @@ app = FastAPI(
     default_response_class=NaNSafeJSONResponse,
 )
 
-# Allow the Vite dev server (localhost:5173) to talk to the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",  # Vite preview
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 app.include_router(router, prefix="/api")
 
-# Serve radar map images from backend so both dev and prod modes work.
-# The frontend requests /maps/<name>_radar.png; we look in:
-#   1. frontend/public/maps/   (source tree, dev mode)
-#   2. frontend/dist/maps/     (after npm run build, prod mode)
-# Whichever exists first wins; images can be placed in either location.
+# Serve radar map images
 _maps_candidates = [
     Path(__file__).parent.parent / "frontend" / "public" / "maps",
     Path(__file__).parent.parent / "frontend" / "dist" / "maps",
@@ -109,7 +145,7 @@ for _maps_dir in _maps_candidates:
         logger.info("Serving radar images from %s", _maps_dir)
         break
 
-# Serve the built frontend from the backend process in production
+# Serve built frontend
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
@@ -117,10 +153,8 @@ if frontend_dist.exists():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        reload_dirs=[str(Path(__file__).parent)],
-    )
+
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    # reload=True is intentionally omitted — use a process manager for auto-reload
+    uvicorn.run("main:app", host=host, port=port)
