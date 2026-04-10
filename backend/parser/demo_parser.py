@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 17
+PARSER_VERSION = 18
 
 
 # ---------------------------------------------------------------------------
@@ -1092,17 +1092,26 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
     # naturally excludes the pre-throw "parked" positions.
     if raw_traj:
         MAX_TRAJ_WP = 48
+        # Pre-build a spatial index: (gtype, rn) → sorted list of traj rows.
+        # This avoids re-scanning all of raw_traj for every grenade.
+        from collections import defaultdict as _dd
+        traj_index: dict[tuple, list[dict]] = _dd(list)
+        for r in raw_traj:
+            traj_index[(r["gtype"], r["rn"])].append(r)
+
         for g in grenades:
             if g.detonate_tick is None:
                 continue
-            # Collect rows inside the flight window, matching type + round
+            bucket = traj_index.get((g.grenade_type, g.round_number))
+            if not bucket:
+                continue
+
+            # Collect rows inside the flight window for this grenade
             flight: list[dict] = []
-            for r in raw_traj:
-                if r["gtype"] != g.grenade_type or r["rn"] != g.round_number:
-                    continue
+            for r in bucket:
                 if r["tick"] < g.throw_tick or r["tick"] > g.detonate_tick:
                     continue
-                # Skip rows from another player when thrower IDs are known
+                # Exclude a different thrower when both IDs are known
                 if r["thrower_id"] and g.thrower_id and r["thrower_id"] != g.thrower_id:
                     continue
                 flight.append(r)
@@ -1110,17 +1119,44 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             if len(flight) < 2:
                 continue
 
-            # Deduplicate ticks (keep last X/Y/Z per tick) then sort
+            # Deduplicate ticks (keep last X/Y/Z per tick) then sort by tick
             seen_t: dict[int, dict] = {}
             for r in flight:
                 seen_t[r["tick"]] = r
             flight_dedup = sorted(seen_t.values(), key=lambda r: r["tick"])
 
+            # --- Spatial continuity filter ---
+            # When multiple grenades of the same type fly simultaneously and
+            # thrower_id is unknown for both, their trajectory rows get mixed
+            # together.  Consecutive rows from different grenade entities show
+            # large positional jumps ("teleports").  Split the path at jumps
+            # and keep the segment whose final point is closest to the known
+            # detonation position (g.x, g.y).
+            TELEPORT_SQ = 350 ** 2   # 350 world units squared
+            segments: list[list[dict]] = [[flight_dedup[0]]]
+            for r in flight_dedup[1:]:
+                prev = segments[-1][-1]
+                dsq = (r["x"] - prev["x"]) ** 2 + (r["y"] - prev["y"]) ** 2
+                if dsq > TELEPORT_SQ:
+                    segments.append([r])
+                else:
+                    segments[-1].append(r)
+
+            # Pick the segment whose last point is nearest to the detonation
+            best_seg = min(
+                segments,
+                key=lambda seg: (
+                    (seg[-1]["x"] - g.x) ** 2 + (seg[-1]["y"] - g.y) ** 2
+                ),
+            )
+            if len(best_seg) < 2:
+                continue
+
             # Sample evenly, always keeping first and last
-            step = max(1, len(flight_dedup) // MAX_TRAJ_WP)
-            sampled = flight_dedup[::step]
-            if sampled[-1] is not flight_dedup[-1]:
-                sampled.append(flight_dedup[-1])
+            step = max(1, len(best_seg) // MAX_TRAJ_WP)
+            sampled = best_seg[::step]
+            if sampled[-1] is not best_seg[-1]:
+                sampled.append(best_seg[-1])
 
             g.trajectory = [
                 {"tick": r["tick"], "x": r["x"], "y": r["y"], "z": r["z"]}
