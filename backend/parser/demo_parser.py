@@ -713,7 +713,7 @@ def _extract_positions(
         if steam_id == 0:
             continue
 
-        tick = _to__to_int(row.get("tick", 0))
+        tick = _to_int(row.get("tick", 0))
         rn   = tick_to_round.get(tick, 0)
         if rn == 0:
             continue
