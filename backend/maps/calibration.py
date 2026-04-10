@@ -73,49 +73,49 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         pos_x=-2476.0,
         pos_y=3239.0,
         scale=4.4,
-        image="de_dust2_radar.png",
+        image="de_dust2.png",
     ),
 
     "de_mirage": MapCalibration(
         pos_x=-3230.0,
         pos_y=1713.0,
         scale=5.0,
-        image="de_mirage_radar.png",
+        image="de_mirage.png",
     ),
 
     "de_inferno": MapCalibration(
         pos_x=-2087.0,
         pos_y=3870.0,
         scale=4.9,
-        image="de_inferno_radar.png",
+        image="de_inferno.png",
     ),
 
     "de_cache": MapCalibration(
         pos_x=-2000.0,
         pos_y=3250.0,
         scale=5.5,
-        image="de_cache_radar.png",
+        image="de_cache.png",
     ),
 
     "de_overpass": MapCalibration(
         pos_x=-4831.0,
         pos_y=1781.0,
         scale=5.2,
-        image="de_overpass_radar.png",
+        image="de_overpass.png",
     ),
 
     "de_ancient": MapCalibration(
         pos_x=-2953.0,
         pos_y=2164.0,
         scale=5.0,
-        image="de_ancient_radar.png",
+        image="de_ancient.png",
     ),
 
     "de_anubis": MapCalibration(
         pos_x=-2796.0,
         pos_y=3328.0,
         scale=5.22,
-        image="de_anubis_radar.png",
+        image="de_anubis.png",
     ),
 
     "de_vertigo": MapCalibration(
@@ -124,13 +124,13 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         scale=4.0,
         layers=[
             RadarLayer(
-                image="de_vertigo_radar.png",
+                image="de_vertigo.png",
                 z_min=-float("inf"),
                 z_max=11700.0,
                 label="Lower",
             ),
             RadarLayer(
-                image="de_vertigo_radar_upper.png",
+                image="de_vertigo.png",
                 z_min=11700.0,
                 z_max=float("inf"),
                 label="Upper",
@@ -144,13 +144,13 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         scale=7.0,
         layers=[
             RadarLayer(
-                image="de_nuke_radar_lower.png",
+                image="de_nuke.png",
                 z_min=-float("inf"),
                 z_max=-495.0,
                 label="Lower",
             ),
             RadarLayer(
-                image="de_nuke_radar.png",
+                image="de_nuke.png",
                 z_min=-495.0,
                 z_max=float("inf"),
                 label="Upper",
@@ -163,21 +163,21 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         pos_x=-2477.0,
         pos_y=2392.0,
         scale=4.7,
-        image="de_train_radar.png",
+        image="de_train.png",
     ),
 
     "de_office": MapCalibration(
         pos_x=-1838.0,
         pos_y=1858.0,
         scale=4.1,
-        image="de_office_radar.png",
+        image="de_office.png",
     ),
 
     "cs_italy": MapCalibration(
         pos_x=-2647.0,
         pos_y=2592.0,
         scale=4.6,
-        image="cs_italy_radar.png",
+        image="cs_italy.png",
     ),
 }
 
