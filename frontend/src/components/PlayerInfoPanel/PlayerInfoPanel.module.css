@@ -57,6 +57,16 @@
   opacity: 0.45;
 }
 
+.playerCard.speaking {
+  border-color: #5bc45b;
+  animation: speakPulse 0.8s ease-in-out infinite;
+}
+
+@keyframes speakPulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(91, 196, 91, 0.4); }
+  50%       { box-shadow: 0 0 12px rgba(91, 196, 91, 0.8); }
+}
+
 .rowTop,
 .rowMid,
 .rowBottom {

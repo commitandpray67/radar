@@ -18,7 +18,7 @@
  * natively by the browser's Web Audio API.
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useAppStore } from '../store/demoStore';
 import { getVoiceManifest } from '../utils/api';
 
@@ -34,12 +34,24 @@ interface LoadedPlayer {
   clips: LoadedClip[];
 }
 
+/** Lightweight clip metadata (no AudioBuffer) used for reactive speaking detection. */
+interface ClipMeta {
+  startTick: number;
+  durationTicks: number;
+}
+
+interface PlayerClipMeta {
+  steamid: number;
+  clips: ClipMeta[];
+}
+
 // ── Hook ───────────────────────────────────────────────────────────────────
 
 export function useVoiceLines(): {
   voiceAvailable: boolean;
   voiceLoading: boolean;
   voiceError: string | null;
+  speakingPlayerIds: Set<number>;
 } {
   const demo             = useAppStore((s) => s.demo);
   const activeRound      = useAppStore((s) => s.activeRound);
@@ -53,6 +65,7 @@ export function useVoiceLines(): {
   const [voiceLoading, setVoiceLoading]   = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState(false);
   const [voiceError, setVoiceError]       = useState<string | null>(null);
+  const [clipMeta, setClipMeta]           = useState<PlayerClipMeta[]>([]);
 
   // Refs that don't trigger re-renders
   const audioCtxRef        = useRef<AudioContext | null>(null);
@@ -142,6 +155,7 @@ export function useVoiceLines(): {
     if (!demo || activeRound === null || isMultiRoundMode || isHeatmapMode) {
       loadedRef.current = [];
       setVoiceAvailable(false);
+      setClipMeta([]);
       stopAll();
       return;
     }
@@ -153,6 +167,7 @@ export function useVoiceLines(): {
     setVoiceLoading(true);
     setVoiceError(null);
     setVoiceAvailable(false);
+    setClipMeta([]);
     loadedRef.current = [];
     stopAll();
 
@@ -206,6 +221,13 @@ export function useVoiceLines(): {
         if (cancelled) return;
         loadedRef.current = loaded;
         setVoiceAvailable(loaded.length > 0);
+        setClipMeta(loaded.map((p) => ({
+          steamid: p.steamid,
+          clips: p.clips.map((c) => ({
+            startTick: c.startTick,
+            durationTicks: Math.round(c.buffer.duration * tickRateRef.current),
+          })),
+        })));
       } catch (err) {
         if (!cancelled) {
           setVoiceError('Voice extraction failed — the demo may not have voice data.');
@@ -266,5 +288,21 @@ export function useVoiceLines(): {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { voiceAvailable, voiceLoading, voiceError };
+  // Compute which players are currently speaking based on clip tick ranges
+  const speakingPlayerIds = useMemo<Set<number>>(() => {
+    const s = new Set<number>();
+    if (!voiceAvailable) return s;
+    for (const p of clipMeta) {
+      if (mutedPlayerIds.has(p.steamid)) continue;
+      for (const clip of p.clips) {
+        if (currentTick >= clip.startTick && currentTick < clip.startTick + clip.durationTicks) {
+          s.add(p.steamid);
+          break;
+        }
+      }
+    }
+    return s;
+  }, [clipMeta, currentTick, voiceAvailable, mutedPlayerIds]);
+
+  return { voiceAvailable, voiceLoading, voiceError, speakingPlayerIds };
 }

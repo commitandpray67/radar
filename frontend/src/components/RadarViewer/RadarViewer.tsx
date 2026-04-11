@@ -220,25 +220,16 @@ function drawGrenade(
       gy = b.cy;
     }
 
-    // Dashed trajectory line — only the portion already traveled (up to currentTick).
-    // Showing the full future path causes a "starburst" spaz when the grenade
-    // bounces through unexpected positions before it lands.
-    const drawnPath = path.filter((p) => p.tick <= currentTick);
-    if (drawnPath.length > 0) {
-      ctx.setLineDash([3, 4]);
-      ctx.globalAlpha = 0.45;
-      ctx.beginPath();
-      ctx.moveTo(drawnPath[0].cx, drawnPath[0].cy);
-      for (let i = 1; i < drawnPath.length; i++) {
-        ctx.lineTo(drawnPath[i].cx, drawnPath[i].cy);
-      }
-      // Extend to the interpolated current grenade position
-      ctx.lineTo(gx, gy);
-      ctx.strokeStyle = grenadeLineColor(grenade_type);
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
+    // Straight dashed line from throw position to current grenade position.
+    ctx.setLineDash([3, 4]);
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    ctx.moveTo(throwCx, throwCy);
+    ctx.lineTo(gx, gy);
+    ctx.strokeStyle = grenadeLineColor(grenade_type);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
 
     // Moving dot
     ctx.globalAlpha = 0.9;
@@ -334,6 +325,79 @@ function grenadeLineColor(type: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Bomb drawing helpers
+// ---------------------------------------------------------------------------
+
+function drawBombPlanted(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  ageTicks: number,
+  isDefused: boolean,
+  isExploded: boolean,
+  zoom: number,
+): void {
+  ctx.save();
+  const r = 9 / zoom;
+  if (isExploded) {
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff7700';
+    ctx.fill();
+    ctx.strokeStyle = '#ffdd00';
+    ctx.lineWidth = 2 / zoom;
+    ctx.stroke();
+  } else if (isDefused) {
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#2060c0';
+    ctx.fill();
+    ctx.strokeStyle = '#80b0ff';
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.stroke();
+  } else {
+    const pulse = 0.5 + 0.5 * Math.sin((ageTicks / 8) * Math.PI);
+    ctx.globalAlpha = 0.7 + 0.3 * pulse;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * (1 + 0.15 * pulse), 0, Math.PI * 2);
+    ctx.fillStyle = '#dd2020';
+    ctx.fill();
+    ctx.strokeStyle = '#ff6060';
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.font = `bold ${10 / zoom}px 'JetBrains Mono', monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('B', cx, cy + 0.5 / zoom);
+  ctx.restore();
+}
+
+function drawBombCarried(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  zoom: number,
+): void {
+  const offset = (MARKER_RADIUS + 4) / zoom;
+  const r = 4 / zoom;
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.arc(cx + offset, cy - offset, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffdd00';
+  ctx.fill();
+  ctx.strokeStyle = '#cc8800';
+  ctx.lineWidth = 1 / zoom;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -371,6 +435,9 @@ const RadarViewer: React.FC = () => {
   const grenades           = useAppStore((s) => s.grenades);
   const activeRound        = useAppStore((s) => s.activeRound);
   const positions          = useAppStore((s) => s.positions);
+  const showBomb           = useAppStore((s) => s.showBomb);
+  const events             = useAppStore((s) => s.events);
+  const playerStateEvents  = useAppStore((s) => s.playerStateEvents);
 
   // Multi-round mode
   const isMultiRoundMode        = useAppStore((s) => s.isMultiRoundMode);
@@ -700,6 +767,30 @@ const RadarViewer: React.FC = () => {
       }
     }
 
+    // Planted bomb (drawn before player markers so players appear on top)
+    if (showBomb) {
+      const bombRoundInfo = rounds.find((r) => r.round_number === activeRound);
+      if (bombRoundInfo) {
+        const { bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick } = bombRoundInfo;
+        if (bomb_planted_tick !== null && currentTick >= bomb_planted_tick) {
+          const plantEvent = events.find(
+            (e) => e.round_number === activeRound && e.event_type === 'bomb_planted',
+          );
+          if (plantEvent?.attacker_id) {
+            const plantSnap = getSnapshotAtTick(bomb_planted_tick, tickIndex, sortedTicks);
+            const planterPos = plantSnap?.get(plantEvent.attacker_id);
+            if (planterPos) {
+              const { cx, cy } = worldToCanvas(planterPos.x, planterPos.y, calibration, canvasSize);
+              const ageTicks = currentTick - bomb_planted_tick;
+              const isDefused = bomb_defused_tick !== null && currentTick >= bomb_defused_tick;
+              const isExploded = bomb_exploded_tick !== null && currentTick >= bomb_exploded_tick;
+              drawBombPlanted(ctx, cx, cy, ageTicks, isDefused, isExploded, zoom);
+            }
+          }
+        }
+      }
+    }
+
     // Player markers
     for (const [pid, pos] of snapshot.entries()) {
       const alive = Boolean(pos.is_alive);
@@ -714,6 +805,29 @@ const RadarViewer: React.FC = () => {
       );
     }
 
+    // Bomb carrier badge (drawn after player markers so it appears on top)
+    if (showBomb) {
+      const bombRoundInfo = rounds.find((r) => r.round_number === activeRound);
+      const bombPlantedTick = bombRoundInfo?.bomb_planted_tick ?? null;
+      if (bombPlantedTick === null || currentTick < bombPlantedTick) {
+        let carrierId: number | null = null;
+        for (const ev of playerStateEvents) {
+          if (ev.round_number !== activeRound) continue;
+          if (ev.tick > currentTick) continue;
+          const w = typeof ev.weapon === 'string' ? ev.weapon.toLowerCase().trim() : '';
+          const norm = w.startsWith('weapon_') || w.startsWith('item_') ? w : w ? `weapon_${w}` : '';
+          if (ev.event_type === 'equip' && norm === 'weapon_c4') carrierId = ev.player_id;
+        }
+        if (carrierId !== null) {
+          const carrierPos = snapshot.get(carrierId);
+          if (carrierPos) {
+            const { cx, cy } = worldToCanvas(carrierPos.x, carrierPos.y, calibration, canvasSize);
+            drawBombCarried(ctx, cx, cy, zoom);
+          }
+        }
+      }
+    }
+
     ctx.restore();
   }, [
     canvasSize, calibration, snapshot, showDeadPlayers, showTrails, trailSnapshots,
@@ -721,6 +835,7 @@ const RadarViewer: React.FC = () => {
     visibleGrenades, tickIndex, sortedTicks, currentTick, zoom, panX, panY,
     isMultiRoundMode, perRoundData, multiRoundSelectedRounds, multiRoundRelativeTick,
     multiRoundSelectedPlayers, rounds, grenades,
+    showBomb, events, playerStateEvents, activeRound,
   ]);
 
   useEffect(() => { drawFrame(); }, [drawFrame]);

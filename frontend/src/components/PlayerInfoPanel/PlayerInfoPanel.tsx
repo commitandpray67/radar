@@ -134,7 +134,7 @@ const PlayerInfoPanel: React.FC = () => {
   const muteAll          = useAppStore((s) => s.muteAll);
   const unmuteAll        = useAppStore((s) => s.unmuteAll);
 
-  const { voiceAvailable, voiceLoading, voiceError } = useVoiceLines();
+  const { voiceAvailable, voiceLoading, voiceError, speakingPlayerIds } = useVoiceLines();
   const isSingleRound = !isMultiRoundMode && !isHeatmapMode && activeRound !== null;
 
   const indexByPlayerId = useMemo(() => {
@@ -190,9 +190,9 @@ const PlayerInfoPanel: React.FC = () => {
           hp: safeNumber(ev.hp, 100),
           armor: safeNumber(ev.armor, cur.armor),
           activeWeapon: cur.activeWeapon,
-          pistols: new Set(),
-          primaries: new Set(),
-          grenades: new Set(),
+          pistols: new Set(cur.pistols),
+          primaries: new Set(cur.primaries),
+          grenades: new Set(cur.grenades),
         });
         continue;
       }
@@ -284,9 +284,10 @@ const PlayerInfoPanel: React.FC = () => {
     const armorPct = Math.max(0, Math.min(100, st.armor));
 
     const isMuted = mutedPlayerIds.has(p.player_id);
+    const isSpeaking = speakingPlayerIds.has(p.player_id);
 
     return (
-      <div key={p.player_id} className={`${styles.playerCard} ${!isAlive ? styles.dead : ''}`}>
+      <div key={p.player_id} className={[styles.playerCard, !isAlive ? styles.dead : '', isSpeaking ? styles.speaking : ''].filter(Boolean).join(' ')}>
         <div className={styles.rowTop}>
           <span className={`${styles.playerNum} ${team === 'CT' ? styles.numCT : styles.numT}`}>
             {indexByPlayerId.get(p.player_id) ?? '?'}
