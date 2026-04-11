@@ -220,18 +220,25 @@ function drawGrenade(
       gy = b.cy;
     }
 
-    // Dashed trajectory line
-    ctx.setLineDash([3, 4]);
-    ctx.globalAlpha = 0.45;
-    ctx.beginPath();
-    ctx.moveTo(path[0].cx, path[0].cy);
-    for (let i = 1; i < path.length; i++) {
-      ctx.lineTo(path[i].cx, path[i].cy);
+    // Dashed trajectory line — only the portion already traveled (up to currentTick).
+    // Showing the full future path causes a "starburst" spaz when the grenade
+    // bounces through unexpected positions before it lands.
+    const drawnPath = path.filter((p) => p.tick <= currentTick);
+    if (drawnPath.length > 0) {
+      ctx.setLineDash([3, 4]);
+      ctx.globalAlpha = 0.45;
+      ctx.beginPath();
+      ctx.moveTo(drawnPath[0].cx, drawnPath[0].cy);
+      for (let i = 1; i < drawnPath.length; i++) {
+        ctx.lineTo(drawnPath[i].cx, drawnPath[i].cy);
+      }
+      // Extend to the interpolated current grenade position
+      ctx.lineTo(gx, gy);
+      ctx.strokeStyle = grenadeLineColor(grenade_type);
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
-    ctx.strokeStyle = grenadeLineColor(grenade_type);
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.setLineDash([]);
 
     // Moving dot
     ctx.globalAlpha = 0.9;
@@ -639,10 +646,13 @@ const RadarViewer: React.FC = () => {
               ? worldToCanvas(throwerPos.x, throwerPos.y, calibration, canvasSize)
               : worldToCanvas(g.x, g.y, calibration, canvasSize);
             const { cx: dxCx, cy: dxCy } = worldToCanvas(g.x, g.y, calibration, canvasSize);
-            const trajectoryPoints = (g.trajectory ?? []).map((pt) => {
-              const { cx, cy } = worldToCanvas(pt.x, pt.y, calibration, canvasSize);
-              return { tick: pt.tick, cx, cy };
-            });
+            const trajectoryPoints = (g.trajectory ?? [])
+              .filter((pt) => pt.x != null && pt.y != null)
+              .map((pt) => {
+                const { cx, cy } = worldToCanvas(pt.x, pt.y, calibration, canvasSize);
+                return { tick: pt.tick, cx, cy };
+              })
+              .filter((pt) => isFinite(pt.cx) && isFinite(pt.cy));
             drawGrenade(
               ctx, g, absoluteTick, txCx, txCy, dxCx, dxCy, canvasSize, trajectoryPoints,
             );

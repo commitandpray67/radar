@@ -48,7 +48,9 @@ const PlaybackControls: React.FC = () => {
 
   // ---- Single-round mode timing ----
   const roundInfo  = rounds.find((r) => r.round_number === activeRound);
-  const roundStart = roundInfo?.freeze_end_tick ?? 0;
+  // Use start_tick (beginning of freeze time) so the slider covers the full round
+  // including buy-phase communication.  Multi-round mode is unaffected (uses 0).
+  const roundStart = roundInfo?.start_tick ?? 0;
   const roundEnd   = roundInfo?.end_tick ?? 0;
 
   // Display round number = position among non-knife rounds (1-indexed)

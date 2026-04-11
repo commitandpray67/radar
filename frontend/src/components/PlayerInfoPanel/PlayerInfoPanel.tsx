@@ -41,12 +41,16 @@ const PRIMARY_HINTS = [
   'mp9', 'mac10', 'ump45', 'mp7', 'mp5sd', 'p90', 'bizon', 'm249', 'negev',
 ];
 
+// All normalized armor item names that normalizeWeaponName() can produce.
+// Raw names without a known prefix (e.g. 'kevlar') become 'weapon_kevlar'
+// after normalization, so we list both item_ and weapon_ variants.
 const ARMOR_ITEMS = new Set([
   'item_kevlar',
   'item_assaultsuit',
-  'vest',
-  'vesthelm',
-  'kevlar',
+  'weapon_kevlar',
+  'weapon_assaultsuit',
+  'weapon_vest',
+  'weapon_vesthelm',
 ]);
 
 function formatWeapon(raw: unknown): string {
