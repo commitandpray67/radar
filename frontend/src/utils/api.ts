@@ -236,10 +236,15 @@ export async function getMaps(): Promise<MapMeta[]> {
 // Voice
 // ---------------------------------------------------------------------------
 
+export interface VoiceClip {
+  start_tick: number;
+  audio_url: string;
+}
+
 export interface VoicePlayer {
   steamid: number;
   name: string;
-  audio_url: string;
+  clips: VoiceClip[];
 }
 
 export interface VoiceManifest {

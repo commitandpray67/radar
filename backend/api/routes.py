@@ -55,7 +55,7 @@ def _load_job_demo_id(job_id: str) -> Optional[str]:
     return None
 
 import numpy as np
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -772,15 +772,13 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):  # noqa: C901
 async def get_voice_manifest(
     demo_id: str,
     round_number: int = Query(...),
-    background_tasks: BackgroundTasks = None,
 ):
     """
     Return a voice manifest for a specific round.
 
-    Extraction is lazy: if the WAV files for this round don't exist yet,
-    they are generated synchronously (takes a few seconds) and cached.
-    Returns an empty players list when the demo has no voice data or the
-    demo file is no longer on disk.
+    Extraction is lazy: OGG Opus clips are generated on first request and
+    cached for subsequent requests.  Returns available=False when the demo
+    has no voice data or the demo file is no longer on disk.
     """
     # Fetch demo metadata
     async with get_connection() as conn:
@@ -830,26 +828,47 @@ async def get_voice_manifest(
             "players": [],
         }
 
-    # Extract voice (cached per demo/round)
+    # Extract voice clips (cached per demo/round)
     voice_dir = _voice_dir(demo_id, round_number)
-    import asyncio as _aio, concurrent.futures as _cf
+    import asyncio as _aio
 
     loop = _aio.get_event_loop()
     from voice.extractor import extract_voice_for_round  # noqa: PLC0415
 
-    wav_map: dict[int, Path] = await loop.run_in_executor(
-        None,
-        lambda: extract_voice_for_round(
-            str(demo_path), start_tick, end_tick, tick_rate, voice_dir,
-        ),
-    )
+    try:
+        clip_map: dict = await loop.run_in_executor(
+            None,
+            lambda: extract_voice_for_round(
+                str(demo_path), start_tick, end_tick, tick_rate, voice_dir,
+            ),
+        )
+    except Exception as exc:
+        logger.error(
+            "Voice extraction failed for demo %s round %d: %s",
+            demo_id, round_number, exc,
+        )
+        return {
+            "round_number": round_number,
+            "start_tick": start_tick,
+            "end_tick": end_tick,
+            "tick_rate": tick_rate,
+            "available": False,
+            "players": [],
+        }
 
     players = []
-    for steamid, wav_path in wav_map.items():
+    for steamid, clip_list in clip_map.items():
+        clips = [
+            {
+                "start_tick": clip_start_tick,
+                "audio_url": f"/api/demos/{demo_id}/voice/{round_number}/{steamid}_{clip_idx}.ogg",
+            }
+            for clip_idx, (clip_start_tick, _) in enumerate(clip_list)
+        ]
         players.append({
             "steamid": steamid,
             "name": name_map.get(steamid, str(steamid)),
-            "audio_url": f"/api/demos/{demo_id}/voice/{round_number}/{steamid}.wav",
+            "clips": clips,
         })
 
     return {
@@ -857,19 +876,22 @@ async def get_voice_manifest(
         "start_tick": start_tick,
         "end_tick": end_tick,
         "tick_rate": tick_rate,
-        "available": True,
+        "available": bool(players),
         "players": players,
     }
 
 
-@router.get("/demos/{demo_id}/voice/{round_number}/{steamid}.wav")
-async def get_voice_audio(demo_id: str, round_number: int, steamid: int):
-    """Serve a cached per-player WAV file for a specific round."""
-    wav_path = _voice_dir(demo_id, round_number) / f"{steamid}.wav"
-    if not wav_path.exists():
+@router.get("/demos/{demo_id}/voice/{round_number}/{filename}.ogg")
+async def get_voice_audio(demo_id: str, round_number: int, filename: str):
+    """Serve a cached per-player OGG Opus clip for a specific round."""
+    import re
+    if not re.fullmatch(r"\d+_\d+", filename):
+        raise HTTPException(400, "Invalid audio filename")
+    ogg_path = _voice_dir(demo_id, round_number) / f"{filename}.ogg"
+    if not ogg_path.exists():
         raise HTTPException(404, "Voice audio not found — request the manifest first")
     return FileResponse(
-        wav_path,
-        media_type="audio/wav",
+        ogg_path,
+        media_type="audio/ogg",
         headers={"Cache-Control": "public, max-age=3600"},
     )

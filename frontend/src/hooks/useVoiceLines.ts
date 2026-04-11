@@ -5,23 +5,33 @@
  * ---------
  * - Voice data is fetched lazily when a round is selected (not on demo upload).
  * - Only active in single-round mode (noop in multi-round or heatmap mode).
- * - Each player's audio is a WAV covering the whole round; silence fills gaps.
- * - Playback starts at offset (currentTick - round.start_tick) / tickRate.
- * - When isPlaying → true  : all unmuted players start playing from current offset.
- * - When isPlaying → false : all sources are stopped.
- * - Seek (currentTick jumps > 64 ticks while playing) : sources restart at new offset.
+ * - Each player's audio is split into clips (OGG Opus).  Each clip is decoded
+ *   into an AudioBuffer and scheduled via the Web Audio API.
+ * - When isPlaying → true  : all unmuted clips are scheduled from currentTick.
+ *   Clips that already ended are skipped; clips that started before currentTick
+ *   are started at an offset; future clips are scheduled with a ctx-time delay.
+ * - When isPlaying → false : all scheduled sources are stopped.
+ * - Seek (currentTick jumps > 64 ticks while playing) : reschedule everything.
  * - Mute toggles take effect at the next play/seek.
+ *
+ * No native libraries are required on the server — OGG Opus files are decoded
+ * natively by the browser's Web Audio API.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAppStore } from '../store/demoStore';
-import { getVoiceManifest, type VoiceManifest } from '../utils/api';
+import { getVoiceManifest } from '../utils/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface LoadedAudio {
-  steamid: number;
+interface LoadedClip {
+  startTick: number;
   buffer: AudioBuffer;
+}
+
+interface LoadedPlayer {
+  steamid: number;
+  clips: LoadedClip[];
 }
 
 // ── Hook ───────────────────────────────────────────────────────────────────
@@ -40,19 +50,19 @@ export function useVoiceLines(): {
   const currentTick      = useAppStore((s) => s.currentTick);
   const mutedPlayerIds   = useAppStore((s) => s.mutedPlayerIds);
 
-  const [voiceLoading, setVoiceLoading] = useState(false);
+  const [voiceLoading, setVoiceLoading]   = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState(false);
-  const [voiceError, setVoiceError]     = useState<string | null>(null);
+  const [voiceError, setVoiceError]       = useState<string | null>(null);
 
   // Refs that don't trigger re-renders
-  const audioCtxRef     = useRef<AudioContext | null>(null);
-  const manifestRef     = useRef<VoiceManifest | null>(null);
-  const loadedRef       = useRef<LoadedAudio[]>([]);
-  const sourcesRef      = useRef<AudioBufferSourceNode[]>([]);
+  const audioCtxRef        = useRef<AudioContext | null>(null);
+  const loadedRef          = useRef<LoadedPlayer[]>([]);
+  const sourcesRef         = useRef<AudioBufferSourceNode[]>([]);
+  const tickRateRef        = useRef<number>(64);
 
   // Track playback position for seek detection
-  const playStartTickRef      = useRef<number>(0);
-  const playStartCtxTimeRef   = useRef<number>(0);
+  const playStartTickRef    = useRef<number>(0);
+  const playStartCtxTimeRef = useRef<number>(0);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -71,7 +81,15 @@ export function useVoiceLines(): {
     sourcesRef.current = [];
   }, []);
 
-  const startAll = useCallback((offsetSeconds: number) => {
+  /**
+   * Schedule all unmuted player clips starting from atTick.
+   *
+   * For each clip:
+   *   - Skip if the clip ended before atTick.
+   *   - Start at an offset if the clip started before atTick.
+   *   - Schedule in the future if the clip starts after atTick.
+   */
+  const startAll = useCallback((atTick: number) => {
     stopAll();
     if (!loadedRef.current.length) return;
 
@@ -80,32 +98,49 @@ export function useVoiceLines(): {
       ctx.resume().catch(() => null);
     }
 
+    const tickRate = tickRateRef.current;
+    const nowCtx   = ctx.currentTime;
     const newSources: AudioBufferSourceNode[] = [];
-    for (const { steamid, buffer } of loadedRef.current) {
-      if (mutedPlayerIds.has(steamid)) continue;
 
-      const src = ctx.createBufferSource();
-      src.buffer = buffer;
-      src.connect(ctx.destination);
+    for (const player of loadedRef.current) {
+      if (mutedPlayerIds.has(player.steamid)) continue;
 
-      // Clamp offset to valid range
-      const safeOffset = Math.max(0, Math.min(offsetSeconds, buffer.duration - 0.01));
-      src.start(0, safeOffset);
-      newSources.push(src);
+      for (const clip of player.clips) {
+        // Seconds from atTick to the start of this clip (positive = future)
+        const clipDelaySec  = (clip.startTick - atTick) / tickRate;
+        const clipDuration  = clip.buffer.duration;
+
+        // Skip clips that already ended before atTick
+        if (clipDelaySec + clipDuration <= 0) continue;
+
+        const src = ctx.createBufferSource();
+        src.buffer = clip.buffer;
+        src.connect(ctx.destination);
+
+        if (clipDelaySec <= 0) {
+          // Clip already started — play from an offset into the buffer
+          const offset = Math.min(-clipDelaySec, clipDuration - 0.001);
+          src.start(nowCtx, Math.max(0, offset));
+        } else {
+          // Clip starts in the future — schedule it
+          src.start(nowCtx + clipDelaySec, 0);
+        }
+
+        newSources.push(src);
+      }
     }
-    sourcesRef.current = newSources;
 
-    playStartTickRef.current    = currentTick;
-    playStartCtxTimeRef.current = getAudioCtx().currentTime;
-  }, [stopAll, getAudioCtx, mutedPlayerIds, currentTick]);
+    sourcesRef.current  = newSources;
+    playStartTickRef.current    = atTick;
+    playStartCtxTimeRef.current = nowCtx;
+  }, [stopAll, getAudioCtx, mutedPlayerIds]);
 
   // ── Load voice when round changes ─────────────────────────────────────────
 
   useEffect(() => {
-    // Only active in single-round mode
+    // Noop outside single-round mode
     if (!demo || activeRound === null || isMultiRoundMode || isHeatmapMode) {
       loadedRef.current = [];
-      manifestRef.current = null;
       setVoiceAvailable(false);
       stopAll();
       return;
@@ -119,7 +154,6 @@ export function useVoiceLines(): {
     setVoiceError(null);
     setVoiceAvailable(false);
     loadedRef.current = [];
-    manifestRef.current = null;
     stopAll();
 
     (async () => {
@@ -127,7 +161,7 @@ export function useVoiceLines(): {
         const manifest = await getVoiceManifest(demo.id, activeRound);
         if (cancelled) return;
 
-        manifestRef.current = manifest;
+        tickRateRef.current = manifest.tick_rate;
 
         if (!manifest.available || manifest.players.length === 0) {
           setVoiceAvailable(false);
@@ -136,22 +170,37 @@ export function useVoiceLines(): {
         }
 
         const ctx = getAudioCtx();
-        const loaded: LoadedAudio[] = [];
+        const loaded: LoadedPlayer[] = [];
 
         await Promise.all(
           manifest.players.map(async (p) => {
-            try {
-              const resp = await fetch(p.audio_url);
-              if (!resp.ok) return;
-              const arrayBuf = await resp.arrayBuffer();
-              if (cancelled) return;
-              const audioBuf = await ctx.decodeAudioData(arrayBuf);
-              if (cancelled) return;
-              loaded.push({ steamid: p.steamid, buffer: audioBuf });
-            } catch (err) {
-              console.warn(`Failed to load voice for ${p.name}:`, err);
+            const playerClips: LoadedClip[] = [];
+
+            await Promise.all(
+              p.clips.map(async (clip) => {
+                try {
+                  const resp = await fetch(clip.audio_url);
+                  if (!resp.ok) return;
+                  const arrayBuf = await resp.arrayBuffer();
+                  if (cancelled) return;
+                  const audioBuf = await ctx.decodeAudioData(arrayBuf);
+                  if (cancelled) return;
+                  playerClips.push({ startTick: clip.start_tick, buffer: audioBuf });
+                } catch (err) {
+                  console.warn(
+                    `Failed to load voice clip for ${p.name} at tick ${clip.start_tick}:`,
+                    err,
+                  );
+                }
+              }),
+            );
+
+            if (playerClips.length > 0) {
+              // Keep clips in tick order for deterministic scheduling
+              playerClips.sort((a, b) => a.startTick - b.startTick);
+              loaded.push({ steamid: p.steamid, clips: playerClips });
             }
-          })
+          }),
         );
 
         if (cancelled) return;
@@ -176,39 +225,34 @@ export function useVoiceLines(): {
 
   // ── Sync playback with isPlaying / currentTick ────────────────────────────
 
-  const prevTickRef      = useRef<number>(currentTick);
-  const prevPlayingRef   = useRef<boolean>(false);
-  const manifest         = manifestRef.current;
+  const prevTickRef    = useRef<number>(currentTick);
+  const prevPlayingRef = useRef<boolean>(false);
 
   useEffect(() => {
-    const prevTick    = prevTickRef.current;
-    const wasPlaying  = prevPlayingRef.current;
-    prevTickRef.current   = currentTick;
+    const prevTick   = prevTickRef.current;
+    const wasPlaying = prevPlayingRef.current;
+    prevTickRef.current    = currentTick;
     prevPlayingRef.current = isPlaying;
 
-    if (!manifest || !loadedRef.current.length) return;
-
-    const startTick = manifest.start_tick;
-    const tickRate  = manifest.tick_rate;
-    const offsetSec = (currentTick - startTick) / tickRate;
+    if (!loadedRef.current.length) return;
 
     if (!isPlaying) {
-      // Pause: stop all audio
       stopAll();
       return;
     }
 
-    // Started playing or seeked — detect a tick discontinuity
-    const tickDelta    = currentTick - prevTick;
+    // Detect a tick discontinuity (seek or first play)
+    const tickRate      = tickRateRef.current;
+    const tickDelta     = currentTick - prevTick;
     const expectedDelta = wasPlaying
       ? (getAudioCtx().currentTime - playStartCtxTimeRef.current) * tickRate
       : 0;
     const isSeeked = !wasPlaying || Math.abs(tickDelta - expectedDelta) > 64;
 
     if (isSeeked) {
-      startAll(offsetSec);
+      startAll(currentTick);
     }
-    // Otherwise audio is already playing in sync — no action needed
+    // Otherwise audio is already running in sync — no action needed
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, currentTick]);
 
