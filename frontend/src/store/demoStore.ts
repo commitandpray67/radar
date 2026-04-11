@@ -145,7 +145,18 @@ interface UIState {
   setActivePanel: (panel: UIState['activePanel']) => void;
 }
 
-type AppStore = DemoState & PlaybackState & HeatmapState & MultiRoundState & UIState;
+// Voice / mute state
+interface VoiceState {
+  /** SteamID64s of players whose voice is muted */
+  mutedPlayerIds: Set<number>;
+  toggleMutePlayer: (playerId: number) => void;
+  muteTeam: (team: 'CT' | 'T') => void;
+  unmuteTeam: (team: 'CT' | 'T') => void;
+  muteAll: () => void;
+  unmuteAll: () => void;
+}
+
+type AppStore = DemoState & PlaybackState & HeatmapState & MultiRoundState & UIState & VoiceState;
 
 // ---------------------------------------------------------------------------
 // Store implementation
@@ -216,6 +227,7 @@ export const useAppStore = create<AppStore>()(
             multiRoundSelectedPlayers: new Set(),
             multiRoundRelativeTick: 0,
             multiRoundIsPlaying: false,
+            mutedPlayerIds: new Set<number>(),
           },
           false,
           'reset',
@@ -240,7 +252,9 @@ export const useAppStore = create<AppStore>()(
         set(
           {
             activeRound: round,
-            currentTick: roundInfo ? roundInfo.freeze_end_tick : 0,
+            // Start at the round's very beginning (includes freeze time) so
+            // voice communication during buy phase can be heard.
+            currentTick: roundInfo ? roundInfo.start_tick : 0,
             isPlaying: false,
           },
           false,
@@ -380,6 +394,43 @@ export const useAppStore = create<AppStore>()(
         set({ sidebarOpen }, false, 'setSidebarOpen'),
       setActivePanel: (activePanel) =>
         set({ activePanel }, false, 'setActivePanel'),
+
+      // ----- Voice / mute state -----
+      mutedPlayerIds: new Set<number>(),
+
+      toggleMutePlayer: (playerId) =>
+        set((s) => {
+          const next = new Set(s.mutedPlayerIds);
+          if (next.has(playerId)) next.delete(playerId);
+          else next.add(playerId);
+          return { mutedPlayerIds: next };
+        }, false, 'toggleMutePlayer'),
+
+      muteTeam: (team) =>
+        set((s) => {
+          const next = new Set(s.mutedPlayerIds);
+          for (const p of s.players) {
+            if (p.initial_team === team) next.add(p.player_id);
+          }
+          return { mutedPlayerIds: next };
+        }, false, 'muteTeam'),
+
+      unmuteTeam: (team) =>
+        set((s) => {
+          const next = new Set(s.mutedPlayerIds);
+          for (const p of s.players) {
+            if (p.initial_team === team) next.delete(p.player_id);
+          }
+          return { mutedPlayerIds: next };
+        }, false, 'unmuteTeam'),
+
+      muteAll: () =>
+        set((s) => ({
+          mutedPlayerIds: new Set(s.players.map((p) => p.player_id)),
+        }), false, 'muteAll'),
+
+      unmuteAll: () =>
+        set({ mutedPlayerIds: new Set<number>() }, false, 'unmuteAll'),
     }),
     { name: 'CS2Radar' },
   ),

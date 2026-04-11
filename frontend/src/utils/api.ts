@@ -231,3 +231,32 @@ export async function getMaps(): Promise<MapMeta[]> {
   const res = await http.get('/maps');
   return res.data;
 }
+
+// ---------------------------------------------------------------------------
+// Voice
+// ---------------------------------------------------------------------------
+
+export interface VoicePlayer {
+  steamid: number;
+  name: string;
+  audio_url: string;
+}
+
+export interface VoiceManifest {
+  round_number: number;
+  start_tick: number;
+  end_tick: number;
+  tick_rate: number;
+  available: boolean;
+  players: VoicePlayer[];
+}
+
+export async function getVoiceManifest(
+  demoId: string,
+  roundNumber: number,
+): Promise<VoiceManifest> {
+  const res = await http.get(`/demos/${demoId}/voice`, {
+    params: { round_number: roundNumber },
+  });
+  return res.data;
+}

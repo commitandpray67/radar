@@ -55,8 +55,8 @@ def _load_job_demo_id(job_id: str) -> Optional[str]:
     return None
 
 import numpy as np
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from db.database import (
@@ -68,6 +68,20 @@ from analytics.heatmap import HeatmapRequest, compute_heatmap, heatmap_to_base64
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Directory where uploaded demo files are kept for voice extraction
+_DEMO_STORE = Path("/tmp/cs2radar_demos")
+_VOICE_CACHE = Path("/tmp/cs2radar_voice")
+
+
+def _demo_file_path(demo_id: str) -> Path:
+    """Persistent location for a demo file (kept after parse for voice extraction)."""
+    return _DEMO_STORE / f"{demo_id}.dem"
+
+
+def _voice_dir(demo_id: str, round_number: int) -> Path:
+    """Cache directory for voice WAV files for one round."""
+    return _VOICE_CACHE / demo_id / str(round_number)
 
 
 def _sanitize_nan(obj):
@@ -270,6 +284,14 @@ async def _parse_task(
 
             _progress(0.95, "Storing to database")
             await store_demo(parsed, demo_id, filename, file_size=file_size)
+
+            # Keep the demo file for on-demand voice extraction
+            _DEMO_STORE.mkdir(parents=True, exist_ok=True)
+            dest = _demo_file_path(demo_id)
+            if not dest.exists():
+                import shutil
+                shutil.copy2(tmp_path, dest)
+                logger.info("Demo file stored at %s for voice extraction", dest)
 
             _parse_jobs[job_id] = {
                 "status": "complete",
@@ -740,3 +762,114 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):  # noqa: C901
         "sample_count": result.sample_count,
         "layer_label": result.layer_label,
     }
+
+
+# ---------------------------------------------------------------------------
+# Voice lines
+# ---------------------------------------------------------------------------
+
+@router.get("/demos/{demo_id}/voice")
+async def get_voice_manifest(
+    demo_id: str,
+    round_number: int = Query(...),
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Return a voice manifest for a specific round.
+
+    Extraction is lazy: if the WAV files for this round don't exist yet,
+    they are generated synchronously (takes a few seconds) and cached.
+    Returns an empty players list when the demo has no voice data or the
+    demo file is no longer on disk.
+    """
+    # Fetch demo metadata
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT tick_rate FROM demos WHERE id = ?", (demo_id,)
+        )
+        demo_row = await cursor.fetchone()
+        if not demo_row:
+            raise HTTPException(404, "Demo not found")
+
+        cursor = await conn.execute(
+            "SELECT start_tick, end_tick FROM rounds "
+            "WHERE demo_id = ? AND round_number = ?",
+            (demo_id, round_number),
+        )
+        round_row = await cursor.fetchone()
+        if not round_row:
+            raise HTTPException(404, "Round not found")
+
+        cursor = await conn.execute(
+            "SELECT player_id, name FROM players WHERE demo_id = ?",
+            (demo_id,),
+        )
+        player_rows = await cursor.fetchall()
+
+    tick_rate: float = demo_row["tick_rate"] or 64.0
+    start_tick: int = round_row["start_tick"]
+    end_tick: int   = round_row["end_tick"]
+
+    # Build steamid→name map
+    name_map: dict[int, str] = {r["player_id"]: r["name"] for r in player_rows}
+
+    # Check if demo file is available
+    demo_path = _demo_file_path(demo_id)
+    if not demo_path.exists():
+        logger.warning(
+            "Demo file not found for voice extraction: %s — "
+            "file is only available if the demo was parsed in this server session.",
+            demo_path,
+        )
+        return {
+            "round_number": round_number,
+            "start_tick": start_tick,
+            "end_tick": end_tick,
+            "tick_rate": tick_rate,
+            "available": False,
+            "players": [],
+        }
+
+    # Extract voice (cached per demo/round)
+    voice_dir = _voice_dir(demo_id, round_number)
+    import asyncio as _aio, concurrent.futures as _cf
+
+    loop = _aio.get_event_loop()
+    from voice.extractor import extract_voice_for_round  # noqa: PLC0415
+
+    wav_map: dict[int, Path] = await loop.run_in_executor(
+        None,
+        lambda: extract_voice_for_round(
+            str(demo_path), start_tick, end_tick, tick_rate, voice_dir,
+        ),
+    )
+
+    players = []
+    for steamid, wav_path in wav_map.items():
+        players.append({
+            "steamid": steamid,
+            "name": name_map.get(steamid, str(steamid)),
+            "audio_url": f"/api/demos/{demo_id}/voice/{round_number}/{steamid}.wav",
+        })
+
+    return {
+        "round_number": round_number,
+        "start_tick": start_tick,
+        "end_tick": end_tick,
+        "tick_rate": tick_rate,
+        "available": True,
+        "players": players,
+    }
+
+
+@router.get("/demos/{demo_id}/voice/{round_number}/{steamid}.wav")
+async def get_voice_audio(demo_id: str, round_number: int, steamid: int):
+    """Serve a cached per-player WAV file for a specific round."""
+    wav_path = _voice_dir(demo_id, round_number) / f"{steamid}.wav"
+    if not wav_path.exists():
+        raise HTTPException(404, "Voice audio not found — request the manifest first")
+    return FileResponse(
+        wav_path,
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )

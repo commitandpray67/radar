@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
+import { useVoiceLines } from '../../hooks/useVoiceLines';
 import { GRENADE_ICON_PATH, weaponIconSrc } from '../../utils/weaponIcons';
 import styles from './PlayerInfoPanel.module.css';
 
@@ -119,6 +120,18 @@ const PlayerInfoPanel: React.FC = () => {
   const playerStateEvents = useAppStore((s) => s.playerStateEvents);
   const events = useAppStore((s) => s.events);
   const positions = useAppStore((s) => s.positions);
+  const isMultiRoundMode = useAppStore((s) => s.isMultiRoundMode);
+  const isHeatmapMode    = useAppStore((s) => s.isHeatmapMode);
+
+  // Voice / mute state
+  const mutedPlayerIds   = useAppStore((s) => s.mutedPlayerIds);
+  const toggleMutePlayer = useAppStore((s) => s.toggleMutePlayer);
+  const muteTeam         = useAppStore((s) => s.muteTeam);
+  const muteAll          = useAppStore((s) => s.muteAll);
+  const unmuteAll        = useAppStore((s) => s.unmuteAll);
+
+  const { voiceAvailable, voiceLoading, voiceError } = useVoiceLines();
+  const isSingleRound = !isMultiRoundMode && !isHeatmapMode && activeRound !== null;
 
   const indexByPlayerId = useMemo(() => {
     const map = new Map<number, number>();
@@ -266,6 +279,8 @@ const PlayerInfoPanel: React.FC = () => {
     const grenades = Array.from(st.grenades.values());
     const armorPct = Math.max(0, Math.min(100, st.armor));
 
+    const isMuted = mutedPlayerIds.has(p.player_id);
+
     return (
       <div key={p.player_id} className={`${styles.playerCard} ${!isAlive ? styles.dead : ''}`}>
         <div className={styles.rowTop}>
@@ -276,6 +291,15 @@ const PlayerInfoPanel: React.FC = () => {
           <span className={`${styles.sideBadge} ${team === 'CT' ? styles.badgeCT : styles.badgeT}`}>
             {team}
           </span>
+          {isSingleRound && (
+            <button
+              className={`${styles.muteBtn} ${isMuted ? styles.muted : ''}`}
+              onClick={() => toggleMutePlayer(p.player_id)}
+              title={isMuted ? 'Unmute player' : 'Mute player'}
+            >
+              {isMuted ? '🔇' : '🔊'}
+            </button>
+          )}
         </div>
 
         <div className={styles.rowMid}>
@@ -313,6 +337,34 @@ const PlayerInfoPanel: React.FC = () => {
 
   return (
     <div className={styles.root}>
+
+      {/* ── Voice control bar (single-round mode only) ── */}
+      {isSingleRound && (
+        <div className={styles.voiceBar}>
+          <div className={styles.voiceBarRow}>
+            <span className={styles.voiceLabel}>Voice</span>
+            {voiceLoading && (
+              <span className={styles.voiceStatus}>Loading…</span>
+            )}
+            {!voiceLoading && voiceError && (
+              <span className={styles.voiceStatus}>{voiceError}</span>
+            )}
+            {!voiceLoading && !voiceError && voiceAvailable && (
+              <span className={`${styles.voiceStatus} ${styles.voiceStatusOk}`}>Ready</span>
+            )}
+            {!voiceLoading && !voiceError && !voiceAvailable && (
+              <span className={styles.voiceStatus}>No voice data</span>
+            )}
+          </div>
+          <div className={styles.voiceBarRow}>
+            <button className={styles.masterMuteBtn} onClick={() => muteTeam('CT')}>Mute CT</button>
+            <button className={styles.masterMuteBtn} onClick={() => muteTeam('T')}>Mute T</button>
+            <button className={styles.masterMuteBtn} onClick={muteAll}>Mute All</button>
+            <button className={styles.masterMuteBtn} onClick={unmuteAll}>Unmute All</button>
+          </div>
+        </div>
+      )}
+
       {sortedPlayers.ct.length > 0 && (
         <div className={styles.teamSection}>
           <div className={styles.teamLabelCT}>CT</div>

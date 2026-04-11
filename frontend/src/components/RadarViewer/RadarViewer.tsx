@@ -71,6 +71,9 @@ const MOLOTOV_RADIUS_PX  = 28;
 const HE_RADIUS_PX       = 18;
 const FLASH_RADIUS_PX    = 14;
 
+// Multi-round overlay dot colour (neutral, same for all teams / rounds)
+const MULTI_DOT_COLOR = '#c8d8e8';
+
 // Default effect durations in ticks (at 64 ticks/s) when expire_tick is absent.
 // These mirror the backend _EFFECT_TICKS defaults in demo_parser.py.
 const DEFAULT_EFFECT_TICKS: Record<string, number> = {

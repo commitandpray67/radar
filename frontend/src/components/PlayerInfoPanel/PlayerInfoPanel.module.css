@@ -226,3 +226,94 @@
   vertical-align: middle;
   filter: brightness(0) invert(1);
 }
+
+/* ── Voice / mute controls ────────────────────────────────────────── */
+
+.voiceBar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #0d1520;
+  border: 1px solid #1a2a3d;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.voiceBarRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.voiceLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6a8a9a;
+  font-family: 'Inter', sans-serif;
+  flex-shrink: 0;
+}
+
+.voiceStatus {
+  font-size: 10px;
+  color: #4a5a6a;
+  font-family: 'Inter', sans-serif;
+  font-style: italic;
+}
+
+.voiceStatusOk {
+  color: #3a8a3a;
+}
+
+.masterMuteBtn {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  border-radius: 3px;
+  border: 1px solid #2a3a52;
+  background: #131d2c;
+  color: #8090a0;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  white-space: nowrap;
+}
+.masterMuteBtn:hover {
+  background: #1e2d3f;
+  color: #c0cfe0;
+  border-color: #3a5a7a;
+}
+
+.muteBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background 0.1s, border-color 0.1s;
+  color: #6a8a9a;
+}
+.muteBtn:hover {
+  background: #1e2d3f;
+  border-color: #3a5070;
+  color: #c0cfe0;
+}
+.muteBtn.muted {
+  color: #e05050;
+  border-color: #5a2a2a;
+  background: #1e1010;
+}
+.muteBtn.muted:hover {
+  background: #2a1212;
+  border-color: #8a3a3a;
+}
