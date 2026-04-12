@@ -78,20 +78,18 @@ const RoundPanel: React.FC = () => {
     [rounds],
   );
 
-  // Halftime separator — find the boundary by round_number rather than array
-  // index so knife-round filtering doesn't shift the divider incorrectly.
-  // Standard MR12: first half is rounds 1-12, second half starts at 13.
-  // Overtime (rounds 25+): we don't add extra dividers for simplicity.
+  // Halftime separator — use array index so knife-round filtering at the start
+  // of the match doesn't shift the divider to the wrong position.
+  // Standard MR12: first half = display rounds 1-12 (indices 0-11),
+  //                second half starts at display round 13 (index 12).
   const halftimeAfter = useMemo(() => {
-    // First round_number that belongs to the second half (> 12)
-    const secondHalfStart = displayRounds.find((r) => r.round_number > 12);
-    return secondHalfStart?.round_number ?? null;
+    if (displayRounds.length <= 12) return null;
+    return displayRounds[12].round_number;  // round_number of the 13th non-knife round
   }, [displayRounds]);
 
   const halftimeRoundNumber = useMemo(() => {
-    // Last round_number that still belongs to the first half (≤ 12)
-    const firstHalf = displayRounds.filter((r) => r.round_number <= 12);
-    return firstHalf.length > 0 ? firstHalf[firstHalf.length - 1].round_number : null;
+    if (displayRounds.length < 12) return null;
+    return displayRounds[11].round_number;  // round_number of the 12th non-knife round
   }, [displayRounds]);
 
   if (!rounds.length) {
