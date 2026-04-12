@@ -220,25 +220,21 @@ function drawGrenade(
       gy = b.cy;
     }
 
-    // Trace only the portion of the trajectory already traveled — do NOT draw
-    // future path points, which caused a starburst effect in the original code.
-    // Subsample to ~10 waypoints so that when many grenades fly simultaneously
-    // from the same area their accumulated 64-Hz segments don't create a mesh.
-    const drawnPath = path.filter((p) => p.tick <= currentTick);
+    // Draw only the recent tail of the traveled path (~0.75 s).
+    // Showing the full past trajectory from the throw position causes a
+    // starburst/spider-web when several grenades are thrown from the same
+    // spot — their long tails all fan out from the same cluster of pixels.
+    // A short tail stays tight to the grenade and still shows recent bounces.
+    const GRENADE_TRAIL_TICKS = 48; // ~0.75 s at 64 Hz
+    const trailStart = Math.max(throw_tick, currentTick - GRENADE_TRAIL_TICKS);
+    const drawnPath = path.filter((p) => p.tick >= trailStart && p.tick <= currentTick);
     if (drawnPath.length > 0) {
-      const step = Math.max(1, Math.ceil(drawnPath.length / 10));
-      const sampled: typeof drawnPath = [];
-      for (let i = 0; i < drawnPath.length; i += step) sampled.push(drawnPath[i]);
-      // Always end at the last recorded waypoint so we don't skip the bounce tip
-      if (sampled[sampled.length - 1] !== drawnPath[drawnPath.length - 1]) {
-        sampled.push(drawnPath[drawnPath.length - 1]);
-      }
       ctx.setLineDash([3, 4]);
       ctx.globalAlpha = 0.45;
       ctx.beginPath();
-      ctx.moveTo(sampled[0].cx, sampled[0].cy);
-      for (let i = 1; i < sampled.length; i++) {
-        ctx.lineTo(sampled[i].cx, sampled[i].cy);
+      ctx.moveTo(drawnPath[0].cx, drawnPath[0].cy);
+      for (let i = 1; i < drawnPath.length; i++) {
+        ctx.lineTo(drawnPath[i].cx, drawnPath[i].cy);
       }
       // Extend to the interpolated current grenade position
       ctx.lineTo(gx, gy);
