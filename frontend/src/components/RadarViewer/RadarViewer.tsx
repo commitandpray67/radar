@@ -220,14 +220,17 @@ function drawGrenade(
       gy = b.cy;
     }
 
-    // Draw only the recent tail of the traveled path (~0.75 s).
-    // Showing the full past trajectory from the throw position causes a
-    // starburst/spider-web when several grenades are thrown from the same
-    // spot — their long tails all fan out from the same cluster of pixels.
-    // A short tail stays tight to the grenade and still shows recent bounces.
+    // Draw only the recent tail using the grenade's own trajectory positions —
+    // never the throw position (the thrower's feet).  When several grenades
+    // launch from the same spot the throw-position point is a shared pixel;
+    // including it makes every trail converge there and fan out = starburst.
+    // Trajectory data starts from the grenade's first recorded world position,
+    // which already diverges per-grenade from the very first tick.
     const GRENADE_TRAIL_TICKS = 48; // ~0.75 s at 64 Hz
-    const trailStart = Math.max(throw_tick, currentTick - GRENADE_TRAIL_TICKS);
-    const drawnPath = path.filter((p) => p.tick >= trailStart && p.tick <= currentTick);
+    const trailStart = currentTick - GRENADE_TRAIL_TICKS;
+    const drawnPath = trajectoryPoints.filter(
+      (p) => p.tick >= trailStart && p.tick <= currentTick,
+    );
     if (drawnPath.length > 0) {
       ctx.setLineDash([3, 4]);
       ctx.globalAlpha = 0.45;
