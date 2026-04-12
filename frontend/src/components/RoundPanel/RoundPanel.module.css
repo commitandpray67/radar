@@ -178,6 +178,30 @@
   white-space: nowrap;
 }
 
+.overtimeDivider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  margin: 4px 0 2px;
+}
+.overtimeDivider::before,
+.overtimeDivider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #3a2e18;
+}
+.overtimeLabel {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #7a5e28;
+  text-transform: uppercase;
+  font-family: 'Inter', sans-serif;
+  white-space: nowrap;
+}
+
 .empty {
   display: flex;
   align-items: center;

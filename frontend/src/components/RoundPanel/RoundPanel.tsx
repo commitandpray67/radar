@@ -82,11 +82,7 @@ const RoundPanel: React.FC = () => {
   // of the match doesn't shift the divider to the wrong position.
   // Standard MR12: first half = display rounds 1-12 (indices 0-11),
   //                second half starts at display round 13 (index 12).
-  const halftimeAfter = useMemo(() => {
-    if (displayRounds.length <= 12) return null;
-    return displayRounds[12].round_number;  // round_number of the 13th non-knife round
-  }, [displayRounds]);
-
+  // OT is MR3: each 6-round OT period has a mid-swap at index 24+n*6+3.
   const halftimeRoundNumber = useMemo(() => {
     if (displayRounds.length < 12) return null;
     return displayRounds[11].round_number;  // round_number of the 12th non-knife round
@@ -121,11 +117,31 @@ const RoundPanel: React.FC = () => {
           const isHeatmapSelected =
             isHeatmapMode && heatmapRounds.includes(r.round_number);
 
+          // Compute which divider (if any) precedes this round.
+          // idx 12        → regulation halftime
+          // idx 24,30,36… → overtime period start (every 6, starting at 24)
+          // idx 27,33,39… → overtime period side swap (3 rounds into each OT period)
+          const otIdx = idx - 24;
+          const otPeriod = otIdx >= 0 ? Math.floor(otIdx / 6) + 1 : 0;
+          const showHalftime   = idx === 12;
+          const showOtStart    = idx >= 24 && otIdx % 6 === 0;
+          const showOtSwap     = idx >= 27 && (otIdx - 3) % 6 === 0;
+
           return (
             <React.Fragment key={r.round_number}>
-            {r.round_number === halftimeAfter && (
+            {showHalftime && (
               <div className={styles.halftimeDivider}>
                 <span className={styles.halftimeLabel}>halftime · sides swap</span>
+              </div>
+            )}
+            {showOtStart && (
+              <div className={styles.overtimeDivider}>
+                <span className={styles.overtimeLabel}>overtime {otPeriod}</span>
+              </div>
+            )}
+            {showOtSwap && (
+              <div className={styles.halftimeDivider}>
+                <span className={styles.halftimeLabel}>ot {Math.floor((otIdx - 3) / 6) + 1} · sides swap</span>
               </div>
             )}
             <button
