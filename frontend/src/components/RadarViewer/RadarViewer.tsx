@@ -220,16 +220,24 @@ function drawGrenade(
       gy = b.cy;
     }
 
-    // Straight dashed line from throw position to current grenade position.
-    ctx.setLineDash([3, 4]);
-    ctx.globalAlpha = 0.45;
-    ctx.beginPath();
-    ctx.moveTo(throwCx, throwCy);
-    ctx.lineTo(gx, gy);
-    ctx.strokeStyle = grenadeLineColor(grenade_type);
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.setLineDash([]);
+    // Trace only the portion of the trajectory already traveled — do NOT draw
+    // future path points, which caused a starburst effect in the original code.
+    const drawnPath = path.filter((p) => p.tick <= currentTick);
+    if (drawnPath.length > 0) {
+      ctx.setLineDash([3, 4]);
+      ctx.globalAlpha = 0.45;
+      ctx.beginPath();
+      ctx.moveTo(drawnPath[0].cx, drawnPath[0].cy);
+      for (let i = 1; i < drawnPath.length; i++) {
+        ctx.lineTo(drawnPath[i].cx, drawnPath[i].cy);
+      }
+      // Extend to the interpolated current grenade position
+      ctx.lineTo(gx, gy);
+      ctx.strokeStyle = grenadeLineColor(grenade_type);
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     // Moving dot
     ctx.globalAlpha = 0.9;
