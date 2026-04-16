@@ -124,6 +124,7 @@ const PlayerInfoPanel: React.FC = () => {
   const playerStateEvents = useAppStore((s) => s.playerStateEvents);
   const events = useAppStore((s) => s.events);
   const positions = useAppStore((s) => s.positions);
+  const rounds = useAppStore((s) => s.rounds);
   const isMultiRoundMode = useAppStore((s) => s.isMultiRoundMode);
   const isHeatmapMode    = useAppStore((s) => s.isHeatmapMode);
 
@@ -147,9 +148,16 @@ const PlayerInfoPanel: React.FC = () => {
     const map = new Map<number, 'CT' | 'T'>();
     if (activeRound === null) return map;
 
+    // During freeze time the game engine may not have updated team_num yet,
+    // so position records at those early ticks can still carry the previous
+    // half's assignment.  Look ahead to freeze_end_tick so we always read
+    // the correct post-swap team_num, even while the slider is in buy-phase.
+    const roundInfo = rounds.find((r) => r.round_number === activeRound);
+    const refTick = Math.max(currentTick, roundInfo?.freeze_end_tick ?? 0);
+
     const latestTickByPlayer = new Map<number, number>();
     for (const pos of positions) {
-      if (pos.round_number !== activeRound || pos.tick > currentTick) continue;
+      if (pos.round_number !== activeRound || pos.tick > refTick) continue;
       const prevTick = latestTickByPlayer.get(pos.player_id) ?? -1;
       if (pos.tick < prevTick) continue;
       latestTickByPlayer.set(pos.player_id, pos.tick);
@@ -163,7 +171,7 @@ const PlayerInfoPanel: React.FC = () => {
     }
 
     return map;
-  }, [players, positions, activeRound, currentTick]);
+  }, [players, positions, activeRound, currentTick, rounds]);
 
   const playerStates = useMemo<Map<number, PlayerState>>(() => {
     const state = new Map<number, PlayerState>();
