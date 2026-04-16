@@ -148,18 +148,23 @@ const PlayerInfoPanel: React.FC = () => {
     const map = new Map<number, 'CT' | 'T'>();
     if (activeRound === null) return map;
 
-    // During freeze time the game engine may not have updated team_num yet,
-    // so position records at those early ticks can still carry the previous
-    // half's assignment.  Look ahead to freeze_end_tick so we always read
-    // the correct post-swap team_num, even while the slider is in buy-phase.
+    // Scan only the live phase of this round (tick >= freeze_end_tick).
+    // We do NOT cap at currentTick: team assignment is constant within a
+    // round, so any live-phase record is authoritative regardless of where
+    // the slider sits.  Using only live-phase records avoids stale team_num
+    // values the CS2 engine hasn't updated yet during freeze time.  Not
+    // capping at currentTick also fixes OT: a player whose first live-phase
+    // record arrives after freeze_end_tick (reconnect, etc.) would otherwise
+    // fall through to the initial_team fallback, which is only correct for
+    // the first half.
     const roundInfo = rounds.find((r) => r.round_number === activeRound);
-    const refTick = Math.max(currentTick, roundInfo?.freeze_end_tick ?? 0);
+    const freezeEnd = roundInfo?.freeze_end_tick ?? 0;
 
     const latestTickByPlayer = new Map<number, number>();
     for (const pos of positions) {
-      if (pos.round_number !== activeRound || pos.tick > refTick) continue;
+      if (pos.round_number !== activeRound || pos.tick < freezeEnd) continue;
       const prevTick = latestTickByPlayer.get(pos.player_id) ?? -1;
-      if (pos.tick < prevTick) continue;
+      if (pos.tick <= prevTick) continue;
       latestTickByPlayer.set(pos.player_id, pos.tick);
       map.set(pos.player_id, pos.team_num === 3 ? 'CT' : 'T');
     }
@@ -171,7 +176,7 @@ const PlayerInfoPanel: React.FC = () => {
     }
 
     return map;
-  }, [players, positions, activeRound, currentTick, rounds]);
+  }, [players, positions, activeRound, rounds]);
 
   const playerStates = useMemo<Map<number, PlayerState>>(() => {
     const state = new Map<number, PlayerState>();
