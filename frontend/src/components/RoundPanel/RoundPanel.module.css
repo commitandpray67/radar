@@ -204,10 +204,21 @@
 
 .empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
   color: #4a5a6a;
   font-size: 13px;
   font-family: 'Inter', sans-serif;
+  gap: 6px;
+  text-align: center;
+  padding: 16px;
+}
+
+.emptyHint {
+  font-size: 11px;
+  color: #3a4a5a;
+  font-style: italic;
+  margin: 0;
 }

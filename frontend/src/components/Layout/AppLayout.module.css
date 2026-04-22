@@ -70,12 +70,32 @@
 .topRight {
   display: flex;
   align-items: center;
+  gap: 12px;
 }
 
 .tickRate {
   font-size: 11px;
   color: #4a5a6a;
   font-family: 'JetBrains Mono', monospace;
+}
+
+.loadDemoBtn {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  border-radius: 3px;
+  border: 1px solid #2a3a52;
+  background: #131d2c;
+  color: #8090a0;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  letter-spacing: 0.03em;
+}
+.loadDemoBtn:hover {
+  background: #1e2d3f;
+  color: #c0cfe0;
+  border-color: #3a5a7a;
 }
 
 /* ---- Main body ---- */

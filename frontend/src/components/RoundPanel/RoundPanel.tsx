@@ -55,6 +55,7 @@ function getDisplaySideScore(
 
 const RoundPanel: React.FC = () => {
   const rounds           = useAppStore((s) => s.rounds);
+  const demo             = useAppStore((s) => s.demo);
   const activeRound      = useAppStore((s) => s.activeRound);
   const setActiveRound   = useAppStore((s) => s.setActiveRound);
   const isHeatmapMode    = useAppStore((s) => s.isHeatmapMode);
@@ -91,7 +92,12 @@ const RoundPanel: React.FC = () => {
   if (!rounds.length) {
     return (
       <div className={styles.empty}>
-        <p>No rounds loaded</p>
+        <p>{demo ? 'No rounds found in this demo.' : 'No rounds loaded'}</p>
+        {demo && (
+          <p className={styles.emptyHint}>
+            Re-upload the demo to retry parsing.
+          </p>
+        )}
       </div>
     );
   }

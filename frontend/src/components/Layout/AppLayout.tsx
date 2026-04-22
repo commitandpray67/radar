@@ -37,6 +37,7 @@ const AppLayout: React.FC = () => {
   const rounds      = useAppStore((s) => s.rounds);
   const positions   = useAppStore((s) => s.positions);
   const activeRound = useAppStore((s) => s.activeRound);
+  const reset       = useAppStore((s) => s.reset);
 
   const displayRounds = useMemo(
     () => rounds.filter((r) => !r.is_knife_round),
@@ -104,7 +105,16 @@ const AppLayout: React.FC = () => {
         </div>
         <div className={styles.topRight}>
           {demo && (
-            <span className={styles.tickRate}>{demo.tick_rate.toFixed(0)} tick</span>
+            <>
+              <span className={styles.tickRate}>{demo.tick_rate.toFixed(0)} tick</span>
+              <button
+                className={styles.loadDemoBtn}
+                onClick={reset}
+                title="Unload demo and load a different one"
+              >
+                Load demo
+              </button>
+            </>
           )}
         </div>
       </header>
