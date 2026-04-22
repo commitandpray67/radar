@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 20
+PARSER_VERSION = 21
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +374,7 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
 
     # ---- round end events (try round_end first, then round_officially_ended)
     end_rows: list[dict] = []
+    _round_end_errors: list[str] = []
     for event_name in ("round_end", "round_officially_ended"):
         try:
             df = parser.parse_event(
@@ -385,7 +386,15 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
                 logger.info("Round-end source: %s (%d events)", event_name, len(rows))
                 break
         except Exception as exc:
+            _round_end_errors.append(f"{event_name}: {exc}")
             logger.debug("Event %s unavailable: %s", event_name, exc)
+
+    if not end_rows:
+        logger.warning(
+            "No round-end events found — demo may be from an unsupported CS2 build "
+            "or the demoparser2 library needs updating. Errors: %s",
+            "; ".join(_round_end_errors) or "none (events returned empty rows)",
+        )
 
     # ---- freeze-end and bomb events ----------------------------------------
     def _safe_event(name, other):
