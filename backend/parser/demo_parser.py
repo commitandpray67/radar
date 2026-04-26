@@ -38,7 +38,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 21
+PARSER_VERSION = 22
 
 
 # ---------------------------------------------------------------------------
@@ -533,11 +533,12 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
     for r in rounds:
         kills = [
             d for d in death_rows
-            if r.start_tick <= int(d.get("tick", 0)) <= r.end_tick
+            if r.start_tick <= _to_int(d.get("tick", 0)) <= r.end_tick
         ]
         if kills and all(
-            str(d.get("weapon", "")).lower().startswith("knife")
-            or str(d.get("weapon", "")).lower() == "knifegg"
+            (lambda w: w.startswith("knife") or w == "knifegg")(
+                str(d.get("weapon", "")).lower().removeprefix("weapon_")
+            )
             for d in kills
         ):
             r.is_knife_round = True
