@@ -45,6 +45,10 @@ const PlaybackControls: React.FC = () => {
   const setMultiRoundIsPlaying  = useAppStore((s) => s.setMultiRoundIsPlaying);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Last wall-clock time the tick fired. Used to advance by REAL elapsed time
+  // so background-tab throttling (Chrome throttles setInterval to ~1Hz when
+  // hidden) doesn't slow playback — we just take bigger steps per tick.
+  const lastTickAtRef = useRef<number | null>(null);
 
   // ---- Single-round mode timing ----
   const roundInfo  = rounds.find((r) => r.round_number === activeRound);
@@ -73,7 +77,12 @@ const PlaybackControls: React.FC = () => {
   // ---- Playback tick function ----
   const tick = useCallback(() => {
     if (!demo) return;
-    const advance = ticksPerInterval(demo.tick_rate, speed, PLAYBACK_INTERVAL_MS);
+    const now = performance.now();
+    const elapsedMs = lastTickAtRef.current === null
+      ? PLAYBACK_INTERVAL_MS
+      : now - lastTickAtRef.current;
+    lastTickAtRef.current = now;
+    const advance = ticksPerInterval(demo.tick_rate, speed, elapsedMs);
 
     if (isMultiRoundMode) {
       const next = Math.min(multiMaxRelTick, useAppStore.getState().multiRoundRelativeTick + advance);
@@ -93,8 +102,10 @@ const PlaybackControls: React.FC = () => {
 
   useEffect(() => {
     if (playing) {
+      lastTickAtRef.current = null;
       intervalRef.current = setInterval(tick, PLAYBACK_INTERVAL_MS);
     } else {
+      lastTickAtRef.current = null;
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
@@ -153,13 +164,16 @@ const PlaybackControls: React.FC = () => {
   const sliderValue = isMultiRoundMode ? multiRoundRelativeTick : currentTick;
 
   const handleSliderChange = (v: number) => {
+    // Scrub without pausing — like YouTube. Playback timer keeps running
+    // from the new position.
     if (isMultiRoundMode) {
-      setMultiRoundIsPlaying(false);
       setMultiRoundRelTick(v);
     } else {
-      setIsPlaying(false);
       setCurrentTick(v);
     }
+    // Reset elapsed-time baseline so the next tick doesn't snap forward
+    // by the time the user spent dragging.
+    lastTickAtRef.current = null;
   };
 
   const handlePlayPause = () => {

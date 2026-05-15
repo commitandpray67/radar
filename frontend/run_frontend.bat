@@ -1,12 +1,14 @@
 @echo off
-:: Helper script launched by start.bat to run the Vite dev server.
-:: Lives in the frontend\ folder so paths are always relative and unambiguous.
+:: Helper script that runs the Vite dev server.
+:: Logs all output to logs\frontend.log so this can be launched either
+:: visibly (double-click, for debugging) or hidden from start.bat.
 title CS2Radar-Frontend
 cd /d "%~dp0"
+if not exist logs mkdir logs
 echo  [Frontend] Starting Vite on http://localhost:5173
-echo  [Frontend] Keep this window open. Close it to stop the app.
+echo  [Frontend] Logs: logs\frontend.log
 echo.
-npm run dev
+call npm run dev >> logs\frontend.log 2>&1
 echo.
 echo  [Frontend] Server stopped. Press any key to close.
 pause >nul

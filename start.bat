@@ -14,6 +14,8 @@ call :log ""
 set "BACKEND=%ROOT%backend"
 set "FRONTEND=%ROOT%frontend"
 set "VENV=%BACKEND%\.venv"
+set "BACKEND_LOG=%BACKEND%\logs\backend.log"
+set "FRONTEND_LOG=%FRONTEND%\logs\frontend.log"
 
 :: -------------------------------------------------------
 :: Step 1: Find Python
@@ -92,13 +94,11 @@ if not exist "%FRONTEND%\node_modules" (
 call :log "      [OK] Frontend packages ready."
 
 :: -------------------------------------------------------
-:: Step 5: Kill leftovers, start servers
+:: Step 5: Kill leftovers, start servers (hidden)
 :: -------------------------------------------------------
 call :log "[5/5] Starting servers..."
 
 :: Free ports if something is already using them.
-:: netstat output looks like:  TCP  0.0.0.0:8000  ...  LISTENING  1234
-:: We match ":8000 " (no leading space) so 0.0.0.0:8000 and [::]:8000 both match.
 call :log "      Freeing ports 8000 and 5173..."
 for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":8000 "') do (
     if not "%%p"=="" taskkill /F /PID %%p >nul 2>&1
@@ -106,15 +106,18 @@ for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":8000 "') do (
 for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":5173 "') do (
     if not "%%p"=="" taskkill /F /PID %%p >nul 2>&1
 )
-:: Also kill any stray python/uvicorn processes holding these ports
 powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000,5173 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-:: Start backend using the helper batch file (avoids all quoting/space issues)
-call :log "      Launching backend window..."
-start "CS2Radar-Backend" /D "%BACKEND%" cmd /k run_server.bat
+:: Make sure log dirs exist
+if not exist "%BACKEND%\logs"  mkdir "%BACKEND%\logs"  >nul 2>&1
+if not exist "%FRONTEND%\logs" mkdir "%FRONTEND%\logs" >nul 2>&1
+
+:: Start backend HIDDEN — run_server.bat logs to backend\logs\backend.log itself
+call :log "      Starting backend (hidden, log: backend\logs\backend.log)..."
+powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath '%BACKEND%\.venv\Scripts\uvicorn.exe' -ArgumentList 'main:app','--host','0.0.0.0','--port','8000' -WorkingDirectory '%BACKEND%' -RedirectStandardOutput '%BACKEND%\logs\backend.log' -RedirectStandardError '%BACKEND%\logs\backend.err'"
 if errorlevel 1 (
-    call :log "      ERROR: Could not open backend window."
+    call :log "      ERROR: Could not launch backend."
     call :err
 )
 
@@ -125,7 +128,7 @@ set TRIES=0
 set /a TRIES+=1
 if %TRIES% gtr 30 (
     call :log "      ERROR: Backend never responded after 30 seconds."
-    call :log "      Look at the CS2Radar-Backend window for the error message."
+    call :log "      Check the backend log: %BACKEND_LOG%"
     call :err
 )
 timeout /t 1 /nobreak >nul
@@ -133,11 +136,12 @@ timeout /t 1 /nobreak >nul
 if errorlevel 1 goto :wait_backend
 call :log "      [OK] Backend running (after %TRIES%s)"
 
-:: Start frontend using helper batch file
-call :log "      Launching frontend window..."
-start "CS2Radar-Frontend" /D "%FRONTEND%" cmd /k run_frontend.bat
+:: Start frontend HIDDEN — npm.cmd is a batch shim, so wrap it in cmd /c with
+:: redirection. Using ^ to escape > and & so batch parses them correctly.
+call :log "      Starting frontend (hidden, log: frontend\logs\frontend.log)..."
+powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath cmd.exe -ArgumentList '/c','npm run dev ^> logs\frontend.log 2^>^&1' -WorkingDirectory '%FRONTEND%'"
 if errorlevel 1 (
-    call :log "      ERROR: Could not open frontend window."
+    call :log "      ERROR: Could not launch frontend."
     call :err
 )
 
@@ -148,7 +152,7 @@ set TRIES=0
 set /a TRIES+=1
 if %TRIES% gtr 60 (
     call :log "      ERROR: Frontend never responded after 60 seconds."
-    call :log "      Look at the CS2Radar-Frontend window for the error message."
+    call :log "      Check the frontend log: %FRONTEND_LOG%"
     call :err
 )
 timeout /t 1 /nobreak >nul
@@ -168,11 +172,29 @@ call :log "================================================"
 start "" "http://localhost:5173"
 
 echo.
-echo  Log saved to: %LOG%
-echo  To stop: close the CS2Radar-Backend and CS2Radar-Frontend windows.
+echo  Backend log:  %BACKEND_LOG%
+echo  Frontend log: %FRONTEND_LOG%
+echo  Launcher log: %LOG%
 echo.
-echo  Press any key to close this launcher...
+echo  Press any key in THIS window to STOP the servers and exit.
+echo  (Closing this window is the same as stopping.)
+echo.
 pause >nul
+
+:: -------------------------------------------------------
+:: Stop hidden servers on exit
+:: -------------------------------------------------------
+echo.
+echo  Stopping servers...
+for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":8000 "') do (
+    if not "%%p"=="" taskkill /F /PID %%p >nul 2>&1
+)
+for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":5173 "') do (
+    if not "%%p"=="" taskkill /F /PID %%p >nul 2>&1
+)
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000,5173 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+echo  Servers stopped.
+timeout /t 1 /nobreak >nul
 goto :eof
 
 :: -------------------------------------------------------
