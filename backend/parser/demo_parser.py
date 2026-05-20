@@ -29,6 +29,7 @@ events : list[dict]
 
 from __future__ import annotations
 
+import bisect
 import logging
 import math
 from dataclasses import dataclass, field
@@ -111,6 +112,26 @@ def _coord(row: dict, *keys: str) -> float | None:
             continue
         return f
     return None
+
+
+def _build_round_lookup(rounds: list):
+    """Return an O(log n) tick→round_number lookup backed by bisect.
+
+    Replaces the pattern of building a dict[tick, round_number] over every tick
+    in every round's range, which wastes O(total_ticks) memory and time.
+    """
+    sorted_rounds = sorted(rounds, key=lambda r: r.start_tick)
+    starts = [r.start_tick for r in sorted_rounds]
+    ends   = [r.end_tick   for r in sorted_rounds]
+    nums   = [r.round_number for r in sorted_rounds]
+
+    def lookup(tick: int) -> int:
+        idx = bisect.bisect_right(starts, tick) - 1
+        if idx >= 0 and tick <= ends[idx]:
+            return nums[idx]
+        return 0
+
+    return lookup
 
 
 # ---------------------------------------------------------------------------
@@ -499,17 +520,18 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
         ))
 
     # ---- Assign bomb ticks to rounds ---------------------------------------
+    _rn_lookup   = _build_round_lookup(rounds)
+    rounds_by_rn = {r.round_number: r for r in rounds}
     for df, attr in [
         (bomb_plants,   "bomb_planted_tick"),
         (bomb_defuses,  "bomb_defused_tick"),
         (bomb_explodes, "bomb_exploded_tick"),
     ]:
         for bomb_row in _rows(df):
-            tick = int(bomb_row.get("tick", 0))
-            for r in rounds:
-                if r.start_tick <= tick <= r.end_tick:
-                    setattr(r, attr, tick)
-                    break
+            tick = _to_int(bomb_row.get("tick", 0))
+            rn   = _rn_lookup(tick)
+            if rn:
+                setattr(rounds_by_rn[rn], attr, tick)
 
     # ---- Infer winner from bomb events where event data was missing ---------
     for r in rounds:
@@ -530,11 +552,15 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
         logger.warning("Could not parse player_death for knife detection: %s", exc)
         death_rows = []
 
+    # Group deaths by round first (O(n)) instead of filtering per-round (O(n²))
+    deaths_by_round: dict[int, list] = {}
+    for d in death_rows:
+        rn = _rn_lookup(_to_int(d.get("tick", 0)))
+        if rn:
+            deaths_by_round.setdefault(rn, []).append(d)
+
     for r in rounds:
-        kills = [
-            d for d in death_rows
-            if r.start_tick <= _to_int(d.get("tick", 0)) <= r.end_tick
-        ]
+        kills = deaths_by_round.get(r.round_number, [])
         if kills and all(
             (lambda w: w.startswith("knife") or w == "knifegg")(
                 str(d.get("weapon", "")).lower().removeprefix("weapon_")
@@ -753,13 +779,7 @@ def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
     """Extract kill and bomb events."""
     events: list[GameEvent] = []
 
-    tick_to_round: dict[int, int] = {}
-    for r in rounds:
-        for t in range(r.start_tick, r.end_tick + 1):
-            tick_to_round[t] = r.round_number
-
-    def _rn(tick: int) -> int:
-        return tick_to_round.get(tick, 0)
+    _rn = _build_round_lookup(rounds)
 
     # Kills
     try:
@@ -882,13 +902,7 @@ _EFFECT_TICKS: dict[str, int] = {
 
 def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
     """Match weapon_fire (throw) events to grenade detonation events."""
-    tick_to_round: dict[int, int] = {}
-    for r in rounds:
-        for t in range(r.start_tick, r.end_tick + 1):
-            tick_to_round[t] = r.round_number
-
-    def _rn(tick: int) -> int:
-        return tick_to_round.get(tick, 0)
+    _rn = _build_round_lookup(rounds)
 
     # -- Throws (weapon_fire filtered to grenade weapon types) --
     throws: list[dict] = []
@@ -1034,14 +1048,18 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
     used_det: set[int] = set()
     grenades: list[GrenadeEvent] = []
 
+    # Pre-group detonations by round so the inner loop only scans same-round
+    # candidates instead of iterating the entire detonation list per throw.
+    dets_by_round: dict[int, list[tuple[int, dict]]] = {}
+    for _i, _det in enumerate(detonations):
+        dets_by_round.setdefault(_det["round_number"], []).append((_i, _det))
+
     for throw in sorted(throws, key=lambda t: t["tick"]):
         best_idx: int | None = None
         best_diff = MAX_FLIGHT_TICKS + 1
 
-        for i, det in enumerate(detonations):
+        for i, det in dets_by_round.get(throw["round_number"], []):
             if i in used_det:
-                continue
-            if det["round_number"] != throw["round_number"]:
                 continue
             # Type compatibility: incendiary throw → molotov detonate (same event)
             nt = throw["grenade_type"]
@@ -1270,13 +1288,7 @@ def _extract_player_state_events(
     parser, rounds: list[RoundInfo]
 ) -> list[PlayerStateEvent]:
     """Extract HP/armor changes (player_hurt) and weapon equip events."""
-    tick_to_round: dict[int, int] = {}
-    for r in rounds:
-        for t in range(r.start_tick, r.end_tick + 1):
-            tick_to_round[t] = r.round_number
-
-    def _rn(tick: int) -> int:
-        return tick_to_round.get(tick, 0)
+    _rn = _build_round_lookup(rounds)
 
     def _event_player_id(row: dict) -> int:
         for key in ("user_steamid", "steamid", "player_steamid"):

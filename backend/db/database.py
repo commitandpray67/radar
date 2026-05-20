@@ -254,20 +254,21 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
             "DELETE FROM player_positions WHERE demo_id = ?", (demo_id,)
         )
         BATCH = 5000
-        pos_rows = [
-            (
-                demo_id, pos.tick, pos.round_number, pos.player_id,
-                pos.x, pos.y, pos.z, pos.team_num, int(pos.is_alive),
-                getattr(pos, 'yaw', 0.0),
-            )
-            for pos in parsed.positions
-        ]
-        for i in range(0, len(pos_rows), BATCH):
+        # Build each batch in-place to avoid holding the full list in memory
+        # before the first insert (large demos = 500k+ rows ≈ 40 MB peak).
+        for i in range(0, len(parsed.positions), BATCH):
             await conn.executemany(
                 """INSERT INTO player_positions
                    (demo_id, tick, round_number, player_id, x, y, z, team_num, is_alive, yaw)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                pos_rows[i : i + BATCH],
+                [
+                    (
+                        demo_id, pos.tick, pos.round_number, pos.player_id,
+                        pos.x, pos.y, pos.z, pos.team_num, int(pos.is_alive),
+                        getattr(pos, 'yaw', 0.0),
+                    )
+                    for pos in parsed.positions[i : i + BATCH]
+                ],
             )
 
         # events

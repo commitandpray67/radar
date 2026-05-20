@@ -178,6 +178,13 @@ const PlayerInfoPanel: React.FC = () => {
     return map;
   }, [players, positions, activeRound, rounds]);
 
+  // Pre-filter state events for the active round so playerStates only iterates
+  // ~100-200 events instead of all events across all rounds.
+  const activeRoundStateEvents = useMemo(
+    () => playerStateEvents.filter((ev) => ev.round_number === activeRound),
+    [playerStateEvents, activeRound],
+  );
+
   const playerStates = useMemo<Map<number, PlayerState>>(() => {
     const state = new Map<number, PlayerState>();
     if (activeRound === null) return state;
@@ -193,8 +200,8 @@ const PlayerInfoPanel: React.FC = () => {
       });
     }
 
-    for (const ev of playerStateEvents) {
-      if (ev.round_number !== activeRound || ev.tick > currentTick) continue;
+    for (const ev of activeRoundStateEvents) {
+      if (ev.tick > currentTick) continue;
       const cur = state.get(ev.player_id);
       if (!cur) continue;
 
@@ -248,19 +255,24 @@ const PlayerInfoPanel: React.FC = () => {
     }
 
     return state;
-  }, [players, activeRound, currentTick, playerStateEvents]);
+  }, [players, activeRound, currentTick, activeRoundStateEvents]);
+
+  const activeRoundEvents = useMemo(
+    () => events.filter((ev) => ev.round_number === activeRound),
+    [events, activeRound],
+  );
 
   const deadSet = useMemo<Set<number>>(() => {
     const s = new Set<number>();
     if (activeRound === null) return s;
-    for (const ev of events) {
-      if (ev.round_number !== activeRound || ev.tick > currentTick) continue;
+    for (const ev of activeRoundEvents) {
+      if (ev.tick > currentTick) continue;
       if (ev.event_type === 'player_death' && ev.victim_id) {
         s.add(ev.victim_id);
       }
     }
     return s;
-  }, [events, activeRound, currentTick]);
+  }, [activeRound, currentTick, activeRoundEvents]);
 
   const sortedPlayers = useMemo(() => {
     const ct = players.filter((p) => teamByPlayerId.get(p.player_id) === 'CT');

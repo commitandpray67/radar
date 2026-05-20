@@ -112,35 +112,46 @@ const PlaybackControls: React.FC = () => {
   }, [playing, tick]);
 
   // ---- Keyboard shortcuts ----
+  // Read all values via getState() so this effect never needs to re-run;
+  // no stale closure risk because getState() is always fresh.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
-      const advance = ticksPerInterval(demo?.tick_rate ?? 64, speed, 500);
+      const s = useAppStore.getState();
+      const activeRoundInfo = s.rounds.find((r) => r.round_number === s.activeRound);
+      const rStart = activeRoundInfo?.start_tick ?? 0;
+      const rEnd   = activeRoundInfo?.end_tick   ?? 0;
+      const maxRelTick = s.isMultiRoundMode
+        ? Math.max(0, ...s.multiRoundSelectedRounds.map((rn) => {
+            const r = s.rounds.find((x) => x.round_number === rn);
+            return r ? r.end_tick - r.freeze_end_tick : 0;
+          }))
+        : 0;
+      const advance = ticksPerInterval(s.demo?.tick_rate ?? 64, s.speedMultiplier, 500);
       if (e.code === 'Space') {
         e.preventDefault();
-        if (isMultiRoundMode) {
-          setMultiRoundIsPlaying(!useAppStore.getState().multiRoundIsPlaying);
+        if (s.isMultiRoundMode) {
+          s.setMultiRoundIsPlaying(!s.multiRoundIsPlaying);
         } else {
-          setIsPlaying(!useAppStore.getState().isPlaying);
+          s.setIsPlaying(!s.isPlaying);
         }
       } else if (e.code === 'ArrowRight') {
-        if (isMultiRoundMode) {
-          setMultiRoundRelTick(Math.min(multiMaxRelTick, useAppStore.getState().multiRoundRelativeTick + advance));
+        if (s.isMultiRoundMode) {
+          s.setMultiRoundRelativeTick(Math.min(maxRelTick, s.multiRoundRelativeTick + advance));
         } else {
-          setCurrentTick(Math.min(roundEnd, useAppStore.getState().currentTick + advance));
+          s.setCurrentTick(Math.min(rEnd, s.currentTick + advance));
         }
       } else if (e.code === 'ArrowLeft') {
-        if (isMultiRoundMode) {
-          setMultiRoundRelTick(Math.max(0, useAppStore.getState().multiRoundRelativeTick - advance));
+        if (s.isMultiRoundMode) {
+          s.setMultiRoundRelativeTick(Math.max(0, s.multiRoundRelativeTick - advance));
         } else {
-          setCurrentTick(Math.max(roundStart, useAppStore.getState().currentTick - advance));
+          s.setCurrentTick(Math.max(rStart, s.currentTick - advance));
         }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speed, roundStart, roundEnd, isMultiRoundMode, multiMaxRelTick]);
+  }, []);
 
   const goToPrevRound = () => {
     if (activeRound && activeRound > 1) setActiveRound(activeRound - 1);

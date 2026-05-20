@@ -209,23 +209,24 @@ async def upload_demo(
         import json as _json
 
         cache_valid = False
+        cached_version = 0
         async with get_connection() as conn:
+            # Single query: grab parser version from meta AND winner-round count
             cur = await conn.execute(
-                "SELECT meta_json FROM demos WHERE id = ?", (demo_id,),
+                """SELECT d.meta_json,
+                          COUNT(r.id) AS round_count
+                   FROM demos d
+                   LEFT JOIN rounds r
+                          ON r.demo_id = d.id AND r.winner_team != ''
+                   WHERE d.id = ?
+                   GROUP BY d.id""",
+                (demo_id,),
             )
-            demo_row = await cur.fetchone()
-            cached_version = 0
-            if demo_row:
-                meta = _json.loads(demo_row["meta_json"] or "{}")
+            row = await cur.fetchone()
+            if row:
+                meta = _json.loads(row["meta_json"] or "{}")
                 cached_version = meta.get("parser_version", 0)
-
-            if cached_version == PARSER_VERSION:
-                cur2 = await conn.execute(
-                    "SELECT COUNT(*) FROM rounds WHERE demo_id = ? AND winner_team != ''",
-                    (demo_id,),
-                )
-                row = await cur2.fetchone()
-                cache_valid = bool(row and row[0] > 0)
+                cache_valid = (cached_version == PARSER_VERSION and row["round_count"] > 0)
 
         if cache_valid:
             _parse_jobs[job_id] = {

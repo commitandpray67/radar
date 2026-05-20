@@ -34,7 +34,7 @@ import {
 import {
   getSnapshotAtTick,
   getSortedTicks,
-  nearestTick,
+  nearestTick, nearestTickIndex,
   type TickIndex,
 } from '../../utils/playback';
 import styles from './RadarViewer.module.css';
@@ -598,9 +598,8 @@ const RadarViewer: React.FC = () => {
   // ---------------------------------------------------------------------------
   const trailSnapshots = useMemo(() => {
     if (!showTrails || !sortedTicks.length) return [];
-    const idx = nearestTick(currentTick, sortedTicks);
-    if (idx === undefined) return [];
-    const cursor = sortedTicks.indexOf(idx);
+    const cursor = nearestTickIndex(currentTick, sortedTicks);
+    if (cursor === -1) return [];
     const approxSteps = Math.ceil(trailLengthTicks / 8);
     const start = Math.max(0, cursor - approxSteps);
     return sortedTicks.slice(start, cursor + 1).map((t) => tickIndex.get(t)!).filter(Boolean);

@@ -44,6 +44,27 @@ export function getSortedTicks(index: TickIndex): number[] {
 }
 
 /**
+ * Find the index of the nearest tick at or before requestedTick using binary search.
+ * Returns -1 if sortedTicks is empty.
+ */
+export function nearestTickIndex(
+  requestedTick: number,
+  sortedTicks: number[],
+): number {
+  if (!sortedTicks.length) return -1;
+  if (requestedTick < sortedTicks[0]) return 0;
+
+  let lo = 0;
+  let hi = sortedTicks.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (sortedTicks[mid] <= requestedTick) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
  * Find the nearest indexed tick at or before the requested tick.
  * Uses binary search on sortedTicks for O(log n) lookup.
  */
@@ -51,23 +72,8 @@ export function nearestTick(
   requestedTick: number,
   sortedTicks: number[],
 ): number | undefined {
-  if (!sortedTicks.length) return undefined;
-
-  let lo = 0;
-  let hi = sortedTicks.length - 1;
-
-  // If requested tick is before all known ticks
-  if (requestedTick < sortedTicks[0]) return sortedTicks[0];
-
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (sortedTicks[mid] <= requestedTick) {
-      lo = mid;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return sortedTicks[lo];
+  const idx = nearestTickIndex(requestedTick, sortedTicks);
+  return idx === -1 ? undefined : sortedTicks[idx];
 }
 
 /**
