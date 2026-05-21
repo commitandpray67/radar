@@ -10,7 +10,7 @@
 
 import React, { useCallback, useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
-import { generateHeatmap } from '../../utils/api';
+import { generateHeatmap, generateTeamHeatmap } from '../../utils/api';
 import type { PlayerInfo } from '../../types';
 import styles from './HeatmapControls.module.css';
 
@@ -53,6 +53,8 @@ const HeatmapControls: React.FC = () => {
   const setActiveLayer       = useAppStore((s) => s.setActiveLayer);
   const togglePlayerSel      = useAppStore((s) => s.togglePlayerSelection);
   const setSelectedPlayers   = useAppStore((s) => s.setSelectedPlayers);
+  const teamSession          = useAppStore((s) => s.teamSession);
+  const teamHeatmapKeys      = useAppStore((s) => s.teamHeatmapRoundKeys);
 
   // ---------------------------------------------------------------------------
   // Round groups (derived from loaded round data)
@@ -126,30 +128,52 @@ const HeatmapControls: React.FC = () => {
   // Generate / clear
   // ---------------------------------------------------------------------------
 
-  const canGenerate =
-    !!demo &&
-    heatmapRounds.length > 0 &&
-    selectedPlayers.size > 0 &&
-    !heatmapLoading;
+  const canGenerate = teamSession
+    ? teamHeatmapKeys.length > 0 && !heatmapLoading
+    : (!!demo &&
+        heatmapRounds.length > 0 &&
+        selectedPlayers.size > 0 &&
+        !heatmapLoading);
 
   const handleGenerate = useCallback(async () => {
-    if (!demo || !canGenerate) return;
+    if (!canGenerate) return;
     setHeatmapLoading(true);
     setHeatmapError(null);
     try {
-      // Send DB row IDs — SteamID64s exceed JS Number.MAX_SAFE_INTEGER.
-      const playerDbIds = players
-        .filter((p) => selectedPlayers.has(p.player_id))
-        .map((p) => p.id);
-      const result = await generateHeatmap(demo.id, {
-        player_ids: playerDbIds,
-        round_numbers: heatmapRounds,
-        layer_label: activeLayer || undefined,
-        // team_filter intentionally omitted (null = both sides).
-        // Round selection already encodes the relevant side.
-        exclude_freeze_time: true,
-        blur_sigma: 6.0,
-      });
+      let result;
+      if (teamSession) {
+        // Team session: cross-demo heatmap. Round keys are "demo_id:round_number".
+        // team_filter "team" scopes positions to whichever side our team played
+        // in each demo (CT or T resolved per-demo on the server).
+        const teamRounds = teamHeatmapKeys.map((k) => {
+          const sep = k.indexOf(':');
+          return {
+            demo_id: k.slice(0, sep),
+            round_number: parseInt(k.slice(sep + 1), 10),
+          };
+        });
+        result = await generateTeamHeatmap(teamSession.id, {
+          rounds: teamRounds,
+          player_ids: [],          // all team players; per-player filter is a TODO
+          layer_label: activeLayer || undefined,
+          exclude_freeze_time: true,
+          blur_sigma: 6.0,
+          team_filter: 'team',
+        });
+      } else {
+        // Single-demo path
+        if (!demo) return;
+        const playerDbIds = players
+          .filter((p) => selectedPlayers.has(p.player_id))
+          .map((p) => p.id);
+        result = await generateHeatmap(demo.id, {
+          player_ids: playerDbIds,
+          round_numbers: heatmapRounds,
+          layer_label: activeLayer || undefined,
+          exclude_freeze_time: true,
+          blur_sigma: 6.0,
+        });
+      }
       setHeatmapResult(result);
     } catch (err) {
       setHeatmapError(err instanceof Error ? err.message : 'Heatmap generation failed');
@@ -158,7 +182,8 @@ const HeatmapControls: React.FC = () => {
       setHeatmapLoading(false);
     }
   }, [
-    demo, canGenerate, players, selectedPlayers, heatmapRounds, activeLayer,
+    canGenerate, teamSession, teamHeatmapKeys,
+    demo, players, selectedPlayers, heatmapRounds, activeLayer,
     setHeatmapLoading, setHeatmapError, setHeatmapResult,
   ]);
 
@@ -251,49 +276,79 @@ const HeatmapControls: React.FC = () => {
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
               <span>Rounds</span>
-              {heatmapRounds.length > 0 && (
-                <span className={styles.pill}>{heatmapRounds.length} selected</span>
+              {teamSession ? (
+                teamHeatmapKeys.length > 0 && (
+                  <span className={styles.pill}>{teamHeatmapKeys.length} selected</span>
+                )
+              ) : (
+                heatmapRounds.length > 0 && (
+                  <span className={styles.pill}>{heatmapRounds.length} selected</span>
+                )
               )}
             </div>
 
-            <div className={styles.quickSelectRow}>
-              <button
-                className={styles.quickBtn}
-                onClick={() => setHeatmapRounds(allRoundNums)}
-              >
-                All
-              </button>
-              <button
-                className={styles.quickBtn}
-                onClick={() => setHeatmapRounds(firstHalfNums)}
-                disabled={firstHalfNums.length === 0}
-                title="Rounds 1–12"
-              >
-                1st half
-              </button>
-              <button
-                className={styles.quickBtn}
-                onClick={() => setHeatmapRounds(secondHalfNums)}
-                disabled={secondHalfNums.length === 0}
-                title="Rounds 13+"
-              >
-                2nd half
-              </button>
-              <button
-                className={`${styles.quickBtn} ${styles.quickBtnClear}`}
-                onClick={() => setHeatmapRounds([])}
-                disabled={heatmapRounds.length === 0}
-              >
-                Clear
-              </button>
-            </div>
-
-            {heatmapRounds.length === 0 ? (
-              <p className={styles.hint}>
-                Use buttons above, or click rounds in the left panel
-              </p>
+            {teamSession ? (
+              <>
+                <div className={styles.quickSelectRow}>
+                  <button
+                    className={`${styles.quickBtn} ${styles.quickBtnClear}`}
+                    onClick={() => useAppStore.getState().setTeamHeatmapRoundKeys([])}
+                    disabled={teamHeatmapKeys.length === 0}
+                  >
+                    Clear
+                  </button>
+                </div>
+                {teamHeatmapKeys.length === 0 ? (
+                  <p className={styles.hint}>
+                    Click rounds from any match in the left panel to include them
+                  </p>
+                ) : (
+                  <p className={styles.roundsSummary}>
+                    {teamHeatmapKeys.length} round{teamHeatmapKeys.length === 1 ? '' : 's'} across matches
+                  </p>
+                )}
+              </>
             ) : (
-              <p className={styles.roundsSummary}>{toRangeString(heatmapRounds)}</p>
+              <>
+                <div className={styles.quickSelectRow}>
+                  <button
+                    className={styles.quickBtn}
+                    onClick={() => setHeatmapRounds(allRoundNums)}
+                  >
+                    All
+                  </button>
+                  <button
+                    className={styles.quickBtn}
+                    onClick={() => setHeatmapRounds(firstHalfNums)}
+                    disabled={firstHalfNums.length === 0}
+                    title="Rounds 1–12"
+                  >
+                    1st half
+                  </button>
+                  <button
+                    className={styles.quickBtn}
+                    onClick={() => setHeatmapRounds(secondHalfNums)}
+                    disabled={secondHalfNums.length === 0}
+                    title="Rounds 13+"
+                  >
+                    2nd half
+                  </button>
+                  <button
+                    className={`${styles.quickBtn} ${styles.quickBtnClear}`}
+                    onClick={() => setHeatmapRounds([])}
+                    disabled={heatmapRounds.length === 0}
+                  >
+                    Clear
+                  </button>
+                </div>
+                {heatmapRounds.length === 0 ? (
+                  <p className={styles.hint}>
+                    Use buttons above, or click rounds in the left panel
+                  </p>
+                ) : (
+                  <p className={styles.roundsSummary}>{toRangeString(heatmapRounds)}</p>
+                )}
+              </>
             )}
           </div>
 
@@ -348,10 +403,14 @@ const HeatmapControls: React.FC = () => {
               onClick={handleGenerate}
               disabled={!canGenerate}
               title={
-                !demo ? 'No demo loaded' :
-                selectedPlayers.size === 0 ? 'Select at least one player' :
-                heatmapRounds.length === 0 ? 'Select at least one round' :
-                undefined
+                teamSession
+                  ? (teamHeatmapKeys.length === 0
+                      ? 'Select at least one round from any match'
+                      : undefined)
+                  : (!demo ? 'No demo loaded' :
+                     selectedPlayers.size === 0 ? 'Select at least one player' :
+                     heatmapRounds.length === 0 ? 'Select at least one round' :
+                     undefined)
               }
             >
               {heatmapLoading ? 'Generating…' : 'Generate heatmap'}

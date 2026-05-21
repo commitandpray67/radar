@@ -24,6 +24,7 @@ import type {
   MapMeta,
   HeatmapResult,
   ParseJobStatus,
+  TeamSessionDetail,
 } from '../types';
 import {
   buildTickIndex,
@@ -156,7 +157,29 @@ interface VoiceState {
   unmuteAll: () => void;
 }
 
-type AppStore = DemoState & PlaybackState & HeatmapState & MultiRoundState & UIState & VoiceState;
+// ---------------------------------------------------------------------------
+// Team session state — when active, the standard single-demo slots
+// (demo/rounds/players/events/…) hold the data for the currently-active demo
+// within the session. The team session itself remembers which demos belong
+// and which side our team played in each.
+// ---------------------------------------------------------------------------
+
+interface TeamSessionState {
+  /** The active team session, or null when in single-demo mode. */
+  teamSession: TeamSessionDetail | null;
+  /** demo_id currently loaded into the single-demo slots when in a team session. */
+  activeDemoId: string | null;
+  /** Cross-demo round selection for heatmap mode: keys "demo_id:round_number". */
+  teamHeatmapRoundKeys: string[];
+
+  setTeamSession: (session: TeamSessionDetail | null) => void;
+  setActiveDemoId: (demoId: string | null) => void;
+  setTeamHeatmapRoundKeys: (keys: string[]) => void;
+  toggleTeamHeatmapRoundKey: (key: string) => void;
+}
+
+type AppStore = DemoState & PlaybackState & HeatmapState & MultiRoundState
+  & UIState & VoiceState & TeamSessionState;
 
 // ---------------------------------------------------------------------------
 // Store implementation
@@ -228,6 +251,9 @@ export const useAppStore = create<AppStore>()(
             multiRoundRelativeTick: 0,
             multiRoundIsPlaying: false,
             mutedPlayerIds: new Set<number>(),
+            teamSession: null,
+            activeDemoId: null,
+            teamHeatmapRoundKeys: [],
           },
           false,
           'reset',
@@ -385,6 +411,23 @@ export const useAppStore = create<AppStore>()(
         set({ multiRoundRelativeTick: tick }, false, 'setMultiRoundRelativeTick'),
       setMultiRoundIsPlaying: (playing) =>
         set({ multiRoundIsPlaying: playing }, false, 'setMultiRoundIsPlaying'),
+
+      // ----- Team session state -----
+      teamSession: null,
+      activeDemoId: null,
+      teamHeatmapRoundKeys: [],
+
+      setTeamSession: (teamSession) => set({ teamSession }, false, 'setTeamSession'),
+      setActiveDemoId: (activeDemoId) => set({ activeDemoId }, false, 'setActiveDemoId'),
+      setTeamHeatmapRoundKeys: (teamHeatmapRoundKeys) =>
+        set({ teamHeatmapRoundKeys }, false, 'setTeamHeatmapRoundKeys'),
+      toggleTeamHeatmapRoundKey: (key) =>
+        set((s) => {
+          const next = s.teamHeatmapRoundKeys.includes(key)
+            ? s.teamHeatmapRoundKeys.filter((k) => k !== key)
+            : [...s.teamHeatmapRoundKeys, key];
+          return { teamHeatmapRoundKeys: next };
+        }, false, 'toggleTeamHeatmapRoundKey'),
 
       // ----- UI state -----
       sidebarOpen: true,

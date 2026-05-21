@@ -1,0 +1,210 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 10px;
+}
+
+.intro {
+  font-size: 12px;
+  color: #8090a0;
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.demoList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.demoRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #131d2c;
+  border: 1px solid #1e2d3f;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+}
+
+.demoName {
+  flex: 1;
+  color: #c0cfe0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.demoStatus {
+  font-size: 11px;
+  color: #5b9bd5;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: #4a5a6a;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+}
+.removeBtn:hover { color: #e07b39; }
+
+.libraryList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-height: 160px;
+  overflow-y: auto;
+  background: #0f1620;
+  border: 1px solid #1e2d3f;
+  border-radius: 4px;
+  padding: 4px;
+}
+
+.libRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  color: #c0cfe0;
+  border-radius: 3px;
+}
+.libRow:hover { background: #1e2d3f; }
+
+.libName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libMeta {
+  font-size: 10px;
+  color: #4a5a6a;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.empty {
+  color: #4a5a6a;
+  font-size: 11px;
+  font-style: italic;
+  margin: 0;
+  text-align: center;
+  padding: 6px;
+}
+
+.validationBox {
+  background: #0f1620;
+  border: 1px solid #1e2d3f;
+  border-radius: 6px;
+  padding: 12px;
+  width: 100%;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  color: #c0cfe0;
+  text-align: left;
+}
+
+.validOk {
+  color: #5b9bd5;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.validErr {
+  color: #e07b39;
+  font-size: 12px;
+  margin: 4px 0;
+  text-align: center;
+}
+
+.rosterLabel,
+.sidesLabel {
+  color: #8090a0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 8px 0 4px;
+}
+
+.rosterNames {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.corePlayer { color: #c0cfe0; }
+.subPlayer  { color: #e07b39; font-style: italic; }
+
+.sideRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 2px 0;
+  font-size: 11px;
+}
+
+.sideFilename {
+  color: #8090a0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.sideCT { color: #5b9bd5; font-weight: 600; }
+.sideT  { color: #e07b39; font-weight: 600; }
+
+.nameInput {
+  width: 100%;
+  padding: 8px 10px;
+  background: #131d2c;
+  border: 1px solid #2a3a52;
+  border-radius: 4px;
+  color: #c0cfe0;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+}
+.nameInput:focus {
+  outline: none;
+  border-color: #2a6abf;
+}
+
+.createBtn {
+  width: 100%;
+  padding: 10px;
+  background: #1a3d5c;
+  color: #5b9bd5;
+  border: 1px solid #2a6abf;
+  border-radius: 4px;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.createBtn:hover:not(:disabled) {
+  background: #245481;
+  color: #c0cfe0;
+}
+.createBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

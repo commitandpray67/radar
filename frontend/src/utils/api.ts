@@ -265,3 +265,52 @@ export async function getVoiceManifest(
   });
   return res.data;
 }
+
+// ---------------------------------------------------------------------------
+// Team sessions
+// ---------------------------------------------------------------------------
+
+import type {
+  TeamSessionValidation,
+  TeamSessionListItem,
+  TeamSessionDetail,
+  TeamSessionHeatmapPayload,
+  HeatmapResult as _HeatmapResult,
+} from '../types';
+
+export async function validateTeamSession(
+  demoIds: string[],
+): Promise<TeamSessionValidation> {
+  const res = await http.post('/team-sessions/validate', { demo_ids: demoIds });
+  return res.data;
+}
+
+export async function createTeamSession(
+  name: string,
+  demoIds: string[],
+): Promise<{ id: string; name: string; created_at: string }> {
+  const res = await http.post('/team-sessions', { name, demo_ids: demoIds });
+  return res.data;
+}
+
+export async function listTeamSessions(): Promise<TeamSessionListItem[]> {
+  const res = await http.get('/team-sessions');
+  return res.data;
+}
+
+export async function getTeamSession(id: string): Promise<TeamSessionDetail> {
+  const res = await http.get(`/team-sessions/${id}`);
+  return res.data;
+}
+
+export async function deleteTeamSession(id: string): Promise<void> {
+  await http.delete(`/team-sessions/${id}`);
+}
+
+export async function generateTeamHeatmap(
+  sessionId: string,
+  payload: TeamSessionHeatmapPayload,
+): Promise<_HeatmapResult> {
+  const res = await http.post(`/team-sessions/${sessionId}/heatmap`, payload);
+  return res.data;
+}

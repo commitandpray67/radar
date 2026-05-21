@@ -183,3 +183,65 @@ export const TEAM_COLORS = {
 } as const;
 
 export type TeamColor = typeof TEAM_COLORS[keyof typeof TEAM_COLORS];
+
+// ---------------------------------------------------------------------------
+// Team session (multi-demo analysis)
+// ---------------------------------------------------------------------------
+
+export interface TeamSessionDemoInfo {
+  demo_id: string;
+  filename: string;
+  map_name: string;
+  parsed_at: string;
+  file_size: number;
+}
+
+/** Result of POST /api/team-sessions/validate */
+export interface TeamSessionValidation {
+  ok: boolean;
+  error: string | null;
+  map_name: string | null;
+  team_sides: Record<string, 'CT' | 'T'>;     // demo_id -> side
+  core_roster: string[];                       // SteamID64 strings
+  extended_roster: string[];                   // SteamID64 strings
+  roster_names: Record<string, string>;        // SteamID -> display name
+  demos: TeamSessionDemoInfo[];
+}
+
+export interface TeamSessionListItem {
+  id: string;
+  name: string;
+  map_name: string;
+  demo_count: number;
+  created_at: string;
+}
+
+export interface TeamSessionDetail {
+  id: string;
+  name: string;
+  map_name: string;
+  created_at: string;
+  demo_ids: string[];
+  team_sides: Record<string, 'CT' | 'T'>;
+  core_roster: string[];
+  extended_roster: string[];
+  roster_names: Record<string, string>;
+  demos: Array<DemoMeta>;
+  rounds: RoundInfo[];      // RoundInfo.demo_id distinguishes which demo each came from
+}
+
+/** Composite round identity in team mode: (demo_id, round_number). */
+export interface TeamRoundRef {
+  demo_id: string;
+  round_number: number;
+}
+
+export interface TeamSessionHeatmapPayload {
+  rounds: TeamRoundRef[];
+  player_ids: string[];           // SteamID64 strings
+  layer_label?: string;
+  exclude_freeze_time?: boolean;
+  team_filter?: 'team' | 'opponent' | null;
+  sample_every?: number;
+  blur_sigma?: number;
+}

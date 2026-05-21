@@ -222,3 +222,56 @@
   font-style: italic;
   margin: 0;
 }
+
+.matchHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 4px;
+  border-top: 1px solid #1e2d3f;
+  background: #0c121a;
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.matchHeader:first-child {
+  margin-top: 0;
+  border-top: none;
+}
+
+.matchTag {
+  background: #1a3d5c;
+  color: #5b9bd5;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.matchFile {
+  flex: 1;
+  color: #8090a0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.matchSideCT {
+  color: #5b9bd5;
+  font-weight: 700;
+}
+.matchSideT {
+  color: #e07b39;
+  font-weight: 700;
+}

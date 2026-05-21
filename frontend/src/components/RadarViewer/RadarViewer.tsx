@@ -34,7 +34,7 @@ import {
 import {
   getSnapshotAtTick,
   getSortedTicks,
-  nearestTick, nearestTickIndex,
+  nearestTickIndex,
   type TickIndex,
 } from '../../utils/playback';
 import styles from './RadarViewer.module.css';

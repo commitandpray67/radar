@@ -182,3 +182,30 @@
   font-family: 'Inter', sans-serif;
 }
 .retryBtn:hover { background: #2a6abf; }
+
+.tabBar {
+  display: flex;
+  width: 100%;
+  border-bottom: 1px solid #1e2d3f;
+  margin-bottom: 12px;
+}
+
+.tab {
+  flex: 1;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5a6a;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+  letter-spacing: 0.04em;
+}
+.tab:hover { color: #c0cfe0; }
+.tab.activeTab {
+  color: #c0cfe0;
+  border-bottom-color: #2a6abf;
+}

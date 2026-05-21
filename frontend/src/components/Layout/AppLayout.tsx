@@ -38,6 +38,8 @@ const AppLayout: React.FC = () => {
   const positions   = useAppStore((s) => s.positions);
   const activeRound = useAppStore((s) => s.activeRound);
   const reset       = useAppStore((s) => s.reset);
+  const teamSession = useAppStore((s) => s.teamSession);
+  const activeDemoId = useAppStore((s) => s.activeDemoId);
 
   const displayRounds = useMemo(
     () => rounds.filter((r) => !r.is_knife_round),
@@ -81,6 +83,13 @@ const AppLayout: React.FC = () => {
         <div className={styles.topLeft}>
           <span className={styles.appName}>CS2 Radar</span>
           {demo && <span className={styles.mapBadge}>{demo.map_name}</span>}
+          {teamSession && (
+            <span className={styles.mapBadge} title={teamSession.name}>
+              {teamSession.name} · M{
+                (teamSession.demo_ids.indexOf(activeDemoId ?? '') + 1) || '?'
+              }/{teamSession.demo_ids.length}
+            </span>
+          )}
         </div>
         <div className={styles.topCenter}>
           {roundInfo && displayRoundNumber && (

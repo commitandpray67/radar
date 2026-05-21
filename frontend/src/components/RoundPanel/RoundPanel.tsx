@@ -1,10 +1,18 @@
 /**
  * RoundPanel — left sidebar listing all rounds with metadata.
+ *
+ * Two display modes:
+ *   - Single-demo: rounds from the current demo
+ *   - Team session: rounds from ALL demos in the session, grouped by demo.
+ *     Clicking a round from a different demo first swaps the active demo
+ *     (loads its data into the standard store slots) before jumping to it.
+ *
  * Supports single-click (jump to round) and multi-select for heatmap.
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
+import { loadDemoIntoStore } from '../../utils/demoLoading';
 import type { RoundInfo } from '../../types';
 import styles from './RoundPanel.module.css';
 
@@ -53,16 +61,125 @@ function getDisplaySideScore(
   return { ct: ctScore, t: tScore };
 }
 
-const RoundPanel: React.FC = () => {
-  const rounds           = useAppStore((s) => s.rounds);
-  const demo             = useAppStore((s) => s.demo);
-  const activeRound      = useAppStore((s) => s.activeRound);
-  const setActiveRound   = useAppStore((s) => s.setActiveRound);
-  const isHeatmapMode    = useAppStore((s) => s.isHeatmapMode);
-  const heatmapRounds    = useAppStore((s) => s.selectedRoundsForHeatmap);
-  const toggleHeatmapRnd = useAppStore((s) => s.toggleHeatmapRound);
+interface RoundRowProps {
+  round: RoundInfo;
+  displayNum: number;
+  halftimeRoundNumber: number | null;
+  isActive: boolean;
+  isHeatmapSelected: boolean;
+  onClick: (r: RoundInfo) => void;
+}
 
-  const handleClick = useCallback(
+const RoundRow: React.FC<RoundRowProps> = ({
+  round: r, displayNum, halftimeRoundNumber, isActive, isHeatmapSelected, onClick,
+}) => {
+  const score = getDisplaySideScore(r.round_number, halftimeRoundNumber, r.ct_score, r.t_score);
+  return (
+    <button
+      className={[
+        styles.roundRow,
+        isActive ? styles.active : '',
+        isHeatmapSelected ? styles.heatmapSelected : '',
+      ].join(' ')}
+      onClick={() => onClick(r)}
+      title={`Round ${displayNum} — ${winReasonLabel(r.win_reason)}`}
+    >
+      <span className={styles.number}>{displayNum}</span>
+      <span className={[
+        styles.winner,
+        r.winner_team === 'CT' ? styles.winnerCT : '',
+        r.winner_team === 'T' ? styles.winnerT : '',
+      ].join(' ')}>
+        {TEAM_LABEL[r.winner_team]}
+      </span>
+      <span className={styles.midCol}>
+        {(r.ct_equip_value !== undefined || r.t_equip_value !== undefined) ? (
+          <EconomyBars ct={r.ct_equip_value ?? 0} t={r.t_equip_value ?? 0} />
+        ) : null}
+        <span className={styles.score}>{score.ct}:{score.t}</span>
+      </span>
+      <span className={styles.bombIcons}>
+        {r.bomb_planted_tick !== null && <span title="Bomb planted">💣</span>}
+        {r.bomb_defused_tick !== null && <span title="Bomb defused">✅</span>}
+        {r.bomb_exploded_tick !== null && <span title="Bomb exploded">💥</span>}
+      </span>
+    </button>
+  );
+};
+
+// --- Single-demo round list with halftime/OT dividers ---
+function renderSingleDemoRounds(
+  rounds: RoundInfo[],
+  activeRound: number | null,
+  isHeatmapMode: boolean,
+  isSelectedKey: (round: RoundInfo) => boolean,
+  onClick: (r: RoundInfo) => void,
+): React.ReactNode {
+  const displayRounds = rounds.filter((r) => !r.is_knife_round);
+  const halftimeRoundNumber =
+    displayRounds.length >= 12 ? displayRounds[11].round_number : null;
+
+  return displayRounds.map((r, idx) => {
+    const displayNum = idx + 1;
+    const isActive = r.round_number === activeRound && !isHeatmapMode;
+    const isHmSel = isHeatmapMode && isSelectedKey(r);
+
+    const otIdx = idx - 24;
+    const otPeriod = otIdx >= 0 ? Math.floor(otIdx / 6) + 1 : 0;
+    const showHalftime = idx === 12;
+    const showOtStart  = idx >= 24 && otIdx % 6 === 0;
+    const showOtSwap   = idx >= 27 && (otIdx - 3) % 6 === 0;
+
+    return (
+      <React.Fragment key={`${r.demo_id}:${r.round_number}`}>
+        {showHalftime && (
+          <div className={styles.halftimeDivider}>
+            <span className={styles.halftimeLabel}>halftime · sides swap</span>
+          </div>
+        )}
+        {showOtStart && (
+          <div className={styles.overtimeDivider}>
+            <span className={styles.overtimeLabel}>overtime {otPeriod}</span>
+          </div>
+        )}
+        {showOtSwap && (
+          <div className={styles.halftimeDivider}>
+            <span className={styles.halftimeLabel}>
+              ot {Math.floor((otIdx - 3) / 6) + 1} · sides swap
+            </span>
+          </div>
+        )}
+        <RoundRow
+          round={r}
+          displayNum={displayNum}
+          halftimeRoundNumber={halftimeRoundNumber}
+          isActive={isActive}
+          isHeatmapSelected={isHmSel}
+          onClick={onClick}
+        />
+      </React.Fragment>
+    );
+  });
+}
+
+const RoundPanel: React.FC = () => {
+  const rounds              = useAppStore((s) => s.rounds);
+  const demo                = useAppStore((s) => s.demo);
+  const activeRound         = useAppStore((s) => s.activeRound);
+  const setActiveRound      = useAppStore((s) => s.setActiveRound);
+  const isHeatmapMode       = useAppStore((s) => s.isHeatmapMode);
+  const heatmapRounds       = useAppStore((s) => s.selectedRoundsForHeatmap);
+  const toggleHeatmapRnd    = useAppStore((s) => s.toggleHeatmapRound);
+  const teamSession         = useAppStore((s) => s.teamSession);
+  const activeDemoId        = useAppStore((s) => s.activeDemoId);
+  const teamHeatmapKeys     = useAppStore((s) => s.teamHeatmapRoundKeys);
+  const toggleTeamHmKey     = useAppStore((s) => s.toggleTeamHeatmapRoundKey);
+  const maps                = useAppStore((s) => s.maps);
+
+  const [switching, setSwitching] = useState(false);
+
+  // ─── Click handler ──────────────────────────────────────────────────────
+  const handleSingleClick = useCallback(
     (round: RoundInfo) => {
       if (isHeatmapMode) {
         toggleHeatmapRnd(round.round_number);
@@ -73,34 +190,127 @@ const RoundPanel: React.FC = () => {
     [isHeatmapMode, setActiveRound, toggleHeatmapRnd],
   );
 
-  // Exclude knife rounds — must be computed before any early return (hooks rule).
-  const displayRounds = useMemo(
-    () => rounds.filter((r) => !r.is_knife_round),
-    [rounds],
+  const handleTeamClick = useCallback(
+    async (round: RoundInfo) => {
+      const key = `${round.demo_id}:${round.round_number}`;
+      if (isHeatmapMode) {
+        toggleTeamHmKey(key);
+        return;
+      }
+      // Switch active demo if needed, then jump to the round
+      if (round.demo_id !== activeDemoId) {
+        setSwitching(true);
+        try {
+          useAppStore.getState().setActiveDemoId(round.demo_id);
+          await loadDemoIntoStore(round.demo_id, { maps, jumpToFirstRound: false });
+        } finally {
+          setSwitching(false);
+        }
+      }
+      setActiveRound(round.round_number);
+    },
+    [isHeatmapMode, toggleTeamHmKey, activeDemoId, maps, setActiveRound],
   );
 
-  // Halftime separator — use array index so knife-round filtering at the start
-  // of the match doesn't shift the divider to the wrong position.
-  // Standard MR12: first half = display rounds 1-12 (indices 0-11),
-  //                second half starts at display round 13 (index 12).
-  // OT is MR3: each 6-round OT period has a mid-swap at index 24+n*6+3.
-  const halftimeRoundNumber = useMemo(() => {
-    if (displayRounds.length < 12) return null;
-    return displayRounds[11].round_number;  // round_number of the 12th non-knife round
-  }, [displayRounds]);
+  // ─── Team-mode render ───────────────────────────────────────────────────
+  const teamGroups = useMemo(() => {
+    if (!teamSession) return [];
+    const byDemo = new Map<string, RoundInfo[]>();
+    for (const r of teamSession.rounds) {
+      if (r.is_knife_round) continue;
+      if (!byDemo.has(r.demo_id)) byDemo.set(r.demo_id, []);
+      byDemo.get(r.demo_id)!.push(r);
+    }
+    return teamSession.demo_ids.map((demoId, idx) => {
+      const meta = teamSession.demos.find((d) => d.id === demoId);
+      const demoRounds = byDemo.get(demoId) ?? [];
+      const halftimeRn = demoRounds.length >= 12 ? demoRounds[11].round_number : null;
+      return {
+        demoId,
+        matchNum: idx + 1,
+        filename: meta?.filename ?? demoId.slice(0, 8),
+        side: teamSession.team_sides[demoId] ?? 'CT',
+        rounds: demoRounds,
+        halftimeRn,
+      };
+    });
+  }, [teamSession]);
 
-  if (!rounds.length) {
+  // ─── Render ─────────────────────────────────────────────────────────────
+  if (!teamSession && !rounds.length) {
     return (
       <div className={styles.empty}>
         <p>{demo ? 'No rounds found in this demo.' : 'No rounds loaded'}</p>
         {demo && (
-          <p className={styles.emptyHint}>
-            Re-upload the demo to retry parsing.
-          </p>
+          <p className={styles.emptyHint}>Re-upload the demo to retry parsing.</p>
         )}
       </div>
     );
   }
+
+  // Team session mode: render rounds grouped by demo (match)
+  if (teamSession) {
+    const totalRounds = teamGroups.reduce((sum, g) => sum + g.rounds.length, 0);
+    return (
+      <div className={styles.root}>
+        <div className={styles.header}>
+          <span className={styles.headerText}>
+            {isHeatmapMode ? 'Pick rounds (any match)' : teamSession.name}
+          </span>
+          <span className={styles.count}>{totalRounds}</span>
+        </div>
+        <div className={styles.list}>
+          {switching && (
+            <p className={styles.emptyHint} style={{ padding: '8px 14px' }}>
+              Switching demo…
+            </p>
+          )}
+          {teamGroups.map((g) => (
+            <div key={g.demoId}>
+              <div className={styles.matchHeader}>
+                <span className={styles.matchTag}>M{g.matchNum}</span>
+                <span className={styles.matchFile} title={g.filename}>{g.filename}</span>
+                <span className={g.side === 'CT' ? styles.matchSideCT : styles.matchSideT}>
+                  team {g.side}
+                </span>
+              </div>
+              {g.rounds.map((r, idx) => {
+                const displayNum = idx + 1;
+                const isActiveDemo = g.demoId === activeDemoId;
+                const isActive = isActiveDemo && r.round_number === activeRound && !isHeatmapMode;
+                const key = `${r.demo_id}:${r.round_number}`;
+                const isHmSel = isHeatmapMode && teamHeatmapKeys.includes(key);
+
+                const showHalftime = idx === 12;
+
+                return (
+                  <React.Fragment key={key}>
+                    {showHalftime && (
+                      <div className={styles.halftimeDivider}>
+                        <span className={styles.halftimeLabel}>halftime · sides swap</span>
+                      </div>
+                    )}
+                    <RoundRow
+                      round={r}
+                      displayNum={displayNum}
+                      halftimeRoundNumber={g.halftimeRn}
+                      isActive={isActive}
+                      isHeatmapSelected={isHmSel}
+                      onClick={handleTeamClick}
+                    />
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Single-demo mode
+  const displayRoundsCount = rounds.filter((r) => !r.is_knife_round).length;
+  const isHmSelSingle = (r: RoundInfo) => heatmapRounds.includes(r.round_number);
 
   return (
     <div className={styles.root}>
@@ -108,92 +318,12 @@ const RoundPanel: React.FC = () => {
         <span className={styles.headerText}>
           {isHeatmapMode ? 'Select rounds for heatmap' : 'Rounds'}
         </span>
-        <span className={styles.count}>{displayRounds.length}</span>
+        <span className={styles.count}>{displayRoundsCount}</span>
       </div>
       <div className={styles.list}>
-        {displayRounds.map((r, idx) => {
-          const displayNum = idx + 1;
-          const score = getDisplaySideScore(
-            r.round_number,
-            halftimeRoundNumber,
-            r.ct_score,
-            r.t_score,
-          );
-          const isActive = r.round_number === activeRound && !isHeatmapMode;
-          const isHeatmapSelected =
-            isHeatmapMode && heatmapRounds.includes(r.round_number);
-
-          // Compute which divider (if any) precedes this round.
-          // idx 12        → regulation halftime
-          // idx 24,30,36… → overtime period start (every 6, starting at 24)
-          // idx 27,33,39… → overtime period side swap (3 rounds into each OT period)
-          const otIdx = idx - 24;
-          const otPeriod = otIdx >= 0 ? Math.floor(otIdx / 6) + 1 : 0;
-          const showHalftime   = idx === 12;
-          const showOtStart    = idx >= 24 && otIdx % 6 === 0;
-          const showOtSwap     = idx >= 27 && (otIdx - 3) % 6 === 0;
-
-          return (
-            <React.Fragment key={r.round_number}>
-            {showHalftime && (
-              <div className={styles.halftimeDivider}>
-                <span className={styles.halftimeLabel}>halftime · sides swap</span>
-              </div>
-            )}
-            {showOtStart && (
-              <div className={styles.overtimeDivider}>
-                <span className={styles.overtimeLabel}>overtime {otPeriod}</span>
-              </div>
-            )}
-            {showOtSwap && (
-              <div className={styles.halftimeDivider}>
-                <span className={styles.halftimeLabel}>ot {Math.floor((otIdx - 3) / 6) + 1} · sides swap</span>
-              </div>
-            )}
-            <button
-              key={r.round_number}
-              className={[
-                styles.roundRow,
-                isActive ? styles.active : '',
-                isHeatmapSelected ? styles.heatmapSelected : '',
-              ].join(' ')}
-              onClick={() => handleClick(r)}
-              title={`Round ${displayNum} — ${winReasonLabel(r.win_reason)}`}
-            >
-              {/* Round number (re-indexed, knife rounds excluded) */}
-              <span className={styles.number}>{displayNum}</span>
-
-              {/* Winner badge */}
-              <span
-                className={[
-                  styles.winner,
-                  r.winner_team === 'CT' ? styles.winnerCT : '',
-                  r.winner_team === 'T' ? styles.winnerT : '',
-                ].join(' ')}
-              >
-                {TEAM_LABEL[r.winner_team]}
-              </span>
-
-              {/* Economy + score column */}
-              <span className={styles.midCol}>
-                {/* Economy bars */}
-                {(r.ct_equip_value !== undefined || r.t_equip_value !== undefined) ? (
-                  <EconomyBars ct={r.ct_equip_value ?? 0} t={r.t_equip_value ?? 0} />
-                ) : null}
-                {/* Score */}
-                <span className={styles.score}>{score.ct}:{score.t}</span>
-              </span>
-
-              {/* Bomb indicator */}
-              <span className={styles.bombIcons}>
-                {r.bomb_planted_tick !== null && <span title="Bomb planted">💣</span>}
-                {r.bomb_defused_tick !== null && <span title="Bomb defused">✅</span>}
-                {r.bomb_exploded_tick !== null && <span title="Bomb exploded">💥</span>}
-              </span>
-            </button>
-            </React.Fragment>
-          );
-        })}
+        {renderSingleDemoRounds(
+          rounds, activeRound, isHeatmapMode, isHmSelSingle, handleSingleClick,
+        )}
       </div>
     </div>
   );

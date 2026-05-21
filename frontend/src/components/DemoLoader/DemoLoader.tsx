@@ -28,6 +28,8 @@ import {
 } from '../../utils/api';
 import type { ParseJobStatus } from '../../types';
 import DemoLibrary from '../DemoLibrary/DemoLibrary';
+import TeamLoader from './TeamLoader';
+import TeamSessionLibrary from './TeamSessionLibrary';
 import styles from './DemoLoader.module.css';
 
 type LoadPhase =
@@ -39,6 +41,8 @@ type LoadPhase =
   | 'done'
   | 'error';
 
+type LoaderTab = 'single' | 'team';
+
 const DemoLoader: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -47,6 +51,8 @@ const DemoLoader: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
+  const [tab, setTab] = useState<LoaderTab>('single');
+  const [showTeamLibrary, setShowTeamLibrary] = useState(false);
 
   const setDemo              = useAppStore((s) => s.setDemo);
   const setRounds            = useAppStore((s) => s.setRounds);
@@ -231,31 +237,65 @@ const DemoLoader: React.FC = () => {
 
         {phase === 'idle' && (
           <>
-            <div
-              className={styles.dropZone}
-              onClick={() => inputRef.current?.click()}
-            >
-              <span className={styles.dropIcon}>📁</span>
-              <p className={styles.dropText}>
-                Drag &amp; drop a <code>.dem</code> file here
-              </p>
-              <p className={styles.dropHint}>or click to browse</p>
+            <div className={styles.tabBar}>
+              <button
+                className={`${styles.tab} ${tab === 'single' ? styles.activeTab : ''}`}
+                onClick={() => setTab('single')}
+              >
+                Single demo
+              </button>
+              <button
+                className={`${styles.tab} ${tab === 'team' ? styles.activeTab : ''}`}
+                onClick={() => setTab('team')}
+              >
+                Team analysis
+              </button>
             </div>
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".dem"
-              className={styles.hiddenInput}
-              onChange={onFileChange}
-            />
-            <button
-              className={styles.libraryToggle}
-              onClick={() => setShowLibrary((s) => !s)}
-            >
-              {showLibrary ? 'Hide library' : 'Load from library'}
-            </button>
-            {showLibrary && (
-              <DemoLibrary onLoad={loadFromLibrary} />
+
+            {tab === 'single' && (
+              <>
+                <div
+                  className={styles.dropZone}
+                  onClick={() => inputRef.current?.click()}
+                >
+                  <span className={styles.dropIcon}>📁</span>
+                  <p className={styles.dropText}>
+                    Drag &amp; drop a <code>.dem</code> file here
+                  </p>
+                  <p className={styles.dropHint}>or click to browse</p>
+                </div>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept=".dem"
+                  className={styles.hiddenInput}
+                  onChange={onFileChange}
+                />
+                <button
+                  className={styles.libraryToggle}
+                  onClick={() => setShowLibrary((s) => !s)}
+                >
+                  {showLibrary ? 'Hide library' : 'Load from library'}
+                </button>
+                {showLibrary && (
+                  <DemoLibrary onLoad={loadFromLibrary} />
+                )}
+              </>
+            )}
+
+            {tab === 'team' && (
+              <>
+                <TeamLoader onComplete={() => setPhase('done')} />
+                <button
+                  className={styles.libraryToggle}
+                  onClick={() => setShowTeamLibrary((s) => !s)}
+                >
+                  {showTeamLibrary ? 'Hide saved sessions' : 'Load saved session'}
+                </button>
+                {showTeamLibrary && (
+                  <TeamSessionLibrary onLoaded={() => setPhase('done')} />
+                )}
+              </>
             )}
           </>
         )}
