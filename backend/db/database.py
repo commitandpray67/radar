@@ -167,6 +167,20 @@ async def init_db() -> None:
                 extended_roster_json TEXT NOT NULL,       -- list[str]
                 created_at           TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS teams (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS team_demo_refs (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                team_id    TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                demo_id    TEXT NOT NULL REFERENCES demos(id) ON DELETE CASCADE,
+                added_at   TEXT NOT NULL,
+                UNIQUE(team_id, demo_id)
+            );
         """)
         # Migrations: add columns / tables that older DBs may be missing
         for migration in [
@@ -337,6 +351,6 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
         await conn.commit()
     logger.info(
         "Stored demo %s (%d positions, %d events, %d grenades, %d state events)",
-        demo_id, len(pos_rows), len(parsed.events),
+        demo_id, len(parsed.positions), len(parsed.events),
         len(parsed.grenades), len(parsed.player_state_events),
     )

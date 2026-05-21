@@ -442,7 +442,7 @@ async def delete_demo(demo_id: str):
             await conn.execute("BEGIN")
             for table in [
                 "player_positions", "events", "rounds", "players",
-                "grenades", "player_state_events",
+                "grenades", "player_state_events", "team_demo_refs",
             ]:
                 await conn.execute(f"DELETE FROM {table} WHERE demo_id = ?", (demo_id,))
             # demos table uses `id` as primary key, not `demo_id`
@@ -1345,3 +1345,135 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
         "sample_count": result.sample_count,
         "layer_label":  result.layer_label,
     }
+
+
+# ---------------------------------------------------------------------------
+# Team organizer (multi-map team management)
+# ---------------------------------------------------------------------------
+
+class TeamCreatePayload(BaseModel):
+    name: str
+
+
+class TeamAddDemosPayload(BaseModel):
+    demo_ids: list[str]
+
+
+@router.get("/teams")
+async def list_teams_org() -> list[dict]:
+    """List all teams with demo counts."""
+    async with get_connection() as conn:
+        cur = await conn.execute(
+            """SELECT t.id, t.name, t.created_at, COUNT(r.id) AS demo_count
+               FROM teams t
+               LEFT JOIN team_demo_refs r ON r.team_id = t.id
+               GROUP BY t.id
+               ORDER BY t.created_at DESC"""
+        )
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/teams")
+async def create_team_org(payload: TeamCreatePayload) -> dict:
+    """Create a named team container."""
+    if not payload.name.strip():
+        raise HTTPException(422, "Team name cannot be empty")
+    import datetime as _dt
+    team_id = str(uuid.uuid4())
+    created_at = _dt.datetime.utcnow().isoformat() + "Z"
+    async with get_connection() as conn:
+        await conn.execute(
+            "INSERT INTO teams (id, name, created_at) VALUES (?,?,?)",
+            (team_id, payload.name.strip(), created_at),
+        )
+        await conn.commit()
+    return {"id": team_id, "name": payload.name.strip(), "created_at": created_at, "demo_count": 0}
+
+
+@router.get("/teams/{team_id}")
+async def get_team_org(team_id: str) -> dict:
+    """Return team detail with demos grouped by map."""
+    async with get_connection() as conn:
+        cur = await conn.execute("SELECT id, name, created_at FROM teams WHERE id = ?", (team_id,))
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Team not found")
+
+        cur = await conn.execute(
+            """SELECT d.id, d.filename, d.map_name, d.tick_rate, d.total_ticks,
+                      d.parsed_at, d.file_size
+               FROM team_demo_refs r
+               JOIN demos d ON d.id = r.demo_id
+               WHERE r.team_id = ?
+               ORDER BY d.map_name, r.added_at""",
+            (team_id,),
+        )
+        demos = [dict(dr) for dr in await cur.fetchall()]
+
+    maps_dict: dict[str, list] = {}
+    for d in demos:
+        mn = d["map_name"]
+        if mn not in maps_dict:
+            maps_dict[mn] = []
+        maps_dict[mn].append(d)
+
+    return {
+        "id":         row["id"],
+        "name":       row["name"],
+        "created_at": row["created_at"],
+        "maps": [
+            {"map_name": mn, "demos": demo_list}
+            for mn, demo_list in sorted(maps_dict.items())
+        ],
+    }
+
+
+@router.delete("/teams/{team_id}")
+async def delete_team_org(team_id: str):
+    """Delete a team (not the demos themselves)."""
+    async with get_connection() as conn:
+        cur = await conn.execute("DELETE FROM teams WHERE id = ?", (team_id,))
+        await conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Team not found")
+    return {"deleted": team_id}
+
+
+@router.post("/teams/{team_id}/demos")
+async def add_demos_to_team(team_id: str, payload: TeamAddDemosPayload) -> dict:
+    """Add one or more demos to a team."""
+    import datetime as _dt
+    async with get_connection() as conn:
+        cur = await conn.execute("SELECT id FROM teams WHERE id = ?", (team_id,))
+        if not await cur.fetchone():
+            raise HTTPException(404, "Team not found")
+
+        added_at = _dt.datetime.utcnow().isoformat() + "Z"
+        added = 0
+        for demo_id in payload.demo_ids:
+            try:
+                await conn.execute(
+                    "INSERT OR IGNORE INTO team_demo_refs (team_id, demo_id, added_at) "
+                    "VALUES (?,?,?)",
+                    (team_id, demo_id, added_at),
+                )
+                added += conn.total_changes  # rough increment; commit handles atomicity
+            except Exception:
+                pass
+        await conn.commit()
+    return {"added": len(payload.demo_ids)}
+
+
+@router.delete("/teams/{team_id}/demos/{demo_id}")
+async def remove_demo_from_team(team_id: str, demo_id: str):
+    """Remove a demo from a team (the demo stays in the library)."""
+    async with get_connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM team_demo_refs WHERE team_id = ? AND demo_id = ?",
+            (team_id, demo_id),
+        )
+        await conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Demo not in team")
+    return {"removed": demo_id}
