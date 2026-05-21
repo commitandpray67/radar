@@ -9,24 +9,22 @@
 
 import React, { useCallback, useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
+import {
+  toRangeString, getHalftimeRound, toggleEcoRounds, getRoundsForEcoClass,
+  ECO_COLOR, ECO_LABEL, type EcoClass,
+} from '../../utils/roundUtils';
 import styles from './MultiRoundControls.module.css';
 
-// Collapse consecutive round numbers into ranges, e.g. [2,3,4,7] → "2–4, 7"
-function toRangeString(nums: number[]): string {
-  if (nums.length === 0) return '';
-  const s = [...nums].sort((a, b) => a - b);
-  const parts: string[] = [];
-  let lo = s[0], hi = s[0];
-  for (let i = 1; i < s.length; i++) {
-    if (s[i] === hi + 1) { hi = s[i]; }
-    else {
-      parts.push(lo === hi ? `${lo}` : `${lo}–${hi}`);
-      lo = hi = s[i];
-    }
-  }
-  parts.push(lo === hi ? `${lo}` : `${lo}–${hi}`);
-  return parts.join(', ');
-}
+const ECO_TAGS: { side: 'CT' | 'T'; cls: EcoClass; label: string }[] = [
+  { side: 'CT', cls: 'full',  label: 'CT Full'  },
+  { side: 'CT', cls: 'force', label: 'CT Force' },
+  { side: 'CT', cls: 'half',  label: 'CT Half'  },
+  { side: 'CT', cls: 'eco',   label: 'CT Eco'   },
+  { side: 'T',  cls: 'full',  label: 'T Full'   },
+  { side: 'T',  cls: 'force', label: 'T Force'  },
+  { side: 'T',  cls: 'half',  label: 'T Half'   },
+  { side: 'T',  cls: 'eco',   label: 'T Eco'    },
+];
 
 const MultiRoundControls: React.FC = () => {
   const rounds         = useAppStore((s) => s.rounds);
@@ -46,10 +44,8 @@ const MultiRoundControls: React.FC = () => {
     [rounds],
   );
 
-  const halftimeBoundary = useMemo(
-    () => (nonKnifeRounds.length > 12 ? nonKnifeRounds[11].round_number : Infinity),
-    [nonKnifeRounds],
-  );
+  const halftimeRound    = useMemo(() => getHalftimeRound(nonKnifeRounds), [nonKnifeRounds]);
+  const halftimeBoundary = halftimeRound ?? Infinity;
 
   const allRoundNums   = useMemo(() => nonKnifeRounds.map((r) => r.round_number), [nonKnifeRounds]);
   const firstHalfNums  = useMemo(
@@ -163,6 +159,26 @@ const MultiRoundControls: React.FC = () => {
           >
             Clear
           </button>
+        </div>
+
+        <div className={styles.ecoFilterBar}>
+          {ECO_TAGS.map(({ side, cls, label }) => {
+            const matchingNums = getRoundsForEcoClass(nonKnifeRounds, side, cls)
+              .map((r) => r.round_number);
+            if (matchingNums.length === 0) return null;
+            const allOn = matchingNums.every((n) => selRounds.includes(n));
+            return (
+              <button
+                key={`${side}-${cls}`}
+                className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
+                style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
+                onClick={() => setRounds(toggleEcoRounds(nonKnifeRounds, side, cls, selRounds))}
+                title={`${label} — ${ECO_LABEL[cls]}`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Individual round toggles */}

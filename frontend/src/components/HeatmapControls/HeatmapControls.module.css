@@ -324,7 +324,48 @@
   color: #c08080;
 }
 
-/* ── Heatmap legend ─────────────────────────────────────────── */
+/* ── Eco filter bar ─────────────────────────────────────────── */
+.ecoFilterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ecoTag {
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: #141f2d;
+  border: 1px solid #243344;
+  color: #6a7a8a;
+  font-size: 10px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+  position: relative;
+  padding-left: 18px;
+}
+.ecoTag::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--eco-color, #4a5a6a);
+}
+.ecoTag:hover {
+  background: #1e2d3f;
+  border-color: #2a3a52;
+  color: #c0cfe0;
+}
+.ecoTag.ecoTagOn {
+  background: #1a2535;
+  border-color: var(--eco-color, #4a5a6a);
+  color: #c0cfe0;
+}
 .legend {
   display: flex;
   flex-direction: column;

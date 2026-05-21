@@ -25,6 +25,7 @@ const PlaybackControls: React.FC = () => {
   const showBomb      = useAppStore((s) => s.showBomb);
   const showGrenades  = useAppStore((s) => s.showGrenades);
   const showYaw       = useAppStore((s) => s.showYaw);
+  const events        = useAppStore((s) => s.events);
 
   // Multi-round mode
   const isMultiRoundMode       = useAppStore((s) => s.isMultiRoundMode);
@@ -73,6 +74,18 @@ const PlaybackControls: React.FC = () => {
       }),
     );
   }, [isMultiRoundMode, multiRoundRounds, rounds]);
+
+  // ---- Event markers for scrubber ----
+  const MARKER_TYPES = new Set(['player_death', 'bomb_planted', 'bomb_defused', 'bomb_exploded']);
+  const activeRoundEvents = useMemo(() => {
+    if (isMultiRoundMode || activeRound === null || !roundInfo) return [];
+    const span = roundEnd - roundStart;
+    if (span <= 0) return [];
+    return events
+      .filter((e) => e.round_number === activeRound && MARKER_TYPES.has(e.event_type))
+      .map((e) => ({ ...e, pct: ((e.tick - roundStart) / span) * 100 }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, activeRound, roundStart, roundEnd, isMultiRoundMode, roundInfo]);
 
   // ---- Playback tick function ----
   const tick = useCallback(() => {
@@ -240,15 +253,29 @@ const PlaybackControls: React.FC = () => {
       {/* Tick slider */}
       <div className={styles.sliderWrapper}>
         <span className={styles.timeLabel}>{currentTime}</span>
-        <input
-          type="range"
-          className={styles.slider}
-          min={sliderMin}
-          max={sliderMax}
-          value={sliderValue}
-          disabled={disabled}
-          onChange={(e) => handleSliderChange(Number(e.target.value))}
-        />
+        <div className={styles.sliderTrack}>
+          <input
+            type="range"
+            className={styles.slider}
+            min={sliderMin}
+            max={sliderMax}
+            value={sliderValue}
+            disabled={disabled}
+            onChange={(e) => handleSliderChange(Number(e.target.value))}
+          />
+          {activeRoundEvents.map((ev, i) => {
+            const markerClass = (styles as Record<string, string>)[`marker_${ev.event_type}`] ?? '';
+            return (
+              <div
+                key={i}
+                className={`${styles.eventMarker} ${markerClass}`}
+                style={{ left: `${ev.pct}%` }}
+                onClick={() => setCurrentTick(ev.tick)}
+                title={ev.event_type.replace(/_/g, ' ')}
+              />
+            );
+          })}
+        </div>
         <span className={styles.timeLabel}>{endTime}</span>
       </div>
 

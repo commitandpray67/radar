@@ -13,6 +13,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import { loadDemoIntoStore } from '../../utils/demoLoading';
+import { classifyEco, ECO_COLOR, ECO_LABEL } from '../../utils/roundUtils';
 import type { RoundInfo } from '../../types';
 import styles from './RoundPanel.module.css';
 
@@ -67,13 +68,17 @@ interface RoundRowProps {
   halftimeRoundNumber: number | null;
   isActive: boolean;
   isHeatmapSelected: boolean;
+  plantSite?: string;
   onClick: (r: RoundInfo) => void;
 }
 
 const RoundRow: React.FC<RoundRowProps> = ({
-  round: r, displayNum, halftimeRoundNumber, isActive, isHeatmapSelected, onClick,
+  round: r, displayNum, halftimeRoundNumber, isActive, isHeatmapSelected, plantSite, onClick,
 }) => {
   const score = getDisplaySideScore(r.round_number, halftimeRoundNumber, r.ct_score, r.t_score);
+  const ctEco = classifyEco(r.ct_equip_value ?? 0);
+  const tEco  = classifyEco(r.t_equip_value ?? 0);
+  const hasEco = r.ct_equip_value !== undefined || r.t_equip_value !== undefined;
   return (
     <button
       className={[
@@ -93,13 +98,31 @@ const RoundRow: React.FC<RoundRowProps> = ({
         {TEAM_LABEL[r.winner_team]}
       </span>
       <span className={styles.midCol}>
-        {(r.ct_equip_value !== undefined || r.t_equip_value !== undefined) ? (
+        {hasEco && (
           <EconomyBars ct={r.ct_equip_value ?? 0} t={r.t_equip_value ?? 0} />
-        ) : null}
+        )}
         <span className={styles.score}>{score.ct}:{score.t}</span>
       </span>
+      {hasEco && (
+        <span className={styles.ecoDots}>
+          <span
+            className={styles.ecoDot}
+            style={{ background: ECO_COLOR[ctEco] }}
+            title={`CT: ${ECO_LABEL[ctEco]} ($${(r.ct_equip_value ?? 0).toLocaleString()})`}
+          />
+          <span
+            className={styles.ecoDot}
+            style={{ background: ECO_COLOR[tEco] }}
+            title={`T: ${ECO_LABEL[tEco]} ($${(r.t_equip_value ?? 0).toLocaleString()})`}
+          />
+        </span>
+      )}
       <span className={styles.bombIcons}>
-        {r.bomb_planted_tick !== null && <span title="Bomb planted">💣</span>}
+        {r.bomb_planted_tick !== null && (
+          <span title={plantSite ? `Bomb planted (site ${plantSite})` : 'Bomb planted'}>
+            💣{plantSite && <span className={styles.siteBadge}>{plantSite}</span>}
+          </span>
+        )}
         {r.bomb_defused_tick !== null && <span title="Bomb defused">✅</span>}
         {r.bomb_exploded_tick !== null && <span title="Bomb exploded">💥</span>}
       </span>
@@ -114,6 +137,7 @@ function renderSingleDemoRounds(
   isHeatmapMode: boolean,
   isSelectedKey: (round: RoundInfo) => boolean,
   onClick: (r: RoundInfo) => void,
+  plantSiteByRound: Map<number, string>,
 ): React.ReactNode {
   const displayRounds = rounds.filter((r) => !r.is_knife_round);
   const halftimeRoundNumber =
@@ -155,6 +179,7 @@ function renderSingleDemoRounds(
           halftimeRoundNumber={halftimeRoundNumber}
           isActive={isActive}
           isHeatmapSelected={isHmSel}
+          plantSite={plantSiteByRound.get(r.round_number)}
           onClick={onClick}
         />
       </React.Fragment>
@@ -175,8 +200,19 @@ const RoundPanel: React.FC = () => {
   const teamHeatmapKeys     = useAppStore((s) => s.teamHeatmapRoundKeys);
   const toggleTeamHmKey     = useAppStore((s) => s.toggleTeamHeatmapRoundKey);
   const maps                = useAppStore((s) => s.maps);
+  const events              = useAppStore((s) => s.events);
 
   const [switching, setSwitching] = useState(false);
+
+  const plantSiteByRound = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const ev of events) {
+      if (ev.event_type === 'bomb_planted' && ev.weapon) {
+        m.set(ev.round_number, ev.weapon);
+      }
+    }
+    return m;
+  }, [events]);
 
   // ─── Click handler ──────────────────────────────────────────────────────
   const handleSingleClick = useCallback(
@@ -296,6 +332,7 @@ const RoundPanel: React.FC = () => {
                       halftimeRoundNumber={g.halftimeRn}
                       isActive={isActive}
                       isHeatmapSelected={isHmSel}
+                      plantSite={plantSiteByRound.get(r.round_number)}
                       onClick={handleTeamClick}
                     />
                   </React.Fragment>
@@ -322,7 +359,7 @@ const RoundPanel: React.FC = () => {
       </div>
       <div className={styles.list}>
         {renderSingleDemoRounds(
-          rounds, activeRound, isHeatmapMode, isHmSelSingle, handleSingleClick,
+          rounds, activeRound, isHeatmapMode, isHmSelSingle, handleSingleClick, plantSiteByRound,
         )}
       </div>
     </div>

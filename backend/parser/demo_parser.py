@@ -39,7 +39,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # Bump this when round-extraction logic changes so cached demos get re-parsed.
-PARSER_VERSION = 22
+PARSER_VERSION = 23
 
 
 # ---------------------------------------------------------------------------
@@ -804,13 +804,20 @@ def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
     # Bomb events
     for event_name in ("bomb_planted", "bomb_defused", "bomb_exploded"):
         try:
-            df = parser.parse_event(event_name, other=["tick"])
+            extra = ["tick", "site"] if event_name == "bomb_planted" else ["tick"]
+            df = parser.parse_event(event_name, other=extra)
             for row in _rows(df):
                 tick = _to_int(row.get("tick", 0))
+                weapon: str | None = None
+                if event_name == "bomb_planted":
+                    site_raw = row.get("site", row.get("bombsite", None))
+                    if site_raw is not None:
+                        weapon = "A" if int(site_raw) == 0 else "B"
                 events.append(GameEvent(
                     tick=tick,
                     round_number=_rn(tick),
                     event_type=event_name,
+                    weapon=weapon,
                 ))
         except Exception as exc:
             logger.debug("Could not parse %s: %s", event_name, exc)

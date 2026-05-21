@@ -148,10 +148,36 @@
   background: #c06030;
 }
 
+.ecoDots {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ecoDot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 .bombIcons {
   display: flex;
   gap: 2px;
   font-size: 10px;
+  align-items: center;
+}
+
+.siteBadge {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: #e07b39;
+  vertical-align: super;
+  line-height: 1;
+  margin-left: 1px;
 }
 
 .halftimeDivider {
