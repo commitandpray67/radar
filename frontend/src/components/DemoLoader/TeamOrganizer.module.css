@@ -1,0 +1,331 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+}
+
+.createForm {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.nameInput {
+  flex: 1;
+  padding: 7px 10px;
+  background: #131d2c;
+  border: 1px solid #2a3a52;
+  border-radius: 4px;
+  color: #c0cfe0;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  min-width: 0;
+}
+.nameInput:focus {
+  outline: none;
+  border-color: #2a6abf;
+}
+.nameInput::placeholder { color: #4a5a6a; }
+
+.createBtn {
+  padding: 7px 14px;
+  background: #1a3d5c;
+  color: #5b9bd5;
+  border: 1px solid #2a6abf;
+  border-radius: 4px;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+  flex-shrink: 0;
+}
+.createBtn:hover:not(:disabled) {
+  background: #245481;
+  color: #c0cfe0;
+}
+.createBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error {
+  color: #e07b39;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  text-align: center;
+  cursor: pointer;
+}
+
+.empty {
+  color: #4a5a6a;
+  font-size: 11px;
+  font-style: italic;
+  margin: 0;
+  text-align: center;
+  padding: 6px;
+}
+
+.teamList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.teamList::-webkit-scrollbar { width: 4px; }
+.teamList::-webkit-scrollbar-thumb { background: #2a3a52; border-radius: 2px; }
+
+/* ── Team card ── */
+.teamCard {
+  background: #0f1620;
+  border: 1px solid #1e2d3f;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.teamHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+}
+
+.expandBtn {
+  background: none;
+  border: none;
+  color: #5b9bd5;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.expandBtn:disabled { opacity: 0.5; cursor: wait; }
+
+.teamName {
+  flex: 1;
+  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  color: #c0cfe0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.teamCount {
+  font-size: 10px;
+  color: #4a5a6a;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.addBtn {
+  background: none;
+  border: 1px solid #2a3a52;
+  color: #5b9bd5;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 3px;
+  line-height: 1.4;
+  flex-shrink: 0;
+  transition: all 0.1s;
+}
+.addBtn:hover:not(:disabled) {
+  background: #1a3d5c;
+  border-color: #2a6abf;
+}
+.addBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.deleteTeamBtn {
+  background: none;
+  border: none;
+  color: #4a5a6a;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 3px;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+.deleteTeamBtn:hover:not(:disabled) { color: #e07b39; }
+.deleteTeamBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Add-demos panel ── */
+.addPanel {
+  border-top: 1px solid #1e2d3f;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.addHint {
+  font-size: 10px;
+  color: #8090a0;
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.libList {
+  max-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.libRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  color: #c0cfe0;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.libRow:hover { background: #1e2d3f; }
+
+.libName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.libMeta {
+  font-size: 10px;
+  color: #4a5a6a;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.addConfirmBtn {
+  width: 100%;
+  padding: 7px;
+  background: #1a3d5c;
+  color: #5b9bd5;
+  border: 1px solid #2a6abf;
+  border-radius: 4px;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.addConfirmBtn:hover:not(:disabled) {
+  background: #245481;
+  color: #c0cfe0;
+}
+.addConfirmBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Team detail (expanded) ── */
+.teamDetail {
+  border-top: 1px solid #1e2d3f;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mapGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mapHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  background: #131d2c;
+  border-radius: 3px;
+}
+
+.mapName {
+  flex: 1;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #5b9bd5;
+  font-weight: 600;
+}
+
+.mapCount {
+  font-size: 10px;
+  color: #4a5a6a;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.openBtn {
+  padding: 2px 8px;
+  background: #1a3d5c;
+  color: #5b9bd5;
+  border: 1px solid #2a6abf;
+  border-radius: 3px;
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+.openBtn:hover:not(:disabled) {
+  background: #245481;
+  color: #c0cfe0;
+}
+.openBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.demoRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 12px;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+}
+
+.matchNum {
+  font-size: 10px;
+  color: #4a5a6a;
+  font-family: 'JetBrains Mono', monospace;
+  flex-shrink: 0;
+  width: 22px;
+}
+
+.demoName {
+  flex: 1;
+  color: #8090a0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.removeDemoBtn {
+  background: none;
+  border: none;
+  color: #3a4a5a;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 3px;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+.removeDemoBtn:hover:not(:disabled) { color: #e07b39; }
+.removeDemoBtn:disabled { opacity: 0.4; cursor: not-allowed; }

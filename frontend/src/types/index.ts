@@ -245,3 +245,26 @@ export interface TeamSessionHeatmapPayload {
   sample_every?: number;
   blur_sigma?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Team organizer (multi-map team management)
+// ---------------------------------------------------------------------------
+
+export interface TeamInfo {
+  id: string;
+  name: string;
+  created_at: string;
+  demo_count: number;
+}
+
+export interface TeamMapGroup {
+  map_name: string;
+  demos: DemoMeta[];
+}
+
+export interface TeamDetail {
+  id: string;
+  name: string;
+  created_at: string;
+  maps: TeamMapGroup[];
+}

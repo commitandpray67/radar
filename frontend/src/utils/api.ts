@@ -276,6 +276,8 @@ import type {
   TeamSessionDetail,
   TeamSessionHeatmapPayload,
   HeatmapResult as _HeatmapResult,
+  TeamInfo,
+  TeamDetail,
 } from '../types';
 
 export async function validateTeamSession(
@@ -313,4 +315,35 @@ export async function generateTeamHeatmap(
 ): Promise<_HeatmapResult> {
   const res = await http.post(`/team-sessions/${sessionId}/heatmap`, payload);
   return res.data;
+}
+
+// ---------------------------------------------------------------------------
+// Team organizer (multi-map team management)
+// ---------------------------------------------------------------------------
+
+export async function listTeams(): Promise<TeamInfo[]> {
+  const res = await http.get('/teams');
+  return res.data;
+}
+
+export async function createTeam(name: string): Promise<TeamInfo> {
+  const res = await http.post('/teams', { name });
+  return res.data;
+}
+
+export async function getTeam(teamId: string): Promise<TeamDetail> {
+  const res = await http.get(`/teams/${teamId}`);
+  return res.data;
+}
+
+export async function deleteTeam(teamId: string): Promise<void> {
+  await http.delete(`/teams/${teamId}`);
+}
+
+export async function addDemosToTeam(teamId: string, demoIds: string[]): Promise<void> {
+  await http.post(`/teams/${teamId}/demos`, { demo_ids: demoIds });
+}
+
+export async function removeDemoFromTeam(teamId: string, demoId: string): Promise<void> {
+  await http.delete(`/teams/${teamId}/demos/${demoId}`);
 }

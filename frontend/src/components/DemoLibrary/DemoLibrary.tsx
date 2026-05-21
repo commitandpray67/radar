@@ -1,6 +1,6 @@
 /**
  * DemoLibrary — lists previously parsed demos stored in the backend cache.
- * Allows loading a demo directly from the library or deleting it.
+ * Supports loading, single delete, and bulk delete via checkboxes.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -22,7 +22,8 @@ interface Props {
 const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
   const [demos, setDemos]       = useState<DemoMeta[]>([]);
   const [loading, setLoading]   = useState(true);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     listDemos()
@@ -31,15 +32,45 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
       .finally(() => setLoading(false));
   }, []);
 
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected = demos.length > 0 && selected.size === demos.length;
+
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(demos.map((d) => d.id)));
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (!window.confirm(`Delete ${selected.size} demo(s) from the cache?`)) return;
+    setDeleting(true);
+    try {
+      await Promise.all(Array.from(selected).map((id) => deleteDemo(id)));
+      const removed = selected;
+      setDemos((prev) => prev.filter((d) => !removed.has(d.id)));
+      setSelected(new Set());
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm('Delete this demo from the cache?')) return;
-    setDeleting(id);
+    setDeleting(true);
     try {
       await deleteDemo(id);
       setDemos((prev) => prev.filter((d) => d.id !== id));
+      setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
     } finally {
-      setDeleting(null);
+      setDeleting(false);
     }
   };
 
@@ -48,13 +79,39 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
 
   return (
     <div className={styles.root}>
+      <div className={styles.bulkBar}>
+        <label className={styles.selectAllLabel}>
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={toggleAll}
+          />
+          All
+        </label>
+        {selected.size > 0 && (
+          <button
+            className={styles.bulkDeleteBtn}
+            onClick={handleBulkDelete}
+            disabled={deleting}
+          >
+            {deleting ? '…' : `Delete (${selected.size})`}
+          </button>
+        )}
+      </div>
       {demos.map((d) => (
         <div
           key={d.id}
-          className={styles.row}
+          className={`${styles.row} ${selected.has(d.id) ? styles.rowSelected : ''}`}
           onClick={() => onLoad(d.id)}
           title={`Click to load ${d.filename}`}
         >
+          <input
+            type="checkbox"
+            className={styles.rowCheck}
+            checked={selected.has(d.id)}
+            onChange={() => {}}
+            onClick={(e) => toggleSelect(d.id, e)}
+          />
           <div className={styles.info}>
             <span className={styles.name}>{d.filename}</span>
             <span className={styles.meta}>
@@ -64,10 +121,10 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
           <button
             className={styles.deleteBtn}
             onClick={(e) => handleDelete(d.id, e)}
-            disabled={deleting === d.id}
+            disabled={deleting}
             title="Delete from cache"
           >
-            {deleting === d.id ? '…' : '✕'}
+            {deleting ? '…' : '✕'}
           </button>
         </div>
       ))}

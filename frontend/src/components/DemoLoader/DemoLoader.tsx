@@ -30,6 +30,7 @@ import type { ParseJobStatus } from '../../types';
 import DemoLibrary from '../DemoLibrary/DemoLibrary';
 import TeamLoader from './TeamLoader';
 import TeamSessionLibrary from './TeamSessionLibrary';
+import TeamOrganizer from './TeamOrganizer';
 import styles from './DemoLoader.module.css';
 
 type LoadPhase =
@@ -41,7 +42,7 @@ type LoadPhase =
   | 'done'
   | 'error';
 
-type LoaderTab = 'single' | 'team';
+type LoaderTab = 'single' | 'team' | 'teams';
 
 const DemoLoader: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -250,6 +251,12 @@ const DemoLoader: React.FC = () => {
               >
                 Team analysis
               </button>
+              <button
+                className={`${styles.tab} ${tab === 'teams' ? styles.activeTab : ''}`}
+                onClick={() => setTab('teams')}
+              >
+                Teams
+              </button>
             </div>
 
             {tab === 'single' && (
@@ -296,6 +303,10 @@ const DemoLoader: React.FC = () => {
                   <TeamSessionLibrary onLoaded={() => setPhase('done')} />
                 )}
               </>
+            )}
+
+            {tab === 'teams' && (
+              <TeamOrganizer onSessionLoaded={() => setPhase('done')} />
             )}
           </>
         )}

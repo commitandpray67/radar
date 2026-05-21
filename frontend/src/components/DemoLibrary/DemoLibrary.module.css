@@ -80,3 +80,57 @@
   padding: 8px 0;
   margin: 0;
 }
+
+.bulkBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 6px;
+  border-bottom: 1px solid #1e2d3f;
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+
+.selectAllLabel {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #8090a0;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  user-select: none;
+}
+
+.bulkDeleteBtn {
+  margin-left: auto;
+  background: #2d1010;
+  border: 1px solid #6a2020;
+  color: #c06060;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: all 0.12s;
+}
+.bulkDeleteBtn:hover:not(:disabled) {
+  background: #3d1010;
+  border-color: #8a3030;
+  color: #e08080;
+}
+.bulkDeleteBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rowCheck {
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #2a6abf;
+}
+
+.rowSelected {
+  background: #1a2030 !important;
+  border-color: #2a4a7a !important;
+}
