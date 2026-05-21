@@ -156,6 +156,17 @@ async def init_db() -> None:
                 ON grenades(demo_id, round_number);
             CREATE INDEX IF NOT EXISTS idx_pstate_demo
                 ON player_state_events(demo_id, round_number);
+
+            CREATE TABLE IF NOT EXISTS team_sessions (
+                id                   TEXT PRIMARY KEY,    -- uuid
+                name                 TEXT NOT NULL,
+                map_name             TEXT NOT NULL,
+                demo_ids_json        TEXT NOT NULL,       -- list[str]
+                team_sides_json      TEXT NOT NULL,       -- {demo_id: "CT"|"T"}
+                core_roster_json     TEXT NOT NULL,       -- list[str] (steamid64 as str)
+                extended_roster_json TEXT NOT NULL,       -- list[str]
+                created_at           TEXT NOT NULL
+            );
         """)
         # Migrations: add columns / tables that older DBs may be missing
         for migration in [

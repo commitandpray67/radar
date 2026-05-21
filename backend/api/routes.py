@@ -896,3 +896,452 @@ async def get_voice_audio(demo_id: str, round_number: int, filename: str):
         media_type="audio/ogg",
         headers={"Cache-Control": "public, max-age=3600"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Team sessions (multi-demo analysis)
+# ---------------------------------------------------------------------------
+
+from analytics.team_detection import DemoRoster, detect_team
+
+
+class TeamSessionValidatePayload(BaseModel):
+    demo_ids: list[str]
+
+
+class TeamSessionCreatePayload(BaseModel):
+    name: str
+    demo_ids: list[str]
+
+
+class TeamSessionHeatmapPayload(BaseModel):
+    # Cross-demo rounds as (demo_id, round_number) tuples
+    rounds: list[dict]  # [{"demo_id": str, "round_number": int}]
+    # Filter to specific players (SteamID64 strings to preserve precision)
+    player_ids: list[str] = []
+    layer_label: Optional[str] = None
+    exclude_freeze_time: bool = True
+    # team_filter: "team" = the detected roster's side per demo, "opponent" =
+    # the other side, None = both sides
+    team_filter: Optional[str] = None
+    sample_every: int = 1
+    blur_sigma: float = 3.0
+
+
+async def _gather_rosters(demo_ids: list[str]) -> list[DemoRoster]:
+    """Build DemoRoster objects for the given demo_ids by querying the DB."""
+    rosters: list[DemoRoster] = []
+    if not demo_ids:
+        return rosters
+
+    async with get_connection() as conn:
+        # Fetch map_name for each demo in one query
+        ph = ",".join("?" * len(demo_ids))
+        cur = await conn.execute(
+            f"SELECT id, map_name FROM demos WHERE id IN ({ph})",
+            demo_ids,
+        )
+        demo_map = {row["id"]: row["map_name"] for row in await cur.fetchall()}
+
+        cur = await conn.execute(
+            f"SELECT demo_id, player_id, initial_team FROM players "
+            f"WHERE demo_id IN ({ph})",
+            demo_ids,
+        )
+        rows = await cur.fetchall()
+
+    # Organise per-demo
+    sides: dict[str, dict[str, set[int]]] = {
+        d: {"CT": set(), "T": set()} for d in demo_ids
+    }
+    for r in rows:
+        side = r["initial_team"]
+        if side in ("CT", "T"):
+            sides[r["demo_id"]][side].add(int(r["player_id"]))
+
+    for d in demo_ids:
+        if d not in demo_map:
+            continue  # demo not found — caller will detect
+        rosters.append(DemoRoster(
+            demo_id=d,
+            map_name=demo_map[d],
+            ct=sides[d]["CT"],
+            t=sides[d]["T"],
+        ))
+    return rosters
+
+
+async def _enrich_validation(detection, demo_ids: list[str]) -> dict:
+    """Attach per-demo file info + roster names to a detection result."""
+    out: dict = {
+        "ok": detection.ok,
+        "error": detection.error,
+        "map_name": detection.map_name,
+        "team_sides": detection.team_sides,
+        # SteamID64s are JS-precision-unsafe, send as strings
+        "core_roster": [str(sid) for sid in detection.core_roster],
+        "extended_roster": [str(sid) for sid in detection.extended_roster],
+        "demos": [],
+        "roster_names": {},
+    }
+
+    if not demo_ids:
+        return out
+
+    async with get_connection() as conn:
+        ph = ",".join("?" * len(demo_ids))
+        cur = await conn.execute(
+            f"SELECT id, filename, map_name, parsed_at, file_size FROM demos "
+            f"WHERE id IN ({ph})",
+            demo_ids,
+        )
+        for row in await cur.fetchall():
+            out["demos"].append({
+                "demo_id":   row["id"],
+                "filename":  row["filename"],
+                "map_name":  row["map_name"],
+                "parsed_at": row["parsed_at"],
+                "file_size": row["file_size"],
+            })
+
+        # Build name lookup for any roster steamid (use first occurrence)
+        all_sids = detection.core_roster + [
+            sid for sid in detection.extended_roster
+            if sid not in detection.core_roster
+        ]
+        if all_sids:
+            sid_ph = ",".join("?" * len(all_sids))
+            cur = await conn.execute(
+                f"SELECT player_id, name FROM players WHERE player_id IN ({sid_ph}) "
+                f"GROUP BY player_id",
+                all_sids,
+            )
+            for row in await cur.fetchall():
+                out["roster_names"][str(row["player_id"])] = row["name"]
+
+    return out
+
+
+@router.post("/team-sessions/validate")
+async def validate_team_session(payload: TeamSessionValidatePayload) -> dict:
+    """
+    Check whether a set of demos forms a valid team session.
+
+    Returns the detected team roster, the side each demo was played on, and
+    per-demo metadata.  Does NOT persist anything.
+    """
+    if len(payload.demo_ids) < 2:
+        raise HTTPException(422, "Need at least 2 demos to form a team session")
+    if len(payload.demo_ids) > 20:
+        raise HTTPException(422, "Maximum 20 demos per team session")
+
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    demo_ids: list[str] = []
+    for d in payload.demo_ids:
+        if d in seen:
+            continue
+        seen.add(d)
+        demo_ids.append(d)
+
+    rosters = await _gather_rosters(demo_ids)
+    if len(rosters) != len(demo_ids):
+        found = {r.demo_id for r in rosters}
+        missing = [d for d in demo_ids if d not in found]
+        raise HTTPException(
+            404, f"Demo(s) not found: {', '.join(missing[:3])}"
+        )
+
+    detection = detect_team(rosters)
+    return await _enrich_validation(detection, demo_ids)
+
+
+@router.post("/team-sessions")
+async def create_team_session(payload: TeamSessionCreatePayload) -> dict:
+    """Validate the demo set, persist it as a team session, and return its id."""
+    if not payload.name.strip():
+        raise HTTPException(422, "Session name must not be empty")
+    if len(payload.demo_ids) < 2:
+        raise HTTPException(422, "Need at least 2 demos to form a team session")
+
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    demo_ids: list[str] = []
+    for d in payload.demo_ids:
+        if d in seen:
+            continue
+        seen.add(d)
+        demo_ids.append(d)
+
+    rosters = await _gather_rosters(demo_ids)
+    if len(rosters) != len(demo_ids):
+        raise HTTPException(404, "One or more demos no longer exist")
+
+    detection = detect_team(rosters)
+    if not detection.ok:
+        raise HTTPException(422, detection.error or "Team detection failed")
+
+    session_id = uuid.uuid4().hex
+    import datetime as _dt
+    created_at = _dt.datetime.utcnow().isoformat() + "Z"
+
+    async with get_connection() as conn:
+        await conn.execute(
+            """INSERT INTO team_sessions
+               (id, name, map_name, demo_ids_json, team_sides_json,
+                core_roster_json, extended_roster_json, created_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                session_id,
+                payload.name.strip(),
+                detection.map_name,
+                json.dumps(demo_ids),
+                json.dumps(detection.team_sides),
+                json.dumps([str(s) for s in detection.core_roster]),
+                json.dumps([str(s) for s in detection.extended_roster]),
+                created_at,
+            ),
+        )
+        await conn.commit()
+
+    return {"id": session_id, "name": payload.name.strip(), "created_at": created_at}
+
+
+@router.get("/team-sessions")
+async def list_team_sessions() -> list[dict]:
+    """List all team sessions (lightweight summary)."""
+    async with get_connection() as conn:
+        cur = await conn.execute(
+            "SELECT id, name, map_name, demo_ids_json, created_at "
+            "FROM team_sessions ORDER BY created_at DESC"
+        )
+        rows = await cur.fetchall()
+
+    out: list[dict] = []
+    for r in rows:
+        demo_ids = json.loads(r["demo_ids_json"])
+        out.append({
+            "id":         r["id"],
+            "name":       r["name"],
+            "map_name":   r["map_name"],
+            "demo_count": len(demo_ids),
+            "created_at": r["created_at"],
+        })
+    return out
+
+
+@router.get("/team-sessions/{session_id}")
+async def get_team_session(session_id: str) -> dict:
+    """Return full session details: demos, rounds, roster, sides."""
+    async with get_connection() as conn:
+        cur = await conn.execute(
+            "SELECT * FROM team_sessions WHERE id = ?", (session_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Team session not found")
+
+        demo_ids        = json.loads(row["demo_ids_json"])
+        team_sides      = json.loads(row["team_sides_json"])
+        core_roster     = json.loads(row["core_roster_json"])
+        extended_roster = json.loads(row["extended_roster_json"])
+
+        # Fetch demos
+        if not demo_ids:
+            return {"id": session_id, "rounds": [], "demos": []}
+
+        ph = ",".join("?" * len(demo_ids))
+        cur = await conn.execute(
+            f"SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at, file_size "
+            f"FROM demos WHERE id IN ({ph})",
+            demo_ids,
+        )
+        demos = [dict(r) for r in await cur.fetchall()]
+
+        # Fetch all rounds across all demos
+        cur = await conn.execute(
+            f"SELECT * FROM rounds WHERE demo_id IN ({ph}) "
+            f"ORDER BY demo_id, round_number",
+            demo_ids,
+        )
+        rounds_rows = [dict(r) for r in await cur.fetchall()]
+
+        # Roster name lookup
+        all_sids = list({int(s) for s in core_roster + extended_roster})
+        roster_names: dict[str, str] = {}
+        if all_sids:
+            sid_ph = ",".join("?" * len(all_sids))
+            cur = await conn.execute(
+                f"SELECT player_id, name FROM players WHERE player_id IN ({sid_ph}) "
+                f"GROUP BY player_id",
+                all_sids,
+            )
+            for r in await cur.fetchall():
+                roster_names[str(r["player_id"])] = r["name"]
+
+    # Preserve demo order from the session, and number them M1, M2, …
+    demo_order = {d: i for i, d in enumerate(demo_ids)}
+    demos.sort(key=lambda d: demo_order.get(d["id"], 9999))
+    rounds_rows.sort(key=lambda r: (demo_order.get(r["demo_id"], 9999), r["round_number"]))
+
+    return {
+        "id":              row["id"],
+        "name":            row["name"],
+        "map_name":        row["map_name"],
+        "created_at":      row["created_at"],
+        "demo_ids":        demo_ids,
+        "team_sides":      team_sides,
+        "core_roster":     core_roster,
+        "extended_roster": extended_roster,
+        "roster_names":    roster_names,
+        "demos":           demos,
+        "rounds":          rounds_rows,
+    }
+
+
+@router.delete("/team-sessions/{session_id}")
+async def delete_team_session(session_id: str):
+    async with get_connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM team_sessions WHERE id = ?", (session_id,)
+        )
+        await conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Team session not found")
+    return {"deleted": session_id}
+
+
+@router.post("/team-sessions/{session_id}/heatmap")
+async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPayload):
+    """
+    Generate a heatmap aggregating positions across multiple demos.
+
+    rounds: list of {demo_id, round_number} tuples scoping the data.
+    team_filter:
+      - "team":     restrict to the detected team's side per demo
+      - "opponent": restrict to the other side per demo
+      - None:       no team filtering
+    """
+    if not payload.rounds:
+        raise HTTPException(422, "rounds must not be empty")
+    if len(payload.rounds) > 200:
+        raise HTTPException(422, "rounds must contain at most 200 entries")
+    if len(payload.player_ids) > 20:
+        raise HTTPException(422, "player_ids must contain at most 20 entries")
+
+    # Load session
+    async with get_connection() as conn:
+        cur = await conn.execute(
+            "SELECT map_name, team_sides_json FROM team_sessions WHERE id = ?",
+            (session_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Team session not found")
+
+    map_name: str = row["map_name"]
+    team_sides: dict[str, str] = json.loads(row["team_sides_json"])
+
+    try:
+        calibration = get_calibration_or_raise(map_name)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+    # Group requested rounds by demo for query batching
+    by_demo: dict[str, list[int]] = {}
+    for entry in payload.rounds:
+        d = entry.get("demo_id")
+        rn = entry.get("round_number")
+        if not isinstance(d, str) or not isinstance(rn, int):
+            raise HTTPException(422, "Each round entry needs {demo_id: str, round_number: int}")
+        if d not in team_sides:
+            raise HTTPException(422, f"Demo {d} is not part of this session")
+        by_demo.setdefault(d, []).append(rn)
+
+    # Map team_filter → expected team_num per demo. CS2 conventions:
+    #   CT = 3, T = 2.  team_sides tells us which side the team played per demo.
+    side_to_num = {"CT": 3, "T": 2}
+    per_demo_team_filter: dict[str, Optional[int]] = {}
+    if payload.team_filter in ("team", "opponent"):
+        for d in by_demo:
+            team_side = team_sides[d]
+            opp_side  = "T" if team_side == "CT" else "CT"
+            chosen_side = team_side if payload.team_filter == "team" else opp_side
+            per_demo_team_filter[d] = side_to_num[chosen_side]
+    else:
+        per_demo_team_filter = {d: None for d in by_demo}
+
+    # Validate player_ids as SteamID64 strings
+    steam_ids: list[int] = []
+    for sid_str in payload.player_ids:
+        try:
+            steam_ids.append(int(sid_str))
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"Invalid player_id: {sid_str!r}")
+
+    # Fetch positions per demo and stack into one numpy array
+    all_rows: list = []
+    async with get_connection() as conn:
+        for demo_id, rounds in by_demo.items():
+            round_ph = ",".join("?" * len(rounds))
+            conds = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
+            qp: list = [demo_id, *rounds]
+
+            tn = per_demo_team_filter.get(demo_id)
+            if tn is not None:
+                conds.append("pp.team_num = ?")
+                qp.append(tn)
+
+            if steam_ids:
+                sid_ph = ",".join("?" * len(steam_ids))
+                conds.append(f"pp.player_id IN ({sid_ph})")
+                qp.extend(steam_ids)
+
+            if payload.exclude_freeze_time:
+                query = (
+                    "SELECT pp.tick, pp.round_number, pp.player_id, pp.x, pp.y, pp.z, pp.team_num "
+                    "FROM player_positions pp "
+                    "JOIN rounds r ON r.demo_id = pp.demo_id "
+                    "             AND r.round_number = pp.round_number "
+                    f"WHERE {' AND '.join(conds)} AND pp.tick >= r.freeze_end_tick"
+                )
+            else:
+                query = (
+                    "SELECT pp.tick, pp.round_number, pp.player_id, pp.x, pp.y, pp.z, pp.team_num "
+                    f"FROM player_positions pp WHERE {' AND '.join(conds)}"
+                )
+
+            cur = await conn.execute(query, qp)
+            for r in await cur.fetchall():
+                all_rows.append(
+                    (r["tick"], r["round_number"], r["player_id"],
+                     r["x"], r["y"], r["z"], r["team_num"])
+                )
+
+    if not all_rows:
+        raise HTTPException(404, "No position data found for the given filters")
+
+    positions_np = np.array(all_rows, dtype=np.float64)
+
+    request = HeatmapRequest(
+        player_ids=[],     # SQL pre-filtered above; the request object's player
+                           # filter applies via float64 which is unsafe for SteamIDs
+        round_numbers=[],  # SQL pre-filtered above; round_numbers no longer scopes
+                           # a single demo since data is cross-demo
+        map_name=map_name,
+        layer_label=payload.layer_label,
+        exclude_freeze_time=payload.exclude_freeze_time,
+        # team_filter handled per-demo above; do not re-apply here
+        team_filter=None,
+        sample_every=payload.sample_every,
+        blur_sigma=payload.blur_sigma,
+    )
+
+    result = compute_heatmap(positions_np, request, calibration)
+    png_b64 = heatmap_to_base64_png(result)
+
+    return {
+        "image":        f"data:image/png;base64,{png_b64}",
+        "sample_count": result.sample_count,
+        "layer_label":  result.layer_label,
+    }
