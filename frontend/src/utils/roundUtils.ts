@@ -152,15 +152,19 @@ export function toggleTeamEcoRounds(
   return [...new Set([...current, ...matching])];
 }
 
-/** Filter players to the team roster (core + extended). player_id is SteamID64. */
+/** Filter players to the team roster (core + extended).
+ *
+ * player_id is SteamID64, which exceeds JS's safe-integer range (2^53), so the
+ * number parsed from JSON loses precision. core_roster is sent as strings to
+ * preserve the exact value. We convert both to Number here so they round the
+ * same way and compare consistently. */
 export function filterPlayersToRoster(
   players: PlayerInfo[],
   teamSession: TeamSessionDetail | null,
 ): PlayerInfo[] {
   if (!teamSession) return players;
-  const roster = new Set<string>([
-    ...teamSession.core_roster,
-    ...teamSession.extended_roster,
-  ]);
-  return players.filter((p) => roster.has(String(p.player_id)));
+  const roster = new Set<number>(
+    [...teamSession.core_roster, ...teamSession.extended_roster].map((s) => Number(s)),
+  );
+  return players.filter((p) => roster.has(p.player_id));
 }
