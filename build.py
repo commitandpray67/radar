@@ -64,11 +64,27 @@ def run(cmd: list, cwd: Path = ROOT, timeout: int = 600) -> None:
 # Build steps
 # ---------------------------------------------------------------------------
 
+def _npm_install(cwd: Path) -> None:
+    """Install npm deps, preferring `npm ci` only on a clean tree.
+
+    `npm ci` wipes node_modules before reinstalling, which fails with EPERM on
+    Windows when files are locked by OneDrive sync, antivirus, or a still-
+    running Vite/Electron process. When node_modules already exists, fall back
+    to `npm install` (in-place update) — slightly less strict than `ci` but
+    works in those environments.
+    """
+    lockfile     = cwd / "package-lock.json"
+    node_modules = cwd / "node_modules"
+    if node_modules.exists():
+        run([npm, "install", "--no-audit", "--no-fund"], cwd=cwd)
+    else:
+        run([npm, "ci" if lockfile.exists() else "install"], cwd=cwd)
+
+
 def build_frontend() -> None:
     print("\n═══  1/3  Frontend (Vite)  ═══")
 
-    lockfile = FRONTEND / "package-lock.json"
-    run([npm, "ci" if lockfile.exists() else "install"], cwd=FRONTEND)
+    _npm_install(FRONTEND)
     run([npm, "run", "build"], cwd=FRONTEND)
 
     index = FRONTEND / "dist" / "index.html"
@@ -180,8 +196,7 @@ def build_electron() -> None:
     # Clean old release artefacts so stale installers don't confuse the user.
     shutil.rmtree(ELECTRON / "release", ignore_errors=True)
 
-    lockfile = ELECTRON / "package-lock.json"
-    run([npm, "ci" if lockfile.exists() else "install"], cwd=ELECTRON)
+    _npm_install(ELECTRON)
     run([npm, "run", "build"], cwd=ELECTRON, timeout=300)
 
     release_dir = ELECTRON / "release"
