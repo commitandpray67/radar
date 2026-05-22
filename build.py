@@ -64,7 +64,9 @@ def build_backend() -> None:
 
 def build_electron() -> None:
     print("\n=== 3/3  Electron (electron-builder) ===")
-    run([npm, "ci"], cwd=ELECTRON)
+    # npm ci requires a lock file; fall back to npm install on first run
+    lockfile = ELECTRON / "package-lock.json"
+    run([npm, "ci" if lockfile.exists() else "install"], cwd=ELECTRON)
     run([npm, "run", "build"], cwd=ELECTRON)
     release = ELECTRON / "release"
     print(f"    → {release}")
