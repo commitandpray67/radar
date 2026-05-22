@@ -1318,6 +1318,13 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
                      r["x"], r["y"], r["z"], r["team_num"])
                 )
 
+    logger.info(
+        "team_session_heatmap: session=%s demos=%d rounds=%d players=%d → sql_rows=%d",
+        session_id, len(by_demo),
+        sum(len(rs) for rs in by_demo.values()),
+        len(steam_ids), len(all_rows),
+    )
+
     if not all_rows:
         raise HTTPException(404, "No position data found for the given filters")
 
