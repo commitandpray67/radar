@@ -28,14 +28,32 @@ from maps.calibration import MapCalibration
 
 
 def _gaussian_blur(arr: np.ndarray, sigma: float) -> np.ndarray:
-    """Separable Gaussian blur in pure numpy — replaces scipy.ndimage.gaussian_filter."""
+    """Separable Gaussian blur in pure numpy.
+
+    Uses reflect-boundary padding before 'valid' convolution to avoid the
+    halo / darkening artefacts that zero-padding ('same' mode) produces at
+    map edges — particularly visible near Mirage A-site or the edge of any
+    small map.
+    """
     radius = max(1, int(sigma * 3 + 0.5))
     x = np.arange(-radius, radius + 1, dtype=np.float64)
     kernel = np.exp(-0.5 * (x / sigma) ** 2)
     kernel /= kernel.sum()
-    out = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=1, arr=arr)
-    out = np.apply_along_axis(lambda c: np.convolve(c, kernel, mode="same"), axis=0, arr=out)
-    return out
+
+    H, W = arr.shape
+    padded = np.pad(arr, radius, mode="reflect")  # (H+2r, W+2r)
+
+    # Pass 1 — convolve each row; 'valid' removes the horizontal padding.
+    tmp = np.empty((H + 2 * radius, W), dtype=np.float64)
+    for i in range(H + 2 * radius):
+        tmp[i] = np.convolve(padded[i], kernel, mode="valid")
+
+    # Pass 2 — convolve each column; 'valid' removes the vertical padding.
+    result = np.empty((H, W), dtype=np.float64)
+    for j in range(W):
+        result[:, j] = np.convolve(tmp[:, j], kernel, mode="valid")
+
+    return result
 
 
 def _make_inferno_lut() -> np.ndarray:
@@ -210,8 +228,8 @@ def compute_heatmap(
     # preserving the relative ordering of hot spots.
     density_grid = np.sqrt(density_grid)
 
-    max_val = density_grid.max()
-    if max_val > 0:
+    max_val = float(density_grid.max())
+    if max_val > 0 and np.isfinite(max_val):
         density_grid = density_grid / max_val
 
     return HeatmapResult(
@@ -225,7 +243,6 @@ def compute_heatmap(
 
 def heatmap_to_rgba(
     result: HeatmapResult,
-    colormap: str = "inferno",
     alpha_scale: float = 0.88,
     image_size: int = RADAR_IMAGE_SIZE,
 ) -> np.ndarray:
@@ -234,9 +251,9 @@ def heatmap_to_rgba(
 
     Returns shape (image_size, image_size, 4) uint8 array suitable for
     encoding to PNG or passing to the frontend as raw bytes.
+    Uses the inferno colormap (dark→red→orange→yellow) via a precomputed LUT.
 
-    colormap: "inferno" (dark→red→orange→yellow) gives warm, intuitive heat.
-    alpha_scale: maximum alpha for the hottest cell (0-1).
+    alpha_scale: maximum opacity for the hottest cell (0–1).
     """
     from PIL import Image as PILImage
 

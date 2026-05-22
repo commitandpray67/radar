@@ -21,12 +21,22 @@ import asyncio
 import json
 import logging
 import math
+import os
 import uuid
 from pathlib import Path
 from typing import Optional, AsyncIterator
 
-# Persistent job→demo mapping so we can recover after a server restart.
-_JOB_MAP_FILE = Path("/tmp/cs2radar_job_map.json")
+# ---------------------------------------------------------------------------
+# Configurable data paths
+# All of these default to /tmp sub-directories so the app works out-of-the-box
+# in dev / Docker, while the Electron launcher overrides them to the proper
+# user-data directory (e.g. ~/.local/share/CS2Radar/ on Linux).
+# ---------------------------------------------------------------------------
+_DATA_DIR   = Path(os.environ.get("DATA_DIR",   "/tmp/cs2radar"))
+_UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", str(_DATA_DIR / "uploads")))
+
+# Persistent job→demo mapping so parse-status can recover after a server restart.
+_JOB_MAP_FILE = _DATA_DIR / "jobs" / "job_map.json"
 
 
 def _persist_job_mapping(job_id: str, demo_id: str) -> None:
@@ -69,9 +79,12 @@ from analytics.heatmap import HeatmapRequest, compute_heatmap, heatmap_to_base64
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Directory where uploaded demo files are kept for voice extraction
-_DEMO_STORE = Path("/tmp/cs2radar_demos")
-_VOICE_CACHE = Path("/tmp/cs2radar_voice")
+# Directory where uploaded demo files are kept for on-demand voice extraction
+_DEMO_STORE  = _DATA_DIR / "demos"
+_VOICE_CACHE = _DATA_DIR / "voice"
+
+# Maximum accepted upload size (default 500 MB; overridable via MAX_UPLOAD_MB).
+_MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "500")) * 1_000_000
 
 
 def _demo_file_path(demo_id: str) -> Path:
@@ -183,12 +196,17 @@ async def upload_demo(
     if not file.filename or not file.filename.lower().endswith(".dem"):
         raise HTTPException(400, "File must be a .dem demo file")
 
-    # Write upload to temp dir
-    tmp_dir = Path("/tmp/cs2radar_uploads")
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    tmp_path = tmp_dir / f"{uuid.uuid4().hex}_{file.filename}"
+    # Write upload to a temp file inside the configured upload directory.
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = _UPLOAD_DIR / f"{uuid.uuid4().hex}_{file.filename}"
 
     content = await file.read()
+    if len(content) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            413,
+            f"File too large ({len(content) // 1_000_000} MB). "
+            f"Maximum accepted size is {_MAX_UPLOAD_BYTES // 1_000_000} MB.",
+        )
     tmp_path.write_bytes(content)
 
     demo_id = file_hash(tmp_path)
@@ -328,7 +346,7 @@ async def _parse_task(
             elif "import" in exc_str or "module" in exc_str:
                 msg = "Parse failed — a required server dependency is missing; check server logs."
             else:
-                msg = f"Parse failed ({type(exc).__name__}) — see server logs for details."
+                msg = "Parse failed — see server logs for details."
             _parse_jobs[job_id] = {
                 "status": "error",
                 "progress": 0.0,
@@ -342,6 +360,10 @@ async def _parse_task(
     if lock is not None:
         async with lock:
             await _run()
+        # Remove the lock once the parse is done so the dict doesn't grow
+        # unbounded over many uploads in a long-running session.
+        async with _parse_locks_mu:
+            _parse_locks.pop(demo_id, None)
     else:
         await _run()
 
@@ -886,6 +908,13 @@ async def get_voice_manifest(
 async def get_voice_audio(demo_id: str, round_number: int, filename: str):
     """Serve a cached per-player OGG Opus clip for a specific round."""
     import re
+    # Validate all path components to prevent directory traversal.
+    # demo_id must be a 64-character hex SHA-256; round_number is already typed
+    # as int by FastAPI; filename must match the <steamid>_<clip_idx> pattern.
+    if not re.fullmatch(r"[a-f0-9]{64}", demo_id):
+        raise HTTPException(400, "Invalid demo ID")
+    if round_number < 0:
+        raise HTTPException(400, "Invalid round number")
     if not re.fullmatch(r"\d+_\d+", filename):
         raise HTTPException(400, "Invalid audio filename")
     ogg_path = _voice_dir(demo_id, round_number) / f"{filename}.ogg"
