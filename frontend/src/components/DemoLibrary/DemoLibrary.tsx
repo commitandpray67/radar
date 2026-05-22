@@ -51,14 +51,19 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
     if (selected.size === 0) return;
     if (!window.confirm(`Delete ${selected.size} demo(s) from the cache?`)) return;
     setDeleting(true);
-    try {
-      await Promise.all(Array.from(selected).map((id) => deleteDemo(id)));
-      const removed = selected;
-      setDemos((prev) => prev.filter((d) => !removed.has(d.id)));
-      setSelected(new Set());
-    } finally {
-      setDeleting(false);
-    }
+    const ids = Array.from(selected);
+    await Promise.allSettled(
+      ids.map(async (id) => {
+        await deleteDemo(id);
+        setDemos((prev) => prev.filter((d) => d.id !== id));
+        setSelected((prev) => {
+          const n = new Set(prev);
+          n.delete(id);
+          return n;
+        });
+      }),
+    );
+    setDeleting(false);
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
