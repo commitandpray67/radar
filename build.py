@@ -14,6 +14,7 @@ Outputs:
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -49,11 +50,11 @@ def _die(msg: str) -> None:
     sys.exit(1)
 
 
-def run(cmd: list, cwd: Path = ROOT, timeout: int = 600) -> None:
+def run(cmd: list, cwd: Path = ROOT, timeout: int = 600, env: dict | None = None) -> None:
     """Run a command, exit with a clear error if it fails or times out."""
     print(f"\n  $ {' '.join(str(c) for c in cmd)}")
     try:
-        subprocess.check_call(cmd, cwd=str(cwd), timeout=timeout)
+        subprocess.check_call(cmd, cwd=str(cwd), timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         _die(f"Command timed out after {timeout}s:\n  {' '.join(str(c) for c in cmd)}")
     except subprocess.CalledProcessError as exc:
@@ -197,7 +198,12 @@ def build_electron() -> None:
     shutil.rmtree(ELECTRON / "release", ignore_errors=True)
 
     _npm_install(ELECTRON)
-    run([npm, "run", "build"], cwd=ELECTRON, timeout=300)
+    # CSC_IDENTITY_AUTO_DISCOVERY=false tells electron-builder not to look for
+    # code-signing certificates. Without this, it downloads winCodeSign even
+    # when no cert is configured; winCodeSign contains macOS .dylib symlinks
+    # that 7-Zip cannot extract on Windows without Developer Mode / admin rights.
+    _electron_env = {**os.environ, "CSC_IDENTITY_AUTO_DISCOVERY": "false"}
+    run([npm, "run", "build"], cwd=ELECTRON, timeout=300, env=_electron_env)
 
     release_dir = ELECTRON / "release"
     print(f"\n  → electron/release/")
