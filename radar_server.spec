@@ -18,11 +18,13 @@ hidden = [
     *collect_submodules("demoparser2"),
     # Application modules (imported as strings by uvicorn.run / lifespan)
     "main",
-    "api", "api.routes",
+    "api",
+    *collect_submodules("api.routes"),   # now a package: health, maps, demos, heatmap, voice, teams, _shared
     "db", "db.database",
     "analytics", "analytics.coordinates", "analytics.heatmap", "analytics.team_detection",
     "maps", "maps.calibration",
-    "parser", "parser.demo_parser",
+    "parser",
+    *collect_submodules("parser"),       # now a package: _types, _utils, _rounds, _positions, _grenades, _events
     "voice", "voice.extractor",
 ]
 
