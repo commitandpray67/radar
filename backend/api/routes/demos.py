@@ -71,14 +71,31 @@ async def upload_demo(
     _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     tmp_path = _UPLOAD_DIR / f"{uuid.uuid4().hex}_{file.filename}"
 
-    content = await file.read()
-    if len(content) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            413,
-            f"File too large ({len(content) // 1_000_000} MB). "
-            f"Maximum accepted size is {_MAX_UPLOAD_BYTES // 1_000_000} MB.",
-        )
-    tmp_path.write_bytes(content)
+    # Stream to disk in chunks rather than buffering the whole file in memory
+    # (could be 500 MB) and enforce the size limit as bytes arrive so we fail
+    # fast and never write a partial file beyond the cap.
+    bytes_written = 0
+    chunk_size = 1024 * 1024  # 1 MB
+    try:
+        with tmp_path.open("wb") as out:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > _MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"File too large (> {_MAX_UPLOAD_BYTES // 1_000_000} MB). "
+                        f"Raise the limit by setting MAX_UPLOAD_MB.",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
     demo_id = file_hash(tmp_path)
     job_id = str(uuid.uuid4())

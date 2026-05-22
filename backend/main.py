@@ -103,7 +103,12 @@ async def lifespan(app: FastAPI):
     from db.database import init_db
 
     await init_db()
-    logger.info("CS2 Radar backend ready")
+    from api.routes._shared import _MAX_UPLOAD_BYTES
+
+    logger.info(
+        "CS2 Radar backend ready (MAX_UPLOAD_MB=%d)",
+        _MAX_UPLOAD_BYTES // 1_000_000,
+    )
     yield
     logger.info("Shutting down")
 
