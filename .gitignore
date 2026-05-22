@@ -7,6 +7,11 @@ __pycache__/
 dist/
 build/
 
+# PyInstaller
+backend/dist/
+backend/build/
+*.spec.bak
+
 # Backend data (SQLite cache + uploaded demos)
 backend/data/
 /tmp/cs2radar_uploads/
@@ -15,6 +20,10 @@ backend/data/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+electron/node_modules/
+electron/release/
+electron/dist/
+!electron/build/
 
 # OS
 .DS_Store

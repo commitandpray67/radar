@@ -7,6 +7,7 @@ import logging
 import logging.handlers
 import math
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,6 +15,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+
+def _project_root() -> Path:
+    # PyInstaller onedir: all bundled assets live under sys._MEIPASS
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent
+
+
+_ROOT = _project_root()
 
 
 def _sanitize_nan(obj):
@@ -44,8 +55,9 @@ class NaNSafeJSONResponse(JSONResponse):
 # Logging
 # ---------------------------------------------------------------------------
 
-_log_dir = Path(__file__).parent / "logs"
-_log_dir.mkdir(exist_ok=True)
+_log_dir_env = os.environ.get("LOG_DIR")
+_log_dir = Path(_log_dir_env) if _log_dir_env else Path(__file__).parent / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
 _log_file = _log_dir / "backend.log"
 
 _file_handler = logging.handlers.RotatingFileHandler(
@@ -136,8 +148,8 @@ app.include_router(router, prefix="/api")
 
 # Serve radar map images
 _maps_candidates = [
-    Path(__file__).parent.parent / "frontend" / "public" / "maps",
-    Path(__file__).parent.parent / "frontend" / "dist" / "maps",
+    _ROOT / "frontend" / "public" / "maps",
+    _ROOT / "frontend" / "dist" / "maps",
 ]
 for _maps_dir in _maps_candidates:
     if _maps_dir.exists():
@@ -146,7 +158,7 @@ for _maps_dir in _maps_candidates:
         break
 
 # Serve built frontend
-frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+frontend_dist = _ROOT / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
 
