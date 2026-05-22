@@ -171,12 +171,16 @@ const HeatmapControls: React.FC = () => {
             round_number: parseInt(k.slice(sep + 1), 10),
           };
         });
+        // Map selected player_id numbers back to precise roster SteamID64 strings.
+        // SteamID64 > 2^53 so we can't use String(player_id_number); instead we
+        // compare Number(rosterString) === player_id_number (same rounding both sides).
+        const rosterIds = [...teamSession.core_roster, ...teamSession.extended_roster];
+        const playerIds = selectedPlayers.size > 0
+          ? rosterIds.filter((s) => selectedPlayers.has(Number(s)))
+          : rosterIds;
         result = await generateTeamHeatmap(teamSession.id, {
           rounds: teamRounds,
-          // Pass roster as SteamID64 strings; backend converts to int for SQL.
-          // This replaces team_filter which was broken for second-half rounds
-          // (it applied the starting side to all rounds, ignoring halftime swap).
-          player_ids: [...teamSession.core_roster, ...teamSession.extended_roster],
+          player_ids: playerIds,
           layer_label: activeLayer || undefined,
           exclude_freeze_time: true,
           blur_sigma: 6.0,
