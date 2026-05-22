@@ -14,6 +14,7 @@ import { generateHeatmap, generateTeamHeatmap } from '../../utils/api';
 import {
   toRangeString, getHalftimeRound, toggleEcoRounds, getRoundsForEcoClass,
   getTeamEcoMatches, toggleTeamEcoRounds, filterPlayersToRoster,
+  getTeamRoundsByDemo, teamRoundKey,
   ECO_COLOR, ECO_LABEL, type EcoClass,
 } from '../../utils/roundUtils';
 import type { PlayerInfo } from '../../types';
@@ -54,6 +55,7 @@ const HeatmapControls: React.FC = () => {
   const teamSession          = useAppStore((s) => s.teamSession);
   const teamHeatmapKeys      = useAppStore((s) => s.teamHeatmapRoundKeys);
   const setTeamHeatmapKeys   = useAppStore((s) => s.setTeamHeatmapRoundKeys);
+  const toggleTeamKey        = useAppStore((s) => s.toggleTeamHeatmapRoundKey);
 
   // ---------------------------------------------------------------------------
   // Player list: filter to team roster in team-session mode
@@ -73,6 +75,15 @@ const HeatmapControls: React.FC = () => {
   );
 
   const teamKeySet = useMemo(() => new Set(teamHeatmapKeys), [teamHeatmapKeys]);
+
+  const teamGroups = useMemo(
+    () => (teamSession ? getTeamRoundsByDemo(teamSession) : []),
+    [teamSession],
+  );
+  const allTeamKeys = useMemo(
+    () => teamGroups.flatMap((g) => g.rounds.map((r) => teamRoundKey(g.demoId, r.round_number))),
+    [teamGroups],
+  );
 
   const halftimeRound    = useMemo(() => getHalftimeRound(nonKnifeRounds), [nonKnifeRounds]);
   const halftimeBoundary = halftimeRound ?? Infinity;
@@ -160,11 +171,13 @@ const HeatmapControls: React.FC = () => {
         });
         result = await generateTeamHeatmap(teamSession.id, {
           rounds: teamRounds,
-          player_ids: [],          // all team players; per-player filter is a TODO
+          // Pass roster as SteamID64 strings; backend converts to int for SQL.
+          // This replaces team_filter which was broken for second-half rounds
+          // (it applied the starting side to all rounds, ignoring halftime swap).
+          player_ids: [...teamSession.core_roster, ...teamSession.extended_roster],
           layer_label: activeLayer || undefined,
           exclude_freeze_time: true,
           blur_sigma: 6.0,
-          team_filter: 'team',
         });
       } else {
         // Single-demo path
@@ -303,6 +316,13 @@ const HeatmapControls: React.FC = () => {
               <>
                 <div className={styles.quickSelectRow}>
                   <button
+                    className={styles.quickBtn}
+                    onClick={() => setTeamHeatmapKeys(allTeamKeys)}
+                    disabled={allTeamKeys.length === 0}
+                  >
+                    All
+                  </button>
+                  <button
                     className={`${styles.quickBtn} ${styles.quickBtnClear}`}
                     onClick={() => setTeamHeatmapKeys([])}
                     disabled={teamHeatmapKeys.length === 0}
@@ -328,11 +348,42 @@ const HeatmapControls: React.FC = () => {
                     );
                   })}
                 </div>
-                {teamHeatmapKeys.length === 0 ? (
-                  <p className={styles.hint}>
-                    Click rounds from any match in the left panel, or use the eco filters
-                  </p>
-                ) : (
+                <div className={styles.teamGroups}>
+                  {teamGroups.map((g) => (
+                    <div key={g.demoId} className={styles.teamGroup}>
+                      <div className={styles.teamGroupHeader}>
+                        <span className={styles.matchTag}>M{g.matchNum}</span>
+                        <span className={styles.matchFile} title={g.filename}>{g.filename}</span>
+                        <span
+                          className={teamSession.team_sides[g.demoId] === 'CT' ? styles.matchSideCT : styles.matchSideT}
+                        >
+                          {teamSession.team_sides[g.demoId] ?? '—'}
+                        </span>
+                      </div>
+                      <div className={styles.roundGrid}>
+                        {g.rounds.map((r, idx) => {
+                          const displayNum = idx + 1;
+                          const key = teamRoundKey(g.demoId, r.round_number);
+                          const isSel = teamKeySet.has(key);
+                          const isHalf2Start = idx === 12;
+                          return (
+                            <React.Fragment key={key}>
+                              {isHalf2Start && <div className={styles.halfDivider} />}
+                              <button
+                                className={`${styles.roundBtn} ${isSel ? styles.roundBtnSel : ''}`}
+                                onClick={() => toggleTeamKey(key)}
+                                title={`M${g.matchNum} · Round ${displayNum}`}
+                              >
+                                {displayNum}
+                              </button>
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {teamHeatmapKeys.length > 0 && (
                   <p className={styles.roundsSummary}>
                     {teamHeatmapKeys.length} round{teamHeatmapKeys.length === 1 ? '' : 's'} across matches
                   </p>
