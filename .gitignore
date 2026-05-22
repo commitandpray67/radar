@@ -14,6 +14,7 @@ backend/build/
 
 # Backend data (SQLite cache + uploaded demos)
 backend/data/
+backend/logs/
 /tmp/cs2radar_uploads/
 
 # Node
