@@ -6,12 +6,12 @@ Assembles all sub-routers into a single `router` that main.py mounts at /api.
 
 from fastapi import APIRouter
 
-from .health  import router as _health_router
-from .maps    import router as _maps_router
-from .demos   import router as _demos_router
+from .demos import router as _demos_router
+from .health import router as _health_router
 from .heatmap import router as _heatmap_router
-from .voice   import router as _voice_router
-from .teams   import router as _teams_router
+from .maps import router as _maps_router
+from .teams import router as _teams_router
+from .voice import router as _voice_router
 
 router = APIRouter()
 router.include_router(_health_router)

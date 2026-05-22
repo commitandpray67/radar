@@ -7,7 +7,6 @@ POST /demos/{demo_id}/heatmap
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import numpy as np
 from fastapi import APIRouter, HTTPException
@@ -22,13 +21,13 @@ router = APIRouter()
 
 
 class HeatmapPayload(BaseModel):
-    player_ids:           list[int]
-    round_numbers:        list[int]
-    layer_label:          Optional[str]  = None
-    exclude_freeze_time:  bool           = True
-    team_filter:          Optional[str]  = None
-    sample_every:         int            = 1
-    blur_sigma:           float          = 3.0
+    player_ids: list[int]
+    round_numbers: list[int]
+    layer_label: str | None = None
+    exclude_freeze_time: bool = True
+    team_filter: str | None = None
+    sample_every: int = 1
+    blur_sigma: float = 3.0
 
 
 @router.post("/demos/{demo_id}/heatmap")
@@ -46,9 +45,7 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
         raise HTTPException(422, "round_numbers must not be empty")
 
     async with get_connection() as conn:
-        cur = await conn.execute(
-            "SELECT map_name FROM demos WHERE id = ?", (demo_id,)
-        )
+        cur = await conn.execute("SELECT map_name FROM demos WHERE id = ?", (demo_id,))
         demo_row = await cur.fetchone()
     if not demo_row:
         raise HTTPException(404, "Demo not found")
@@ -68,8 +65,7 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
         id_ph = ",".join("?" * len(payload.player_ids))
         async with get_connection() as conn:
             cur = await conn.execute(
-                f"SELECT player_id FROM players "
-                f"WHERE demo_id = ? AND id IN ({id_ph})",
+                f"SELECT player_id FROM players WHERE demo_id = ? AND id IN ({id_ph})",
                 [demo_id, *payload.player_ids],
             )
             steam_ids = [row["player_id"] for row in await cur.fetchall()]
@@ -77,7 +73,7 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
     round_ph = ",".join("?" * len(payload.round_numbers))
 
     if payload.exclude_freeze_time:
-        conds   = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
+        conds = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
         qparams: list = [demo_id, *payload.round_numbers]
         if steam_ids:
             player_ph = ",".join("?" * len(steam_ids))
@@ -90,7 +86,7 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
             f"WHERE {' AND '.join(conds)} AND pp.tick >= r.freeze_end_tick"
         )
     else:
-        conds   = ["demo_id = ?", f"round_number IN ({round_ph})"]
+        conds = ["demo_id = ?", f"round_number IN ({round_ph})"]
         qparams = [demo_id, *payload.round_numbers]
         if steam_ids:
             player_ph = ",".join("?" * len(steam_ids))
@@ -102,20 +98,22 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
         )
 
     async with get_connection() as conn:
-        cur  = await conn.execute(query, qparams)
+        cur = await conn.execute(query, qparams)
         rows = await cur.fetchall()
 
     if not rows:
         raise HTTPException(404, "No position data found for the given filters")
 
     positions_np = np.array(
-        [[r["tick"], r["round_number"], r["player_id"], r["x"], r["y"], r["z"], r["team_num"]]
-         for r in rows],
+        [
+            [r["tick"], r["round_number"], r["player_id"], r["x"], r["y"], r["z"], r["team_num"]]
+            for r in rows
+        ],
         dtype=np.float64,
     )
 
     request = HeatmapRequest(
-        player_ids=[],                        # SQL pre-filtered; skip float64-unsafe re-filter
+        player_ids=[],  # SQL pre-filtered; skip float64-unsafe re-filter
         round_numbers=payload.round_numbers,
         map_name=map_name,
         layer_label=payload.layer_label,
@@ -125,11 +123,11 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
         blur_sigma=payload.blur_sigma,
     )
 
-    result  = compute_heatmap(positions_np, request, calibration)
+    result = compute_heatmap(positions_np, request, calibration)
     png_b64 = heatmap_to_base64_png(result)
 
     return {
-        "image":        f"data:image/png;base64,{png_b64}",
+        "image": f"data:image/png;base64,{png_b64}",
         "sample_count": result.sample_count,
-        "layer_label":  result.layer_label,
+        "layer_label": result.layer_label,
     }

@@ -9,27 +9,26 @@ the running core roster, allowing for a single substitute per match.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
-MIN_OVERLAP = 4   # require at least 4 shared SteamIDs to call a demo "the same team"
+MIN_OVERLAP = 4  # require at least 4 shared SteamIDs to call a demo "the same team"
 
 
 @dataclass
 class DemoRoster:
     demo_id: str
     map_name: str
-    ct: set[int]   # SteamID64s that started CT
-    t:  set[int]   # SteamID64s that started T
+    ct: set[int]  # SteamID64s that started CT
+    t: set[int]  # SteamID64s that started T
 
 
 @dataclass
 class TeamDetectionResult:
     ok: bool
-    error: Optional[str]
-    map_name: Optional[str]
-    core_roster: list[int]        # SteamID64s present in ALL demos on the matched side
-    extended_roster: list[int]    # union of all matched-side rosters (incl. subs)
-    team_sides: dict[str, str]    # demo_id -> "CT" | "T" — which side the team played
+    error: str | None
+    map_name: str | None
+    core_roster: list[int]  # SteamID64s present in ALL demos on the matched side
+    extended_roster: list[int]  # union of all matched-side rosters (incl. subs)
+    team_sides: dict[str, str]  # demo_id -> "CT" | "T" — which side the team played
 
 
 def detect_team(rosters: list[DemoRoster]) -> TeamDetectionResult:
@@ -47,8 +46,12 @@ def detect_team(rosters: list[DemoRoster]) -> TeamDetectionResult:
     """
     if not rosters:
         return TeamDetectionResult(
-            ok=False, error="No demos provided",
-            map_name=None, core_roster=[], extended_roster=[], team_sides={},
+            ok=False,
+            error="No demos provided",
+            map_name=None,
+            core_roster=[],
+            extended_roster=[],
+            team_sides={},
         )
 
     # 1. Same-map check
@@ -57,13 +60,16 @@ def detect_team(rosters: list[DemoRoster]) -> TeamDetectionResult:
         return TeamDetectionResult(
             ok=False,
             error=f"Demos are from different maps: {', '.join(sorted(maps))}",
-            map_name=None, core_roster=[], extended_roster=[], team_sides={},
+            map_name=None,
+            core_roster=[],
+            extended_roster=[],
+            team_sides={},
         )
 
     map_name = next(iter(maps))
 
     # 2. Try each seed side from demo[0]
-    best: Optional[tuple[set[int], set[int], dict[str, str]]] = None
+    best: tuple[set[int], set[int], dict[str, str]] | None = None
     best_score: tuple[int, int] = (-1, -1)
 
     for seed_side in ("CT", "T"):
@@ -78,7 +84,7 @@ def detect_team(rosters: list[DemoRoster]) -> TeamDetectionResult:
 
         for d in rosters[1:]:
             ct_inter = core & d.ct
-            t_inter  = core & d.t
+            t_inter = core & d.t
             # Pick the side with larger overlap; require ≥4
             if len(ct_inter) >= len(t_inter) and len(ct_inter) >= MIN_OVERLAP:
                 team_sides[d.demo_id] = "CT"
@@ -105,12 +111,17 @@ def detect_team(rosters: list[DemoRoster]) -> TeamDetectionResult:
                 f"Could not detect a consistent team across all demos "
                 f"(need ≥{MIN_OVERLAP} shared players on the same side)."
             ),
-            map_name=map_name, core_roster=[], extended_roster=[], team_sides={},
+            map_name=map_name,
+            core_roster=[],
+            extended_roster=[],
+            team_sides={},
         )
 
     core, extended, team_sides = best
     return TeamDetectionResult(
-        ok=True, error=None, map_name=map_name,
+        ok=True,
+        error=None,
+        map_name=map_name,
         core_roster=sorted(core),
         extended_roster=sorted(extended),
         team_sides=team_sides,

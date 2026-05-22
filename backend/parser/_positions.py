@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from ._types import PlayerPosition, RoundInfo
 from ._utils import _rows, _to_float, _to_int
@@ -69,7 +69,7 @@ def _extract_positions(
             continue
 
         tick = _to_int(row.get("tick", 0))
-        rn   = tick_to_round.get(tick, 0)
+        rn = tick_to_round.get(tick, 0)
         if rn == 0:
             continue
 
@@ -79,16 +79,18 @@ def _extract_positions(
         if x == 0 and y == 0 and z == 0:
             continue  # player not yet spawned
 
-        positions.append(PlayerPosition(
-            tick=tick,
-            round_number=rn,
-            player_id=steam_id,
-            x=x,
-            y=y,
-            z=z,
-            team_num=_to_int(row.get("team_num", 0)),
-            is_alive=bool(row.get("is_alive", False)),
-            yaw=_to_float(row.get("yaw"), 0.0),
-        ))
+        positions.append(
+            PlayerPosition(
+                tick=tick,
+                round_number=rn,
+                player_id=steam_id,
+                x=x,
+                y=y,
+                z=z,
+                team_num=_to_int(row.get("team_num", 0)),
+                is_alive=bool(row.get("is_alive", False)),
+                yaw=_to_float(row.get("yaw"), 0.0),
+            )
+        )
 
     return positions

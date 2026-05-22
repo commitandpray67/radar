@@ -55,6 +55,7 @@ _CLIP_GAP_TICKS = 128
 # ── OGG CRC-32/MPEG-2 ────────────────────────────────────────────────────────
 # Polynomial 0x04C11DB7, initial value 0, unreflected, no final XOR.
 
+
 def _make_crc_table() -> list[int]:
     table = []
     for i in range(256):
@@ -80,6 +81,7 @@ def _ogg_crc32(data: bytes) -> int:
 
 # ── OGG page builder ──────────────────────────────────────────────────────────
 
+
 def _packet_segments(payload: bytes) -> list[int]:
     """Compute the OGG lacing segment table for one packet."""
     segs: list[int] = []
@@ -87,7 +89,7 @@ def _packet_segments(payload: bytes) -> list[int]:
     while remaining >= 255:
         segs.append(255)
         remaining -= 255
-    segs.append(remaining)          # final segment < 255 signals end-of-packet
+    segs.append(remaining)  # final segment < 255 signals end-of-packet
     # If the last chunk happened to be exactly 255 bytes, append a 0-terminator
     # (this case is handled by the while condition above; remaining will be 0)
     return segs
@@ -111,13 +113,13 @@ def _build_ogg_page(
     header = struct.pack(
         "<4sBBqIIIB",
         b"OggS",
-        0,           # stream structure version
-        flags,       # header type flag
-        granule,     # absolute granule position (int64 LE)
-        serial,      # stream serial number
-        seq,         # page sequence number
-        0,           # checksum placeholder
-        len(segs),   # number of page segments
+        0,  # stream structure version
+        flags,  # header type flag
+        granule,  # absolute granule position (int64 LE)
+        serial,  # stream serial number
+        seq,  # page sequence number
+        0,  # checksum placeholder
+        len(segs),  # number of page segments
     )
     header += bytes(segs)
     page = header + payload
@@ -129,7 +131,7 @@ def _build_ogg_page(
 
 # ── OGG Opus header packets ───────────────────────────────────────────────────
 
-_PRE_SKIP = 312           # samples to discard at start (standard minimal value)
+_PRE_SKIP = 312  # samples to discard at start (standard minimal value)
 _OPUS_SAMPLE_RATE = 48000
 _SAMPLES_PER_FRAME = 960  # 20 ms at 48 kHz
 
@@ -138,12 +140,12 @@ def _opus_head() -> bytes:
     return struct.pack(
         "<8sBBHIhB",
         b"OpusHead",
-        1,                  # version
-        1,                  # channel count (mono)
-        _PRE_SKIP,          # pre-skip (uint16 LE)
+        1,  # version
+        1,  # channel count (mono)
+        _PRE_SKIP,  # pre-skip (uint16 LE)
         _OPUS_SAMPLE_RATE,  # input sample rate (uint32 LE, informational)
-        0,                  # output gain (int16 LE)
-        0,                  # channel mapping family (0 = RTP mono/stereo)
+        0,  # output gain (int16 LE)
+        0,  # channel mapping family (0 = RTP mono/stereo)
     )
 
 
@@ -152,11 +154,12 @@ def _opus_tags() -> bytes:
     return (
         struct.pack("<8sI", b"OpusTags", len(vendor))
         + vendor
-        + struct.pack("<I", 0)   # zero user comment list entries
+        + struct.pack("<I", 0)  # zero user comment list entries
     )
 
 
 # ── OGG Opus file assembler ───────────────────────────────────────────────────
+
 
 def _build_ogg_opus(frames: list[bytes]) -> bytes:
     """
@@ -193,6 +196,7 @@ def _build_ogg_opus(frames: list[bytes]) -> bytes:
 
 # ── Steam Voice packet parser ─────────────────────────────────────────────────
 
+
 def _extract_opus_frames(data: bytes) -> list[bytes]:
     """
     Extract raw Opus frames from one Steam Voice network packet.
@@ -219,7 +223,7 @@ def _extract_opus_frames(data: bytes) -> list[bytes]:
             break
         if offset + sec_len > len(data):
             break
-        payload = data[offset: offset + sec_len]
+        payload = data[offset : offset + sec_len]
         offset += sec_len
         if sec_type in _OPUS_SECTION_TYPES:
             frames.append(payload)
@@ -233,6 +237,7 @@ def _extract_opus_frames(data: bytes) -> list[bytes]:
 
 
 # ── Clip grouping ─────────────────────────────────────────────────────────────
+
 
 def _group_into_clips(
     packets: list[dict],
@@ -272,6 +277,7 @@ def _group_into_clips(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 def extract_voice_for_round(
     demo_path: str,
     round_start_tick: int,
@@ -296,6 +302,7 @@ def extract_voice_for_round(
     # Parse voice packets from the demo file
     try:
         from demoparser2 import DemoParser  # noqa: PLC0415
+
         parser = DemoParser(demo_path)
         all_packets: list[dict] = parser.parse_voice()
     except Exception as exc:
@@ -322,7 +329,8 @@ def extract_voice_for_round(
     if not by_player:
         logger.info(
             "No voice packets in tick range [%d, %d]",
-            round_start_tick, round_end_tick,
+            round_start_tick,
+            round_end_tick,
         )
         return {}
 
@@ -353,7 +361,11 @@ def extract_voice_for_round(
             out_path.write_bytes(ogg_bytes)
             logger.info(
                 "Voice extracted: steamid=%d  clip=%d  start_tick=%d  frames=%d  bytes=%d",
-                steamid, clip_idx, start_tick, len(frames), len(ogg_bytes),
+                steamid,
+                clip_idx,
+                start_tick,
+                len(frames),
+                len(ogg_bytes),
             )
             player_clips.append((start_tick, out_path))
 

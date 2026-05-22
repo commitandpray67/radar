@@ -15,15 +15,14 @@ for, and only positions within that layer's Z range are included.
 
 from __future__ import annotations
 
-import io
 import base64
+import io
 import math
 from dataclasses import dataclass
-from typing import Optional, Sequence
 
 import numpy as np
 
-from analytics.coordinates import world_to_radar_batch, RADAR_IMAGE_SIZE
+from analytics.coordinates import RADAR_IMAGE_SIZE, world_to_radar_batch
 from maps.calibration import MapCalibration
 
 
@@ -58,17 +57,20 @@ def _gaussian_blur(arr: np.ndarray, sigma: float) -> np.ndarray:
 
 def _make_inferno_lut() -> np.ndarray:
     """Build a (256, 3) uint8 LUT for the inferno colormap (replaces matplotlib.cm)."""
-    stops = np.array([
-        [0.000, 0.001462, 0.000466, 0.013866],
-        [0.125, 0.091154, 0.043586, 0.238501],
-        [0.250, 0.258234, 0.038571, 0.406485],
-        [0.375, 0.416292, 0.064140, 0.455358],
-        [0.500, 0.578410, 0.148039, 0.404560],
-        [0.625, 0.741388, 0.280198, 0.231214],
-        [0.750, 0.873490, 0.433390, 0.100728],
-        [0.875, 0.964394, 0.648659, 0.160677],
-        [1.000, 0.988362, 0.998364, 0.644924],
-    ], dtype=np.float64)
+    stops = np.array(
+        [
+            [0.000, 0.001462, 0.000466, 0.013866],
+            [0.125, 0.091154, 0.043586, 0.238501],
+            [0.250, 0.258234, 0.038571, 0.406485],
+            [0.375, 0.416292, 0.064140, 0.455358],
+            [0.500, 0.578410, 0.148039, 0.404560],
+            [0.625, 0.741388, 0.280198, 0.231214],
+            [0.750, 0.873490, 0.433390, 0.100728],
+            [0.875, 0.964394, 0.648659, 0.160677],
+            [1.000, 0.988362, 0.998364, 0.644924],
+        ],
+        dtype=np.float64,
+    )
     t = np.linspace(0.0, 1.0, 256)
     r = np.interp(t, stops[:, 0], stops[:, 1])
     g = np.interp(t, stops[:, 0], stops[:, 2])
@@ -82,12 +84,13 @@ _INFERNO_LUT: np.ndarray = _make_inferno_lut()
 @dataclass
 class HeatmapRequest:
     """Input parameters for a heatmap computation."""
-    player_ids: list[int]            # steam IDs or entity IDs from the parse
-    round_numbers: list[int]         # e.g. [1, 3, 5]
+
+    player_ids: list[int]  # steam IDs or entity IDs from the parse
+    round_numbers: list[int]  # e.g. [1, 3, 5]
     map_name: str
-    layer_label: Optional[str] = None  # "Upper" / "Lower" for multi-level maps
-    exclude_freeze_time: bool = True   # drop positions before round start
-    team_filter: Optional[str] = None  # "CT" | "T" | None (both)
+    layer_label: str | None = None  # "Upper" / "Lower" for multi-level maps
+    exclude_freeze_time: bool = True  # drop positions before round start
+    team_filter: str | None = None  # "CT" | "T" | None (both)
     # Sampling: use every Nth position row; lower = more detail, higher = faster
     sample_every: int = 1
     # Grid resolution (radar pixels per cell); lower = finer grid
@@ -100,6 +103,7 @@ class HeatmapRequest:
 @dataclass
 class HeatmapResult:
     """Output of a heatmap computation."""
+
     # 2D numpy array, shape (grid_h, grid_w), values in [0, 1]
     density: np.ndarray
     grid_w: int
@@ -206,8 +210,8 @@ def compute_heatmap(
 
     # np.histogram2d: x axis = px (columns), y axis = py (rows)
     hist, _, _ = np.histogram2d(
-        radar_px[:, 0],   # x pixels → columns
-        radar_px[:, 1],   # y pixels → rows
+        radar_px[:, 0],  # x pixels → columns
+        radar_px[:, 1],  # y pixels → rows
         bins=[grid_w, grid_h],
         range=[[0, request.image_size], [0, request.image_size]],
     )
@@ -267,7 +271,7 @@ def heatmap_to_rgba(
     rgb = _INFERNO_LUT[idx]  # (H, W, 3)
 
     # Alpha: power curve so movement paths stay visible (see density^0.6 note above)
-    alpha = ((density_full ** 0.6) * alpha_scale * 255).astype(np.uint8)
+    alpha = ((density_full**0.6) * alpha_scale * 255).astype(np.uint8)
 
     return np.dstack([rgb, alpha])
 

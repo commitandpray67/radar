@@ -20,21 +20,22 @@ The full set of official values can be extracted from CS2 game files at:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
 class RadarLayer:
     """A single altitude slice of a multi-level map."""
-    image: str           # filename under frontend/public/maps/
-    z_min: float         # minimum world Z for this layer (inclusive)
-    z_max: float         # maximum world Z for this layer (exclusive); use +inf for top layer
-    label: str = ""      # human label e.g. "Upper", "Lower"
+
+    image: str  # filename under frontend/public/maps/
+    z_min: float  # minimum world Z for this layer (inclusive)
+    z_max: float  # maximum world Z for this layer (exclusive); use +inf for top layer
+    label: str = ""  # human label e.g. "Upper", "Lower"
 
 
 @dataclass
 class MapCalibration:
     """Coordinate transformation parameters for one CS2 map."""
+
     # Top-left corner of the radar image in game-world coordinates
     pos_x: float
     pos_y: float
@@ -51,7 +52,7 @@ class MapCalibration:
     def is_multilevel(self) -> bool:
         return len(self.layers) > 0
 
-    def layer_for_z(self, z: float) -> Optional[RadarLayer]:
+    def layer_for_z(self, z: float) -> RadarLayer | None:
         """Return the layer that contains the given world Z coordinate."""
         for layer in self.layers:
             if layer.z_min <= z < layer.z_max:
@@ -68,56 +69,48 @@ class MapCalibration:
 # ---------------------------------------------------------------------------
 
 MAP_CALIBRATIONS: dict[str, MapCalibration] = {
-
     "de_dust2": MapCalibration(
         pos_x=-2476.0,
         pos_y=3239.0,
         scale=4.4,
         image="de_dust2.png",
     ),
-
     "de_mirage": MapCalibration(
         pos_x=-3230.0,
         pos_y=1713.0,
         scale=5.0,
         image="de_mirage.png",
     ),
-
     "de_inferno": MapCalibration(
         pos_x=-2087.0,
         pos_y=3870.0,
         scale=4.9,
         image="de_inferno.png",
     ),
-
     "de_cache": MapCalibration(
         pos_x=-2000.0,
         pos_y=3250.0,
         scale=5.5,
         image="de_cache.png",
     ),
-
     "de_overpass": MapCalibration(
         pos_x=-4831.0,
         pos_y=1781.0,
         scale=5.2,
         image="de_overpass.png",
     ),
-
     "de_ancient": MapCalibration(
         pos_x=-2953.0,
         pos_y=2164.0,
         scale=5.0,
         image="de_ancient.png",
     ),
-
     "de_anubis": MapCalibration(
         pos_x=-2796.0,
         pos_y=3328.0,
         scale=5.22,
         image="de_anubis.png",
     ),
-
     "de_vertigo": MapCalibration(
         pos_x=-3168.0,
         pos_y=1762.0,
@@ -137,7 +130,6 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
             ),
         ],
     ),
-
     "de_nuke": MapCalibration(
         pos_x=-3453.0,
         pos_y=2887.0,
@@ -157,7 +149,6 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
             ),
         ],
     ),
-
     # [ESTIMATED] — update once Valve overview file is verified
     "de_train": MapCalibration(
         pos_x=-2477.0,
@@ -165,14 +156,12 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         scale=4.7,
         image="de_train.png",
     ),
-
     "de_office": MapCalibration(
         pos_x=-1838.0,
         pos_y=1858.0,
         scale=4.1,
         image="de_office.png",
     ),
-
     "cs_italy": MapCalibration(
         pos_x=-2647.0,
         pos_y=2592.0,
@@ -182,7 +171,7 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
 }
 
 
-def get_calibration(map_name: str) -> Optional[MapCalibration]:
+def get_calibration(map_name: str) -> MapCalibration | None:
     """
     Look up calibration by map name.
     Handles 'workshop/' prefixes and unknown suffixes gracefully.

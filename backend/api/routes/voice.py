@@ -24,7 +24,7 @@ router = APIRouter()
 
 @router.get("/demos/{demo_id}/voice")
 async def get_voice_manifest(
-    demo_id:      str,
+    demo_id: str,
     round_number: int = Query(...),
 ):
     """
@@ -35,16 +35,13 @@ async def get_voice_manifest(
     no voice data or its source file is no longer on disk.
     """
     async with get_connection() as conn:
-        cur = await conn.execute(
-            "SELECT tick_rate FROM demos WHERE id = ?", (demo_id,)
-        )
+        cur = await conn.execute("SELECT tick_rate FROM demos WHERE id = ?", (demo_id,))
         demo_row = await cur.fetchone()
         if not demo_row:
             raise HTTPException(404, "Demo not found")
 
         cur = await conn.execute(
-            "SELECT start_tick, end_tick FROM rounds "
-            "WHERE demo_id = ? AND round_number = ?",
+            "SELECT start_tick, end_tick FROM rounds WHERE demo_id = ? AND round_number = ?",
             (demo_id, round_number),
         )
         round_row = await cur.fetchone()
@@ -57,18 +54,18 @@ async def get_voice_manifest(
         )
         player_rows = await cur.fetchall()
 
-    tick_rate:  float = demo_row["tick_rate"] or 64.0
-    start_tick: int   = round_row["start_tick"]
-    end_tick:   int   = round_row["end_tick"]
+    tick_rate: float = demo_row["tick_rate"] or 64.0
+    start_tick: int = round_row["start_tick"]
+    end_tick: int = round_row["end_tick"]
     name_map: dict[int, str] = {r["player_id"]: r["name"] for r in player_rows}
 
     empty_response = {
         "round_number": round_number,
-        "start_tick":   start_tick,
-        "end_tick":     end_tick,
-        "tick_rate":    tick_rate,
-        "available":    False,
-        "players":      [],
+        "start_tick": start_tick,
+        "end_tick": end_tick,
+        "tick_rate": tick_rate,
+        "available": False,
+        "players": [],
     }
 
     demo_path = _demo_file_path(demo_id)
@@ -88,13 +85,19 @@ async def get_voice_manifest(
         clip_map: dict = await loop.run_in_executor(
             None,
             lambda: extract_voice_for_round(
-                str(demo_path), start_tick, end_tick, tick_rate, voice_dir,
+                str(demo_path),
+                start_tick,
+                end_tick,
+                tick_rate,
+                voice_dir,
             ),
         )
     except Exception as exc:
         logger.error(
             "Voice extraction failed for demo %s round %d: %s",
-            demo_id, round_number, exc,
+            demo_id,
+            round_number,
+            exc,
         )
         return empty_response
 
@@ -109,19 +112,21 @@ async def get_voice_manifest(
             }
             for clip_idx, (clip_start_tick, _) in enumerate(clip_list)
         ]
-        players.append({
-            "steamid": steamid,
-            "name":    name_map.get(steamid, str(steamid)),
-            "clips":   clips,
-        })
+        players.append(
+            {
+                "steamid": steamid,
+                "name": name_map.get(steamid, str(steamid)),
+                "clips": clips,
+            }
+        )
 
     return {
         "round_number": round_number,
-        "start_tick":   start_tick,
-        "end_tick":     end_tick,
-        "tick_rate":    tick_rate,
-        "available":    bool(players),
-        "players":      players,
+        "start_tick": start_tick,
+        "end_tick": end_tick,
+        "tick_rate": tick_rate,
+        "available": bool(players),
+        "players": players,
     }
 
 

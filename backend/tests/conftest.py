@@ -6,6 +6,7 @@ never touches the production database.
 """
 
 import os
+
 import pytest
 import pytest_asyncio
 
@@ -23,4 +24,5 @@ def temp_db(tmp_path_factory):
 async def init_test_db(temp_db):
     """Initialise the SQLite schema before any API tests run."""
     from db.database import init_db
+
     await init_db()

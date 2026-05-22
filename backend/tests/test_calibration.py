@@ -2,11 +2,12 @@
 Tests for map calibration data and lookup logic.
 """
 
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import pytest
-from maps.calibration import MAP_CALIBRATIONS, get_calibration, MapCalibration
+from maps.calibration import MAP_CALIBRATIONS, MapCalibration, get_calibration
 
 
 class TestMapCalibrations:
@@ -14,9 +15,18 @@ class TestMapCalibrations:
 
     def test_all_known_maps_present(self) -> None:
         expected = {
-            "de_dust2", "de_mirage", "de_inferno", "de_cache",
-            "de_overpass", "de_ancient", "de_anubis", "de_vertigo",
-            "de_nuke", "de_train", "de_office", "cs_italy",
+            "de_dust2",
+            "de_mirage",
+            "de_inferno",
+            "de_cache",
+            "de_overpass",
+            "de_ancient",
+            "de_anubis",
+            "de_vertigo",
+            "de_nuke",
+            "de_train",
+            "de_office",
+            "cs_italy",
         }
         missing = expected - set(MAP_CALIBRATIONS.keys())
         assert not missing, f"Missing calibrations: {missing}"
@@ -27,9 +37,7 @@ class TestMapCalibrations:
 
     def test_rotate_values_are_0_to_3(self) -> None:
         for name, cal in MAP_CALIBRATIONS.items():
-            assert cal.rotate in (0, 1, 2, 3), (
-                f"{name}: rotate must be 0-3, got {cal.rotate}"
-            )
+            assert cal.rotate in (0, 1, 2, 3), f"{name}: rotate must be 0-3, got {cal.rotate}"
 
     def test_single_level_maps_have_image(self) -> None:
         for name, cal in MAP_CALIBRATIONS.items():
@@ -39,9 +47,7 @@ class TestMapCalibrations:
     def test_multilevel_maps_have_layers(self) -> None:
         for name, cal in MAP_CALIBRATIONS.items():
             if cal.is_multilevel:
-                assert len(cal.layers) >= 2, (
-                    f"{name}: multi-level map must have at least 2 layers"
-                )
+                assert len(cal.layers) >= 2, f"{name}: multi-level map must have at least 2 layers"
 
     def test_nuke_is_multilevel(self) -> None:
         nuke = MAP_CALIBRATIONS["de_nuke"]

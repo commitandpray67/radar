@@ -36,10 +36,14 @@ player_state_events : list[PlayerStateEvent]
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
-from ._types import (          # noqa: F401  (re-exported for callers)
+from ._events import _extract_economy, _extract_events, _extract_player_state_events
+from ._grenades import _extract_grenades
+from ._positions import _extract_positions
+from ._rounds import _extract_rounds, _infer_initial_teams
+from ._types import (  # noqa: F401  (re-exported for callers)
     GameEvent,
     GrenadeEvent,
     MatchInfo,
@@ -50,10 +54,6 @@ from ._types import (          # noqa: F401  (re-exported for callers)
     RoundInfo,
 )
 from ._utils import _rows
-from ._rounds import _extract_rounds, _infer_initial_teams
-from ._positions import _extract_positions
-from ._grenades import _extract_grenades
-from ._events import _extract_economy, _extract_events, _extract_player_state_events
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ PARSER_VERSION = 23
 # ---------------------------------------------------------------------------
 # Player roster
 # ---------------------------------------------------------------------------
+
 
 def _extract_players(parser) -> list[PlayerInfo]:
     """Extract the player roster via parse_player_info (Polars-aware)."""
@@ -93,11 +94,13 @@ def _extract_players(parser) -> list[PlayerInfo]:
         team_num = int(row.get("team_number", 0) or 0)
         team = {2: "T", 3: "CT"}.get(team_num, "") or str(row.get("team_name", "") or "")
 
-        players.append(PlayerInfo(
-            player_id=steam_id,
-            name=str(row.get("name", "") or ""),
-            initial_team=team,
-        ))
+        players.append(
+            PlayerInfo(
+                player_id=steam_id,
+                name=str(row.get("name", "") or ""),
+                initial_team=team,
+            )
+        )
 
     return players
 
@@ -106,10 +109,11 @@ def _extract_players(parser) -> list[PlayerInfo]:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def parse_demo(
     demo_path: str | Path,
     position_sample_rate: int = 8,
-    progress_callback: Optional[Callable[[float, str], None]] = None,
+    progress_callback: Callable[[float, str], None] | None = None,
 ) -> ParsedDemo:
     """
     Parse a CS2 demo file and return a normalised ParsedDemo.
@@ -147,7 +151,7 @@ def parse_demo(
     # ---- Header / match info -----------------------------------------------
     _progress(0.02, "Reading header")
     header = parser.parse_header()
-    map_name:       str = header.get("map_name", "unknown")
+    map_name: str = header.get("map_name", "unknown")
     playback_ticks: int = int(header.get("playback_ticks", 0))
     playback_time: float = float(header.get("playback_time", 1) or 1)
     tick_rate = (

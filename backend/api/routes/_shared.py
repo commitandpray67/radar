@@ -13,17 +13,16 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Configurable data paths
 # ---------------------------------------------------------------------------
 
-_DATA_DIR         = Path(os.environ.get("DATA_DIR",   "/tmp/cs2radar"))
-_UPLOAD_DIR       = Path(os.environ.get("UPLOAD_DIR", str(_DATA_DIR / "uploads")))
-_JOB_MAP_FILE     = _DATA_DIR / "jobs" / "job_map.json"
-_DEMO_STORE       = _DATA_DIR / "demos"
-_VOICE_CACHE      = _DATA_DIR / "voice"
+_DATA_DIR = Path(os.environ.get("DATA_DIR", "/tmp/cs2radar"))
+_UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", str(_DATA_DIR / "uploads")))
+_JOB_MAP_FILE = _DATA_DIR / "jobs" / "job_map.json"
+_DEMO_STORE = _DATA_DIR / "demos"
+_VOICE_CACHE = _DATA_DIR / "voice"
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "500")) * 1_000_000
 
 
@@ -41,6 +40,7 @@ def _voice_dir(demo_id: str, round_number: int) -> Path:
 # Persistent job→demo mapping (survives server restarts)
 # ---------------------------------------------------------------------------
 
+
 def _persist_job_mapping(job_id: str, demo_id: str) -> None:
     """Write job_id→demo_id to disk so parse-status can recover after restart."""
     try:
@@ -57,7 +57,7 @@ def _persist_job_mapping(job_id: str, demo_id: str) -> None:
         pass  # non-fatal
 
 
-def _load_job_demo_id(job_id: str) -> Optional[str]:
+def _load_job_demo_id(job_id: str) -> str | None:
     """Look up demo_id for a job_id from the persistent mapping file."""
     try:
         if _JOB_MAP_FILE.exists():
@@ -71,6 +71,7 @@ def _load_job_demo_id(job_id: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # JSON helpers
 # ---------------------------------------------------------------------------
+
 
 def _sanitize_nan(obj):
     """Recursively replace NaN/Inf floats with None (→ JSON null).

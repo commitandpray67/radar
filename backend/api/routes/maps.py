@@ -16,22 +16,24 @@ async def list_maps():
 
     result = []
     for name, cal in MAP_CALIBRATIONS.items():
-        result.append({
-            "name": name,
-            "is_multilevel": cal.is_multilevel,
-            "layers": (
-                [
-                    {
-                        "label": la.label,
-                        "image": la.image,
-                        "z_min": _json_float(la.z_min),
-                        "z_max": _json_float(la.z_max),
-                    }
-                    for la in cal.layers
-                ]
-                if cal.is_multilevel
-                else []
-            ),
-            "image": cal.image if not cal.is_multilevel else "",
-        })
+        result.append(
+            {
+                "name": name,
+                "is_multilevel": cal.is_multilevel,
+                "layers": (
+                    [
+                        {
+                            "label": la.label,
+                            "image": la.image,
+                            "z_min": _json_float(la.z_min),
+                            "z_max": _json_float(la.z_max),
+                        }
+                        for la in cal.layers
+                    ]
+                    if cal.is_multilevel
+                    else []
+                ),
+                "image": cal.image if not cal.is_multilevel else "",
+            }
+        )
     return result

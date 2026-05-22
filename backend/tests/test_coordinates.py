@@ -6,27 +6,27 @@ They validate the math used to convert game world coordinates to radar
 pixel coordinates and back.
 """
 
-import math
-import pytest
-import numpy as np
-
-import sys
 import os
+import sys
+
+import numpy as np
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from maps.calibration import MapCalibration, RadarLayer, get_calibration
 from analytics.coordinates import (
+    RADAR_IMAGE_SIZE,
+    clamp_to_radar,
+    radar_to_world,
     world_to_radar,
     world_to_radar_batch,
-    radar_to_world,
-    clamp_to_radar,
-    RADAR_IMAGE_SIZE,
 )
-
+from maps.calibration import MapCalibration, get_calibration
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def dust2_cal() -> MapCalibration:
@@ -58,6 +58,7 @@ def simple_cal() -> MapCalibration:
 # ---------------------------------------------------------------------------
 # Single-point world_to_radar
 # ---------------------------------------------------------------------------
+
 
 class TestWorldToRadar:
     def test_top_left_corner(self, simple_cal: MapCalibration) -> None:
@@ -116,14 +117,17 @@ class TestWorldToRadar:
 # Batch transformation
 # ---------------------------------------------------------------------------
 
+
 class TestWorldToRadarBatch:
     def test_batch_matches_single(self, dust2_cal: MapCalibration) -> None:
         """Batch results must match individual world_to_radar calls."""
-        world_points = np.array([
-            [1200.0, 250.0, 0.0],
-            [-1000.0, 1000.0, 0.0],
-            [500.0, -300.0, 0.0],
-        ])
+        world_points = np.array(
+            [
+                [1200.0, 250.0, 0.0],
+                [-1000.0, 1000.0, 0.0],
+                [500.0, -300.0, 0.0],
+            ]
+        )
         batch_result = world_to_radar_batch(world_points, dust2_cal)
 
         for i, (wx, wy, wz) in enumerate(world_points):
@@ -141,6 +145,7 @@ class TestWorldToRadarBatch:
 # ---------------------------------------------------------------------------
 # Inverse transform
 # ---------------------------------------------------------------------------
+
 
 class TestRadarToWorld:
     def test_roundtrip(self, dust2_cal: MapCalibration) -> None:
@@ -161,6 +166,7 @@ class TestRadarToWorld:
 # Clamp
 # ---------------------------------------------------------------------------
 
+
 class TestClamp:
     def test_clamp_within_bounds(self) -> None:
         px, py = clamp_to_radar(512.0, 512.0)
@@ -178,6 +184,7 @@ class TestClamp:
 # ---------------------------------------------------------------------------
 # Multi-level map layer selection
 # ---------------------------------------------------------------------------
+
 
 class TestMultiLevelMaps:
     def test_nuke_lower_layer(self, nuke_cal: MapCalibration) -> None:

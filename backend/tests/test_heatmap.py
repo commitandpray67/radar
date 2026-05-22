@@ -4,20 +4,23 @@ Tests for heatmap generation logic.
 Uses synthetic position data so no real demo is needed.
 """
 
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import math
+
 import numpy as np
 import pytest
 
-from maps.calibration import get_calibration
 from analytics.heatmap import HeatmapRequest, HeatmapResult, compute_heatmap
-
+from maps.calibration import get_calibration
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def dust2_cal():
@@ -49,6 +52,7 @@ def make_positions(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestComputeHeatmap:
     def test_returns_heatmap_result(self, dust2_cal) -> None:

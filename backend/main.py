@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 def _project_root() -> Path:
     # PyInstaller onedir: all bundled assets live under sys._MEIPASS
     if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS)
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
     return Path(__file__).parent.parent
 
 
@@ -78,6 +78,7 @@ logger = logging.getLogger(__name__)
 # Startup / shutdown
 # ---------------------------------------------------------------------------
 
+
 def _cleanup_stale_uploads() -> None:
     """Remove any temp upload files left over from a previous crashed run."""
     upload_dir = Path(os.environ.get("UPLOAD_DIR", "/tmp/cs2radar_uploads"))
@@ -100,6 +101,7 @@ async def lifespan(app: FastAPI):
     _cleanup_stale_uploads()
     logger.info("Initialising database")
     from db.database import init_db
+
     await init_db()
     logger.info("CS2 Radar backend ready")
     yield

@@ -17,9 +17,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from pathlib import Path
-from typing import Optional, AsyncIterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC
+from pathlib import Path
 
 import aiosqlite
 
@@ -31,6 +32,7 @@ DEFAULT_DB_PATH = Path(__file__).parent.parent / "data" / "demos.db"
 
 async def get_db_path() -> Path:
     import os
+
     p = Path(os.environ.get("DB_PATH", str(DEFAULT_DB_PATH)))
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
@@ -43,8 +45,8 @@ async def get_connection() -> AsyncIterator[aiosqlite.Connection]:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA foreign_keys=ON")
-        await conn.execute("PRAGMA synchronous=NORMAL")   # safe with WAL, faster
-        await conn.execute("PRAGMA busy_timeout=10000")   # 10 s retry on lock
+        await conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, faster
+        await conn.execute("PRAGMA busy_timeout=10000")  # 10 s retry on lock
         await conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         yield conn
 
@@ -214,18 +216,17 @@ def file_hash(path: Path, chunk: int = 1 << 20) -> str:
 
 async def demo_exists(demo_id: str) -> bool:
     async with get_connection() as conn:
-        cursor = await conn.execute(
-            "SELECT 1 FROM demos WHERE id = ?", (demo_id,)
-        )
+        cursor = await conn.execute("SELECT 1 FROM demos WHERE id = ?", (demo_id,))
         row = await cursor.fetchone()
         return row is not None
 
 
 async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) -> None:
     """Persist a ParsedDemo into the database."""
-    from parser.demo_parser import ParsedDemo, PARSER_VERSION
-    from datetime import datetime, timezone
     import json as _json
+    from datetime import datetime
+
+    from parser.demo_parser import PARSER_VERSION
 
     async with get_connection() as conn:
         # demos — store parser_version in meta_json so stale caches are detected
@@ -239,7 +240,7 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
                 parsed.match_info.map_name,
                 parsed.match_info.tick_rate,
                 parsed.match_info.total_ticks,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 _json.dumps({"parser_version": PARSER_VERSION}),
                 file_size,
             ),
@@ -256,11 +257,21 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
                 (
-                    demo_id, r.round_number, r.start_tick, r.end_tick,
-                    r.freeze_end_tick, r.winner_team, r.win_reason,
-                    r.ct_score, r.t_score,
-                    r.bomb_planted_tick, r.bomb_defused_tick, r.bomb_exploded_tick,
-                    int(r.is_knife_round), r.ct_equip_value, r.t_equip_value,
+                    demo_id,
+                    r.round_number,
+                    r.start_tick,
+                    r.end_tick,
+                    r.freeze_end_tick,
+                    r.winner_team,
+                    r.win_reason,
+                    r.ct_score,
+                    r.t_score,
+                    r.bomb_planted_tick,
+                    r.bomb_defused_tick,
+                    r.bomb_exploded_tick,
+                    int(r.is_knife_round),
+                    r.ct_equip_value,
+                    r.t_equip_value,
                 )
                 for r in parsed.rounds
             ],
@@ -275,9 +286,7 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
         )
 
         # positions (batch insert for performance)
-        await conn.execute(
-            "DELETE FROM player_positions WHERE demo_id = ?", (demo_id,)
-        )
+        await conn.execute("DELETE FROM player_positions WHERE demo_id = ?", (demo_id,))
         BATCH = 5000
         # Build each batch in-place to avoid holding the full list in memory
         # before the first insert (large demos = 500k+ rows ≈ 40 MB peak).
@@ -288,9 +297,16 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 [
                     (
-                        demo_id, pos.tick, pos.round_number, pos.player_id,
-                        pos.x, pos.y, pos.z, pos.team_num, int(pos.is_alive),
-                        getattr(pos, 'yaw', 0.0),
+                        demo_id,
+                        pos.tick,
+                        pos.round_number,
+                        pos.player_id,
+                        pos.x,
+                        pos.y,
+                        pos.z,
+                        pos.team_num,
+                        int(pos.is_alive),
+                        getattr(pos, "yaw", 0.0),
                     )
                     for pos in parsed.positions[i : i + BATCH]
                 ],
@@ -305,8 +321,14 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
                VALUES (?,?,?,?,?,?,?,?)""",
             [
                 (
-                    demo_id, e.tick, e.round_number, e.event_type,
-                    e.attacker_id, e.victim_id, e.weapon, int(e.headshot),
+                    demo_id,
+                    e.tick,
+                    e.round_number,
+                    e.event_type,
+                    e.attacker_id,
+                    e.victim_id,
+                    e.weapon,
+                    int(e.headshot),
                 )
                 for e in parsed.events
             ],
@@ -322,8 +344,16 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     (
-                        demo_id, g.round_number, g.thrower_id, g.grenade_type,
-                        g.throw_tick, g.detonate_tick, g.x, g.y, g.z, g.expire_tick,
+                        demo_id,
+                        g.round_number,
+                        g.thrower_id,
+                        g.grenade_type,
+                        g.throw_tick,
+                        g.detonate_tick,
+                        g.x,
+                        g.y,
+                        g.z,
+                        g.expire_tick,
                         json.dumps(g.trajectory) if g.trajectory else None,
                     )
                     for g in parsed.grenades
@@ -331,9 +361,7 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
             )
 
         # player_state_events
-        await conn.execute(
-            "DELETE FROM player_state_events WHERE demo_id = ?", (demo_id,)
-        )
+        await conn.execute("DELETE FROM player_state_events WHERE demo_id = ?", (demo_id,))
         if parsed.player_state_events:
             await conn.executemany(
                 """INSERT INTO player_state_events
@@ -341,8 +369,14 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
                    VALUES (?,?,?,?,?,?,?,?)""",
                 [
                     (
-                        demo_id, e.tick, e.round_number, e.player_id,
-                        e.event_type, e.hp, e.armor, e.weapon,
+                        demo_id,
+                        e.tick,
+                        e.round_number,
+                        e.player_id,
+                        e.event_type,
+                        e.hp,
+                        e.armor,
+                        e.weapon,
                     )
                     for e in parsed.player_state_events
                 ],
@@ -351,6 +385,9 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
         await conn.commit()
     logger.info(
         "Stored demo %s (%d positions, %d events, %d grenades, %d state events)",
-        demo_id, len(parsed.positions), len(parsed.events),
-        len(parsed.grenades), len(parsed.player_state_events),
+        demo_id,
+        len(parsed.positions),
+        len(parsed.events),
+        len(parsed.grenades),
+        len(parsed.player_state_events),
     )

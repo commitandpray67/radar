@@ -33,11 +33,11 @@ def _user_data_dir() -> Path:
         # read-only filesystem, extreme permissions), fall back to /tmp so the
         # app can still start rather than crashing on launch.
         import tempfile
+
         fallback = Path(tempfile.gettempdir()) / "cs2radar_data"
         fallback.mkdir(parents=True, exist_ok=True)
         print(
-            f"WARNING: could not create user data dir ({exc}); "
-            f"falling back to {fallback}",
+            f"WARNING: could not create user data dir ({exc}); falling back to {fallback}",
             file=sys.stderr,
         )
         return fallback
@@ -60,8 +60,8 @@ def _pick_free_port() -> int:
 def main() -> None:
     data_dir = _user_data_dir()
 
-    os.environ.setdefault("DATA_DIR",   str(data_dir))
-    os.environ.setdefault("DB_PATH",    str(data_dir / "demos.db"))
+    os.environ.setdefault("DATA_DIR", str(data_dir))
+    os.environ.setdefault("DB_PATH", str(data_dir / "demos.db"))
     os.environ.setdefault("UPLOAD_DIR", str(data_dir / "uploads"))
 
     logs_dir = data_dir / "logs"
@@ -82,10 +82,10 @@ def main() -> None:
         "main:app",
         host="127.0.0.1",
         port=port,
-        reload=False,       # never watch for file changes in a frozen bundle
-        workers=1,          # single worker — SQLite doesn't support multiprocess writes
-        access_log=False,   # reduce log noise; FastAPI middleware handles request logging
-        log_config=None,    # use the logging config set up by main.py
+        reload=False,  # never watch for file changes in a frozen bundle
+        workers=1,  # single worker — SQLite doesn't support multiprocess writes
+        access_log=False,  # reduce log noise; FastAPI middleware handles request logging
+        log_config=None,  # use the logging config set up by main.py
     )
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import bisect
 import math
-from typing import Callable
+from collections.abc import Callable
 
 
 def _rows(df) -> list[dict]:
@@ -16,9 +16,9 @@ def _rows(df) -> list[dict]:
     if isinstance(df, list):
         return df
     try:
-        return df.rows(named=True)      # Polars DataFrame
+        return df.rows(named=True)  # Polars DataFrame
     except AttributeError:
-        return df.to_dict("records")    # Pandas DataFrame
+        return df.to_dict("records")  # Pandas DataFrame
 
 
 def _is_empty(df) -> bool:
@@ -26,9 +26,9 @@ def _is_empty(df) -> bool:
     if isinstance(df, list):
         return len(df) == 0
     try:
-        return df.is_empty()            # Polars
+        return df.is_empty()  # Polars
     except AttributeError:
-        return len(df) == 0             # Pandas / anything with len()
+        return len(df) == 0  # Pandas / anything with len()
 
 
 def _to_int(value, default: int = 0) -> int:
@@ -83,8 +83,8 @@ def _build_round_lookup(rounds: list) -> Callable[[int], int]:
     """
     sorted_rounds = sorted(rounds, key=lambda r: r.start_tick)
     starts = [r.start_tick for r in sorted_rounds]
-    ends   = [r.end_tick   for r in sorted_rounds]
-    nums   = [r.round_number for r in sorted_rounds]
+    ends = [r.end_tick for r in sorted_rounds]
+    nums = [r.round_number for r in sorted_rounds]
 
     def lookup(tick: int) -> int:
         idx = bisect.bisect_right(starts, tick) - 1

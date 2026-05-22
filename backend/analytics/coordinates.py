@@ -17,11 +17,10 @@ go through these functions so that calibration changes propagate everywhere.
 """
 
 import math
-from typing import Optional
+
 import numpy as np
 
 from maps.calibration import MapCalibration, RadarLayer, get_calibration
-
 
 # Standard radar image dimensions (Valve exports 1024×1024 overview images)
 RADAR_IMAGE_SIZE = 1024
@@ -33,7 +32,7 @@ def world_to_radar(
     world_z: float,
     calibration: MapCalibration,
     image_size: int = RADAR_IMAGE_SIZE,
-) -> tuple[float, float, Optional[RadarLayer]]:
+) -> tuple[float, float, RadarLayer | None]:
     """
     Convert a single world-coordinate point to radar pixel coordinates.
 
@@ -59,7 +58,7 @@ def world_to_radar(
         px = cos_a * dx - sin_a * dy + cx
         py = sin_a * dx + cos_a * dy + cy
 
-    layer: Optional[RadarLayer] = None
+    layer: RadarLayer | None = None
     if calibration.is_multilevel:
         layer = calibration.layer_for_z(world_z)
 
@@ -118,9 +117,7 @@ def radar_to_world(
     return world_x, world_y
 
 
-def clamp_to_radar(
-    px: float, py: float, image_size: int = RADAR_IMAGE_SIZE
-) -> tuple[float, float]:
+def clamp_to_radar(px: float, py: float, image_size: int = RADAR_IMAGE_SIZE) -> tuple[float, float]:
     """Clamp pixel coordinates to valid radar image bounds."""
     return (
         max(0.0, min(float(image_size), px)),
@@ -133,9 +130,7 @@ def get_calibration_or_raise(map_name: str) -> MapCalibration:
     cal = get_calibration(map_name)
     if cal is None:
         from maps.calibration import MAP_CALIBRATIONS
+
         known = ", ".join(sorted(MAP_CALIBRATIONS.keys()))
-        raise ValueError(
-            f"No radar calibration found for map '{map_name}'. "
-            f"Known maps: {known}"
-        )
+        raise ValueError(f"No radar calibration found for map '{map_name}'. Known maps: {known}")
     return cal

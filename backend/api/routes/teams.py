@@ -24,7 +24,6 @@ import datetime
 import json
 import logging
 import uuid
-from typing import Optional
 
 import numpy as np
 from fastapi import APIRouter, HTTPException
@@ -43,23 +42,24 @@ router = APIRouter()
 # Pydantic models
 # ---------------------------------------------------------------------------
 
+
 class TeamSessionValidatePayload(BaseModel):
     demo_ids: list[str]
 
 
 class TeamSessionCreatePayload(BaseModel):
-    name:     str
+    name: str
     demo_ids: list[str]
 
 
 class TeamSessionHeatmapPayload(BaseModel):
-    rounds:              list[dict]    # [{"demo_id": str, "round_number": int}]
-    player_ids:          list[str]  = []
-    layer_label:         Optional[str]  = None
-    exclude_freeze_time: bool           = True
-    team_filter:         Optional[str]  = None  # "team" | "opponent" | None
-    sample_every:        int            = 1
-    blur_sigma:          float          = 3.0
+    rounds: list[dict]  # [{"demo_id": str, "round_number": int}]
+    player_ids: list[str] = []
+    layer_label: str | None = None
+    exclude_freeze_time: bool = True
+    team_filter: str | None = None  # "team" | "opponent" | None
+    sample_every: int = 1
+    blur_sigma: float = 3.0
 
 
 class TeamCreatePayload(BaseModel):
@@ -73,6 +73,7 @@ class TeamAddDemosPayload(BaseModel):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 async def _gather_rosters(demo_ids: list[str]) -> list[DemoRoster]:
     """Build DemoRoster objects for the given demo_ids by querying the DB."""
@@ -88,15 +89,12 @@ async def _gather_rosters(demo_ids: list[str]) -> list[DemoRoster]:
         demo_map = {row["id"]: row["map_name"] for row in await cur.fetchall()}
 
         cur = await conn.execute(
-            f"SELECT demo_id, player_id, initial_team FROM players "
-            f"WHERE demo_id IN ({ph})",
+            f"SELECT demo_id, player_id, initial_team FROM players WHERE demo_id IN ({ph})",
             demo_ids,
         )
         rows = await cur.fetchall()
 
-    sides: dict[str, dict[str, set[int]]] = {
-        d: {"CT": set(), "T": set()} for d in demo_ids
-    }
+    sides: dict[str, dict[str, set[int]]] = {d: {"CT": set(), "T": set()} for d in demo_ids}
     for r in rows:
         side = r["initial_team"]
         if side in ("CT", "T"):
@@ -117,14 +115,14 @@ async def _gather_rosters(demo_ids: list[str]) -> list[DemoRoster]:
 async def _enrich_validation(detection, demo_ids: list[str]) -> dict:
     """Attach per-demo file info and roster names to a detection result."""
     out: dict = {
-        "ok":              detection.ok,
-        "error":           detection.error,
-        "map_name":        detection.map_name,
-        "team_sides":      detection.team_sides,
-        "core_roster":     [str(sid) for sid in detection.core_roster],
+        "ok": detection.ok,
+        "error": detection.error,
+        "map_name": detection.map_name,
+        "team_sides": detection.team_sides,
+        "core_roster": [str(sid) for sid in detection.core_roster],
         "extended_roster": [str(sid) for sid in detection.extended_roster],
-        "demos":           [],
-        "roster_names":    {},
+        "demos": [],
+        "roster_names": {},
     }
 
     if not demo_ids:
@@ -133,22 +131,22 @@ async def _enrich_validation(detection, demo_ids: list[str]) -> dict:
     ph = ",".join("?" * len(demo_ids))
     async with get_connection() as conn:
         cur = await conn.execute(
-            f"SELECT id, filename, map_name, parsed_at, file_size FROM demos "
-            f"WHERE id IN ({ph})",
+            f"SELECT id, filename, map_name, parsed_at, file_size FROM demos WHERE id IN ({ph})",
             demo_ids,
         )
         for row in await cur.fetchall():
-            out["demos"].append({
-                "demo_id":   row["id"],
-                "filename":  row["filename"],
-                "map_name":  row["map_name"],
-                "parsed_at": row["parsed_at"],
-                "file_size": row["file_size"],
-            })
+            out["demos"].append(
+                {
+                    "demo_id": row["id"],
+                    "filename": row["filename"],
+                    "map_name": row["map_name"],
+                    "parsed_at": row["parsed_at"],
+                    "file_size": row["file_size"],
+                }
+            )
 
         all_sids = detection.core_roster + [
-            sid for sid in detection.extended_roster
-            if sid not in detection.core_roster
+            sid for sid in detection.extended_roster if sid not in detection.core_roster
         ]
         if all_sids:
             sid_ph = ",".join("?" * len(all_sids))
@@ -177,6 +175,7 @@ def _dedup_ordered(ids: list[str]) -> list[str]:
 # Team session endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.post("/team-sessions/validate")
 async def validate_team_session(payload: TeamSessionValidatePayload) -> dict:
     """
@@ -191,10 +190,10 @@ async def validate_team_session(payload: TeamSessionValidatePayload) -> dict:
         raise HTTPException(422, "Maximum 20 demos per team session")
 
     demo_ids = _dedup_ordered(payload.demo_ids)
-    rosters  = await _gather_rosters(demo_ids)
+    rosters = await _gather_rosters(demo_ids)
 
     if len(rosters) != len(demo_ids):
-        found   = {r.demo_id for r in rosters}
+        found = {r.demo_id for r in rosters}
         missing = [d for d in demo_ids if d not in found]
         raise HTTPException(404, f"Demo(s) not found: {', '.join(missing[:3])}")
 
@@ -211,7 +210,7 @@ async def create_team_session(payload: TeamSessionCreatePayload) -> dict:
         raise HTTPException(422, "Need at least 2 demos to form a team session")
 
     demo_ids = _dedup_ordered(payload.demo_ids)
-    rosters  = await _gather_rosters(demo_ids)
+    rosters = await _gather_rosters(demo_ids)
 
     if len(rosters) != len(demo_ids):
         raise HTTPException(404, "One or more demos no longer exist")
@@ -257,9 +256,9 @@ async def list_team_sessions() -> list[dict]:
 
     return [
         {
-            "id":         r["id"],
-            "name":       r["name"],
-            "map_name":   r["map_name"],
+            "id": r["id"],
+            "name": r["name"],
+            "map_name": r["map_name"],
             "demo_count": len(json.loads(r["demo_ids_json"])),
             "created_at": r["created_at"],
         }
@@ -271,16 +270,14 @@ async def list_team_sessions() -> list[dict]:
 async def get_team_session(session_id: str) -> dict:
     """Return full session details: demos, rounds, roster, sides."""
     async with get_connection() as conn:
-        cur = await conn.execute(
-            "SELECT * FROM team_sessions WHERE id = ?", (session_id,)
-        )
+        cur = await conn.execute("SELECT * FROM team_sessions WHERE id = ?", (session_id,))
         row = await cur.fetchone()
         if not row:
             raise HTTPException(404, "Team session not found")
 
-        demo_ids        = json.loads(row["demo_ids_json"])
-        team_sides      = json.loads(row["team_sides_json"])
-        core_roster     = json.loads(row["core_roster_json"])
+        demo_ids = json.loads(row["demo_ids_json"])
+        team_sides = json.loads(row["team_sides_json"])
+        core_roster = json.loads(row["core_roster_json"])
         extended_roster = json.loads(row["extended_roster_json"])
 
         if not demo_ids:
@@ -295,8 +292,7 @@ async def get_team_session(session_id: str) -> dict:
         demos = [dict(r) for r in await cur.fetchall()]
 
         cur = await conn.execute(
-            f"SELECT * FROM rounds WHERE demo_id IN ({ph}) "
-            f"ORDER BY demo_id, round_number",
+            f"SELECT * FROM rounds WHERE demo_id IN ({ph}) ORDER BY demo_id, round_number",
             demo_ids,
         )
         rounds_rows = [dict(r) for r in await cur.fetchall()]
@@ -313,33 +309,29 @@ async def get_team_session(session_id: str) -> dict:
             for r in await cur.fetchall():
                 roster_names[str(r["player_id"])] = r["name"]
 
-    demo_order  = {d: i for i, d in enumerate(demo_ids)}
+    demo_order = {d: i for i, d in enumerate(demo_ids)}
     demos.sort(key=lambda d: demo_order.get(d["id"], 9999))
-    rounds_rows.sort(
-        key=lambda r: (demo_order.get(r["demo_id"], 9999), r["round_number"])
-    )
+    rounds_rows.sort(key=lambda r: (demo_order.get(r["demo_id"], 9999), r["round_number"]))
 
     return {
-        "id":              row["id"],
-        "name":            row["name"],
-        "map_name":        row["map_name"],
-        "created_at":      row["created_at"],
-        "demo_ids":        demo_ids,
-        "team_sides":      team_sides,
-        "core_roster":     core_roster,
+        "id": row["id"],
+        "name": row["name"],
+        "map_name": row["map_name"],
+        "created_at": row["created_at"],
+        "demo_ids": demo_ids,
+        "team_sides": team_sides,
+        "core_roster": core_roster,
         "extended_roster": extended_roster,
-        "roster_names":    roster_names,
-        "demos":           demos,
-        "rounds":          rounds_rows,
+        "roster_names": roster_names,
+        "demos": demos,
+        "rounds": rounds_rows,
     }
 
 
 @router.delete("/team-sessions/{session_id}")
 async def delete_team_session(session_id: str):
     async with get_connection() as conn:
-        cur = await conn.execute(
-            "DELETE FROM team_sessions WHERE id = ?", (session_id,)
-        )
+        cur = await conn.execute("DELETE FROM team_sessions WHERE id = ?", (session_id,))
         await conn.commit()
         if cur.rowcount == 0:
             raise HTTPException(404, "Team session not found")
@@ -372,8 +364,8 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
         if not row:
             raise HTTPException(404, "Team session not found")
 
-    map_name:   str             = row["map_name"]
-    team_sides: dict[str, str]  = json.loads(row["team_sides_json"])
+    map_name: str = row["map_name"]
+    team_sides: dict[str, str] = json.loads(row["team_sides_json"])
 
     try:
         calibration = get_calibration_or_raise(map_name)
@@ -383,12 +375,10 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
     # Group requested rounds by demo for query batching.
     by_demo: dict[str, list[int]] = {}
     for entry in payload.rounds:
-        d  = entry.get("demo_id")
+        d = entry.get("demo_id")
         rn = entry.get("round_number")
         if not isinstance(d, str) or not isinstance(rn, int):
-            raise HTTPException(
-                422, "Each round entry needs {demo_id: str, round_number: int}"
-            )
+            raise HTTPException(422, "Each round entry needs {demo_id: str, round_number: int}")
         if d not in team_sides:
             raise HTTPException(422, f"Demo {d} is not part of this session")
         by_demo.setdefault(d, []).append(rn)
@@ -396,12 +386,12 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
     # Map team_filter → expected team_num per demo.
     # CS2: CT = 3, T = 2; team_sides tells us which side the team played.
     side_to_num = {"CT": 3, "T": 2}
-    per_demo_team_filter: dict[str, Optional[int]] = {}
+    per_demo_team_filter: dict[str, int | None] = {}
     if payload.team_filter in ("team", "opponent"):
         for d in by_demo:
             team_side = team_sides[d]
-            opp_side  = "T" if team_side == "CT" else "CT"
-            chosen    = team_side if payload.team_filter == "team" else opp_side
+            opp_side = "T" if team_side == "CT" else "CT"
+            chosen = team_side if payload.team_filter == "team" else opp_side
             per_demo_team_filter[d] = side_to_num[chosen]
     else:
         per_demo_team_filter = {d: None for d in by_demo}
@@ -419,7 +409,7 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
     async with get_connection() as conn:
         for demo_id, rounds in by_demo.items():
             round_ph = ",".join("?" * len(rounds))
-            conds    = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
+            conds = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
             qp: list = [demo_id, *rounds]
 
             tn = per_demo_team_filter.get(demo_id)
@@ -450,16 +440,25 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
 
             cur = await conn.execute(query, qp)
             for r in await cur.fetchall():
-                all_rows.append((
-                    r["tick"], r["round_number"], r["player_id"],
-                    r["x"], r["y"], r["z"], r["team_num"],
-                ))
+                all_rows.append(
+                    (
+                        r["tick"],
+                        r["round_number"],
+                        r["player_id"],
+                        r["x"],
+                        r["y"],
+                        r["z"],
+                        r["team_num"],
+                    )
+                )
 
     logger.info(
         "team_session_heatmap: session=%s demos=%d rounds=%d players=%d → sql_rows=%d",
-        session_id, len(by_demo),
+        session_id,
+        len(by_demo),
         sum(len(rs) for rs in by_demo.values()),
-        len(steam_ids), len(all_rows),
+        len(steam_ids),
+        len(all_rows),
     )
 
     if not all_rows:
@@ -468,7 +467,7 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
     positions_np = np.array(all_rows, dtype=np.float64)
 
     request = HeatmapRequest(
-        player_ids=[],     # SQL pre-filtered; float64 is unsafe for SteamID64s
+        player_ids=[],  # SQL pre-filtered; float64 is unsafe for SteamID64s
         round_numbers=[],  # SQL pre-filtered; data is cross-demo so scoping is done above
         map_name=map_name,
         layer_label=payload.layer_label,
@@ -478,19 +477,20 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
         blur_sigma=payload.blur_sigma,
     )
 
-    result  = compute_heatmap(positions_np, request, calibration)
+    result = compute_heatmap(positions_np, request, calibration)
     png_b64 = heatmap_to_base64_png(result)
 
     return {
-        "image":        f"data:image/png;base64,{png_b64}",
+        "image": f"data:image/png;base64,{png_b64}",
         "sample_count": result.sample_count,
-        "layer_label":  result.layer_label,
+        "layer_label": result.layer_label,
     }
 
 
 # ---------------------------------------------------------------------------
 # Team organizer endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/teams")
 async def list_teams_org() -> list[dict]:
@@ -513,7 +513,7 @@ async def create_team_org(payload: TeamCreatePayload) -> dict:
     if not payload.name.strip():
         raise HTTPException(422, "Team name cannot be empty")
 
-    team_id    = str(uuid.uuid4())
+    team_id = str(uuid.uuid4())
     created_at = datetime.datetime.utcnow().isoformat() + "Z"
     async with get_connection() as conn:
         await conn.execute(
@@ -522,8 +522,8 @@ async def create_team_org(payload: TeamCreatePayload) -> dict:
         )
         await conn.commit()
     return {
-        "id":         team_id,
-        "name":       payload.name.strip(),
+        "id": team_id,
+        "name": payload.name.strip(),
         "created_at": created_at,
         "demo_count": 0,
     }
@@ -533,9 +533,7 @@ async def create_team_org(payload: TeamCreatePayload) -> dict:
 async def get_team_org(team_id: str) -> dict:
     """Return team detail with demos grouped by map."""
     async with get_connection() as conn:
-        cur = await conn.execute(
-            "SELECT id, name, created_at FROM teams WHERE id = ?", (team_id,)
-        )
+        cur = await conn.execute("SELECT id, name, created_at FROM teams WHERE id = ?", (team_id,))
         row = await cur.fetchone()
         if not row:
             raise HTTPException(404, "Team not found")
@@ -556,12 +554,11 @@ async def get_team_org(team_id: str) -> dict:
         maps_dict.setdefault(d["map_name"], []).append(d)
 
     return {
-        "id":         row["id"],
-        "name":       row["name"],
+        "id": row["id"],
+        "name": row["name"],
         "created_at": row["created_at"],
         "maps": [
-            {"map_name": mn, "demos": demo_list}
-            for mn, demo_list in sorted(maps_dict.items())
+            {"map_name": mn, "demos": demo_list} for mn, demo_list in sorted(maps_dict.items())
         ],
     }
 

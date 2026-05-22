@@ -53,7 +53,7 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
     _errors: list[str] = []
     for event_name in ("round_end", "round_officially_ended"):
         try:
-            df   = parser.parse_event(event_name, other=["tick", "winner", "reason"])
+            df = parser.parse_event(event_name, other=["tick", "winner", "reason"])
             rows = _rows(df)
             if rows:
                 end_rows = sorted(rows, key=lambda r: r.get("tick", 0))
@@ -77,16 +77,18 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
         except Exception:
             return []
 
-    freeze_ends   = _safe("round_freeze_end", ["tick"])
-    bomb_plants   = _safe("bomb_planted",     ["tick"])
-    bomb_defuses  = _safe("bomb_defused",     ["tick"])
-    bomb_explodes = _safe("bomb_exploded",    ["tick"])
+    freeze_ends = _safe("round_freeze_end", ["tick"])
+    bomb_plants = _safe("bomb_planted", ["tick"])
+    bomb_defuses = _safe("bomb_defused", ["tick"])
+    bomb_explodes = _safe("bomb_exploded", ["tick"])
 
     freeze_rows = sorted(_rows(freeze_ends), key=lambda r: r.get("tick", 0))
 
     logger.info(
         "Raw events: %d round_start, %d round_end, %d freeze_end",
-        len(start_rows), len(end_rows), len(freeze_rows),
+        len(start_rows),
+        len(end_rows),
+        len(freeze_rows),
     )
 
     # ---- Pair each round_end with its closest preceding unused round_start -
@@ -96,8 +98,8 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
 
     for end_row in end_rows:
         end_tick = int(end_row.get("tick", 0))
-        winner   = _parse_winner(end_row.get("winner", ""))
-        reason   = str(end_row.get("reason", "") or "")
+        winner = _parse_winner(end_row.get("winner", ""))
+        reason = str(end_row.get("reason", "") or "")
 
         best_start: int | None = None
         for st in reversed(start_ticks_sorted):
@@ -114,17 +116,24 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
     for i, (s, e, w, rsn) in enumerate(pairs, 1):
         logger.info(
             "  raw R%02d  ticks %d–%d  dur=%d (%.1fs)  winner=%-2s  reason=%s",
-            i, s, e, e - s, (e - s) / tick_rate, w or "--", rsn or "--",
+            i,
+            s,
+            e,
+            e - s,
+            (e - s) / tick_rate,
+            w or "--",
+            rsn or "--",
         )
 
     # ---- Filter 1: reason-code filter (16 = GameStart transition) ----------
     TRANSITION_REASONS = {"16"}
     transition = [(s, e, w, r) for s, e, w, r in pairs if r in TRANSITION_REASONS]
-    pairs      = [(s, e, w, r) for s, e, w, r in pairs if r not in TRANSITION_REASONS]
+    pairs = [(s, e, w, r) for s, e, w, r in pairs if r not in TRANSITION_REASONS]
     if transition:
         logger.info(
             "Removed %d transition round(s) by reason=16: %s",
-            len(transition), [(s, e, rsn) for s, e, _, rsn in transition],
+            len(transition),
+            [(s, e, rsn) for s, e, _, rsn in transition],
         )
 
     # ---- Filter 2: short-duration fallback ---------------------------------
@@ -133,46 +142,47 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
     if short:
         logger.info(
             "Removed %d short round(s) (< %d ticks): %s",
-            len(short), MIN_ROUND_TICKS, [(s, e, e - s) for s, e, _, _ in short],
+            len(short),
+            MIN_ROUND_TICKS,
+            [(s, e, e - s) for s, e, _, _ in short],
         )
 
     logger.info(
         "After filtering: %d rounds from %d starts / %d ends",
-        len(pairs), len(start_ticks_sorted), len(end_rows),
+        len(pairs),
+        len(start_ticks_sorted),
+        len(end_rows),
     )
 
     # ---- Build RoundInfo list ----------------------------------------------
     rounds: list[RoundInfo] = []
     for round_num, (start_tick, end_tick, winner, win_reason) in enumerate(pairs, 1):
-        matching_freezes = [
-            r for r in freeze_rows
-            if start_tick <= r.get("tick", 0) <= end_tick
-        ]
-        freeze_end_tick = (
-            int(matching_freezes[0]["tick"]) if matching_freezes else start_tick
+        matching_freezes = [r for r in freeze_rows if start_tick <= r.get("tick", 0) <= end_tick]
+        freeze_end_tick = int(matching_freezes[0]["tick"]) if matching_freezes else start_tick
+        rounds.append(
+            RoundInfo(
+                round_number=round_num,
+                start_tick=start_tick,
+                end_tick=end_tick,
+                freeze_end_tick=freeze_end_tick,
+                winner_team=winner,
+                win_reason=win_reason,
+                ct_score=0,
+                t_score=0,
+            )
         )
-        rounds.append(RoundInfo(
-            round_number=round_num,
-            start_tick=start_tick,
-            end_tick=end_tick,
-            freeze_end_tick=freeze_end_tick,
-            winner_team=winner,
-            win_reason=win_reason,
-            ct_score=0,
-            t_score=0,
-        ))
 
     # ---- Assign bomb ticks -------------------------------------------------
-    _rn_lookup   = _build_round_lookup(rounds)
+    _rn_lookup = _build_round_lookup(rounds)
     rounds_by_rn = {r.round_number: r for r in rounds}
     for df, attr in [
-        (bomb_plants,   "bomb_planted_tick"),
-        (bomb_defuses,  "bomb_defused_tick"),
+        (bomb_plants, "bomb_planted_tick"),
+        (bomb_defuses, "bomb_defused_tick"),
         (bomb_explodes, "bomb_exploded_tick"),
     ]:
         for bomb_row in _rows(df):
             tick = _to_int(bomb_row.get("tick", 0))
-            rn   = _rn_lookup(tick)
+            rn = _rn_lookup(tick)
             if rn:
                 setattr(rounds_by_rn[rn], attr, tick)
 
@@ -182,14 +192,14 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
             continue
         if r.bomb_exploded_tick is not None:
             r.winner_team = "T"
-            r.win_reason  = "1"
+            r.win_reason = "1"
         elif r.bomb_defused_tick is not None:
             r.winner_team = "CT"
-            r.win_reason  = "7"
+            r.win_reason = "7"
 
     # ---- Knife-round detection ---------------------------------------------
     try:
-        deaths_df  = parser.parse_event("player_death", other=["tick", "weapon"])
+        deaths_df = parser.parse_event("player_death", other=["tick", "weapon"])
         death_rows = _rows(deaths_df)
     except Exception as exc:
         logger.warning("Could not parse player_death for knife detection: %s", exc)
@@ -215,9 +225,7 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
     # ct_score/t_score track the team that STARTED the game as CT/T throughout
     # — after halftime their roles reverse so we flip attribution accordingly.
     non_knife = [r for r in rounds if not r.is_knife_round]
-    halftime_boundary = (
-        non_knife[11].round_number if len(non_knife) > 12 else float("inf")
-    )
+    halftime_boundary = non_knife[11].round_number if len(non_knife) > 12 else float("inf")
     ct_wins = t_wins = 0
     for r in rounds:
         if not r.is_knife_round:
@@ -233,24 +241,32 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
                 elif r.winner_team == "CT":
                     t_wins += 1
         r.ct_score = ct_wins
-        r.t_score  = t_wins
+        r.t_score = t_wins
 
-    knife_count  = sum(1 for r in rounds if r.is_knife_round)
+    knife_count = sum(1 for r in rounds if r.is_knife_round)
     winner_count = sum(1 for r in rounds if r.winner_team)
     logger.info(
         "Extracted %d rounds (%d knife, %d display); winner data: %d/%d",
-        len(rounds), knife_count, len(rounds) - knife_count, winner_count, len(rounds),
+        len(rounds),
+        knife_count,
+        len(rounds) - knife_count,
+        winner_count,
+        len(rounds),
     )
     for r in rounds:
         logger.info(
             "  final R%02d  ticks %d–%d  dur=%d (%.1fs)  winner=%-2s  "
             "reason=%-3s  knife=%s  score=%d:%d",
-            r.round_number, r.start_tick, r.end_tick,
+            r.round_number,
+            r.start_tick,
+            r.end_tick,
             r.end_tick - r.start_tick,
             (r.end_tick - r.start_tick) / tick_rate,
-            r.winner_team or "--", r.win_reason or "--",
+            r.winner_team or "--",
+            r.win_reason or "--",
             "Y" if r.is_knife_round else "N",
-            r.ct_score, r.t_score,
+            r.ct_score,
+            r.t_score,
         )
 
     return rounds
