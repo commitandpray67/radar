@@ -13,7 +13,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import { loadDemoIntoStore } from '../../utils/demoLoading';
-import { classifyEco, ECO_COLOR, ECO_LABEL } from '../../utils/roundUtils';
+import { classifyRoundEco, getPistolRoundNumbers, ECO_COLOR, ECO_LABEL } from '../../utils/roundUtils';
 import type { RoundInfo } from '../../types';
 import styles from './RoundPanel.module.css';
 
@@ -66,6 +66,7 @@ interface RoundRowProps {
   round: RoundInfo;
   displayNum: number;
   halftimeRoundNumber: number | null;
+  pistolRoundNumbers: number[];
   isActive: boolean;
   isHeatmapSelected: boolean;
   plantSite?: string;
@@ -73,11 +74,12 @@ interface RoundRowProps {
 }
 
 const RoundRow: React.FC<RoundRowProps> = ({
-  round: r, displayNum, halftimeRoundNumber, isActive, isHeatmapSelected, plantSite, onClick,
+  round: r, displayNum, halftimeRoundNumber, pistolRoundNumbers,
+  isActive, isHeatmapSelected, plantSite, onClick,
 }) => {
   const score = getDisplaySideScore(r.round_number, halftimeRoundNumber, r.ct_score, r.t_score);
-  const ctEco = classifyEco(r.ct_equip_value ?? 0);
-  const tEco  = classifyEco(r.t_equip_value ?? 0);
+  const ctEco = classifyRoundEco(r, 'CT', pistolRoundNumbers);
+  const tEco  = classifyRoundEco(r, 'T',  pistolRoundNumbers);
   const hasEco = r.ct_equip_value !== undefined || r.t_equip_value !== undefined;
   return (
     <button
@@ -142,6 +144,7 @@ function renderSingleDemoRounds(
   const displayRounds = rounds.filter((r) => !r.is_knife_round);
   const halftimeRoundNumber =
     displayRounds.length >= 12 ? displayRounds[11].round_number : null;
+  const pistolRoundNumbers = getPistolRoundNumbers(displayRounds);
 
   return displayRounds.map((r, idx) => {
     const displayNum = idx + 1;
@@ -177,6 +180,7 @@ function renderSingleDemoRounds(
           round={r}
           displayNum={displayNum}
           halftimeRoundNumber={halftimeRoundNumber}
+          pistolRoundNumbers={pistolRoundNumbers}
           isActive={isActive}
           isHeatmapSelected={isHmSel}
           plantSite={plantSiteByRound.get(r.round_number)}
@@ -268,6 +272,7 @@ const RoundPanel: React.FC = () => {
         side: teamSession.team_sides[demoId] ?? 'CT',
         rounds: demoRounds,
         halftimeRn,
+        pistolRns: getPistolRoundNumbers(demoRounds),
       };
     });
   }, [teamSession]);
@@ -330,6 +335,7 @@ const RoundPanel: React.FC = () => {
                       round={r}
                       displayNum={displayNum}
                       halftimeRoundNumber={g.halftimeRn}
+                      pistolRoundNumbers={g.pistolRns}
                       isActive={isActive}
                       isHeatmapSelected={isHmSel}
                       plantSite={plantSiteByRound.get(r.round_number)}

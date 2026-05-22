@@ -79,8 +79,14 @@ def compute_heatmap(
     Returns a HeatmapResult with a normalised density grid.
     """
     # ---- 1. Filter by round -----------------------------------------------
-    round_mask = np.isin(positions[:, 1].astype(int), request.round_numbers)
-    data = positions[round_mask]
+    # When the caller has pre-filtered rounds in SQL (e.g. team-session heatmap
+    # across multiple demos), it passes an empty list to mean "all rows".
+    # np.isin(x, []) returns all-False, so we must skip the filter here.
+    if request.round_numbers:
+        round_mask = np.isin(positions[:, 1].astype(int), request.round_numbers)
+        data = positions[round_mask]
+    else:
+        data = positions
 
     # ---- 2. Filter by player -----------------------------------------------
     # SteamID64 values (~7.6e16) exceed float64 exact precision (2^53 ≈ 9e15),

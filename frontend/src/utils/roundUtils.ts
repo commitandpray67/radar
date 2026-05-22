@@ -27,9 +27,11 @@ export function getHalftimeRound(displayRounds: RoundInfo[]): number | null {
 // Economy classification
 // ---------------------------------------------------------------------------
 
-export type EcoClass = 'full' | 'force' | 'half' | 'eco';
+export type EcoClass = 'pistol' | 'full' | 'force' | 'half' | 'eco';
 
-/** Classify a single team's equipment value into a buy category. */
+/** Classify a single team's equipment value into a buy category.
+ *  Note: this does NOT detect pistol rounds — callers that need to distinguish
+ *  pistols (round 1 / round 13) must use `classifyRoundEco` instead. */
 export function classifyEco(teamValue: number): EcoClass {
   if (teamValue >= 18000) return 'full';
   if (teamValue >= 9000)  return 'force';
@@ -37,20 +39,41 @@ export function classifyEco(teamValue: number): EcoClass {
   return 'eco';
 }
 
+/** Pistol rounds = first non-knife round of each half. */
+export function getPistolRoundNumbers(displayRounds: RoundInfo[]): number[] {
+  if (displayRounds.length === 0) return [];
+  const out: number[] = [displayRounds[0].round_number];
+  if (displayRounds.length > 12) out.push(displayRounds[12].round_number);
+  return out;
+}
+
+/** Classify a round for the given side, treating pistol rounds specially. */
+export function classifyRoundEco(
+  round: RoundInfo,
+  side: 'CT' | 'T',
+  pistolRoundNumbers: number[],
+): EcoClass {
+  if (pistolRoundNumbers.includes(round.round_number)) return 'pistol';
+  const val = side === 'CT' ? (round.ct_equip_value ?? 0) : (round.t_equip_value ?? 0);
+  return classifyEco(val);
+}
+
 /** Human-readable label for an EcoClass. */
 export const ECO_LABEL: Record<EcoClass, string> = {
-  full:  'Full buy',
-  force: 'Force buy',
-  half:  'Half buy',
-  eco:   'Eco',
+  pistol: 'Pistol',
+  full:   'Full buy',
+  force:  'Force buy',
+  half:   'Half buy',
+  eco:    'Eco',
 };
 
 /** CSS colour for each eco class. */
 export const ECO_COLOR: Record<EcoClass, string> = {
-  full:  '#3a9a4a',  // green
-  force: '#c8a020',  // yellow
-  half:  '#c06030',  // orange
-  eco:   '#8a2020',  // dark red
+  pistol: '#c0c0c0',  // silver — distinct from buy categories
+  full:   '#3a9a4a',  // green
+  force:  '#c8a020',  // yellow
+  half:   '#c06030',  // orange
+  eco:    '#8a2020',  // dark red
 };
 
 /** Filter a round list to those where the given side's economy matches cls. */
@@ -59,10 +82,8 @@ export function getRoundsForEcoClass(
   side: 'CT' | 'T',
   cls: EcoClass,
 ): RoundInfo[] {
-  return rounds.filter((r) => {
-    const val = side === 'CT' ? (r.ct_equip_value ?? 0) : (r.t_equip_value ?? 0);
-    return classifyEco(val) === cls;
-  });
+  const pistolRns = getPistolRoundNumbers(rounds);
+  return rounds.filter((r) => classifyRoundEco(r, side, pistolRns) === cls);
 }
 
 /** Toggle all rounds of (side, cls) in/out of the given selection set. */
@@ -124,11 +145,11 @@ export function getTeamEcoMatches(
   for (const group of getTeamRoundsByDemo(teamSession)) {
     const initial = teamSession.team_sides[group.demoId];
     if (!initial) continue;
+    const pistolRns = getPistolRoundNumbers(group.rounds);
     group.rounds.forEach((r, idx) => {
       const teamSide = sideAfterHalftime(initial, idx < 12);
       if (teamSide !== side) return;
-      const teamEquip = teamSide === 'CT' ? (r.ct_equip_value ?? 0) : (r.t_equip_value ?? 0);
-      if (classifyEco(teamEquip) !== cls) return;
+      if (classifyRoundEco(r, teamSide, pistolRns) !== cls) return;
       out.push(teamRoundKey(group.demoId, r.round_number));
     });
   }

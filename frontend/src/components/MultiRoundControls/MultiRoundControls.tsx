@@ -23,14 +23,16 @@ import {
 import styles from './MultiRoundControls.module.css';
 
 const ECO_TAGS: { side: 'CT' | 'T'; cls: EcoClass; label: string }[] = [
-  { side: 'CT', cls: 'full',  label: 'CT Full'  },
-  { side: 'CT', cls: 'force', label: 'CT Force' },
-  { side: 'CT', cls: 'half',  label: 'CT Half'  },
-  { side: 'CT', cls: 'eco',   label: 'CT Eco'   },
-  { side: 'T',  cls: 'full',  label: 'T Full'   },
-  { side: 'T',  cls: 'force', label: 'T Force'  },
-  { side: 'T',  cls: 'half',  label: 'T Half'   },
-  { side: 'T',  cls: 'eco',   label: 'T Eco'    },
+  { side: 'CT', cls: 'pistol', label: 'CT Pistol' },
+  { side: 'CT', cls: 'full',   label: 'CT Full'   },
+  { side: 'CT', cls: 'force',  label: 'CT Force'  },
+  { side: 'CT', cls: 'half',   label: 'CT Half'   },
+  { side: 'CT', cls: 'eco',    label: 'CT Eco'    },
+  { side: 'T',  cls: 'pistol', label: 'T Pistol'  },
+  { side: 'T',  cls: 'full',   label: 'T Full'    },
+  { side: 'T',  cls: 'force',  label: 'T Force'   },
+  { side: 'T',  cls: 'half',   label: 'T Half'    },
+  { side: 'T',  cls: 'eco',    label: 'T Eco'     },
 ];
 
 const MultiRoundControls: React.FC = () => {
