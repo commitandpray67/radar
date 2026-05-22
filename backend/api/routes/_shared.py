@@ -25,6 +25,15 @@ _DEMO_STORE = _DATA_DIR / "demos"
 _VOICE_CACHE = _DATA_DIR / "voice"
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "500")) * 1_000_000
 
+# Starlette's MultiPartParser caps each file part at 1 MB by default, which
+# rejects real CS2 demos (often 100–500 MB) with a 413 before our handler
+# can return its own size-limit message. Raise the class-level cap to match
+# our configured ceiling so multipart parsing succeeds and the explicit
+# check in routes/demos.py is the authoritative limit.
+from starlette.formparsers import MultiPartParser  # noqa: E402
+
+MultiPartParser.max_file_size = _MAX_UPLOAD_BYTES
+
 
 def _demo_file_path(demo_id: str) -> Path:
     """Persistent location for a demo file (kept after parse for voice extraction)."""
