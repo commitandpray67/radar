@@ -458,9 +458,35 @@ const RadarViewer: React.FC = () => {
   // Multi-round mode
   const isMultiRoundMode        = useAppStore((s) => s.isMultiRoundMode);
   const multiRoundSelectedRounds = useAppStore((s) => s.multiRoundSelectedRounds);
+  const multiRoundTeamKeys       = useAppStore((s) => s.multiRoundTeamKeys);
   const multiRoundSelectedPlayers = useAppStore((s) => s.multiRoundSelectedPlayers);
   const multiRoundRelativeTick   = useAppStore((s) => s.multiRoundRelativeTick);
   const rounds                   = useAppStore((s) => s.rounds);
+  const teamSession              = useAppStore((s) => s.teamSession);
+
+  // Effective multi-round selection as composite "demoId:roundNumber" keys.
+  // In team-session mode this is `multiRoundTeamKeys` directly; otherwise it's
+  // synthesized from the active demo's id and `multiRoundSelectedRounds`.
+  const effectiveMultiKeys = useMemo<string[]>(() => {
+    if (!isMultiRoundMode) return [];
+    if (teamSession) return multiRoundTeamKeys;
+    if (!demo) return [];
+    return multiRoundSelectedRounds.map((rn) => `${demo.id}:${rn}`);
+  }, [isMultiRoundMode, teamSession, demo, multiRoundSelectedRounds, multiRoundTeamKeys]);
+
+  // Resolve a (demoId, roundNumber) pair to its RoundInfo. Uses teamSession.rounds
+  // when in a team session, otherwise the active demo's `rounds`.
+  const resolveRoundInfo = useCallback(
+    (demoId: string, rn: number) => {
+      if (teamSession) {
+        return teamSession.rounds.find(
+          (r) => r.demo_id === demoId && r.round_number === rn,
+        );
+      }
+      return rounds.find((r) => r.round_number === rn);
+    },
+    [teamSession, rounds],
+  );
 
   // ---------------------------------------------------------------------------
   // Calibration
@@ -557,30 +583,34 @@ const RadarViewer: React.FC = () => {
   }, [zoom, canvasSize]);
 
   // ---------------------------------------------------------------------------
-  // Per-round index for multi-round mode (O(n) one pass)
+  // Per-round index for multi-round mode (O(n) one pass).
+  // Keyed by composite "demoId:roundNumber" so the same round_number coming
+  // from different demos in a team session doesn't collide.
   // ---------------------------------------------------------------------------
-  const perRoundData = useMemo<Map<number, { tickIndex: TickIndex; sortedTicks: number[] }> | null>(() => {
-    if (!isMultiRoundMode || multiRoundSelectedRounds.length === 0) return null;
-    const selectedSet = new Set(multiRoundSelectedRounds);
-    const roundIndexes = new Map<number, TickIndex>();
+  const perRoundData = useMemo<Map<string, { tickIndex: TickIndex; sortedTicks: number[] }> | null>(() => {
+    if (!isMultiRoundMode || effectiveMultiKeys.length === 0) return null;
+    const selectedSet = new Set(effectiveMultiKeys);
+    const fallbackDemoId = demo?.id ?? '';
+    const roundIndexes = new Map<string, TickIndex>();
 
     for (const pos of positions) {
-      if (!selectedSet.has(pos.round_number)) continue;
-      // Player filter: if selectedPlayers is non-empty, only include those players
+      const posDemoId = pos.demo_id ?? fallbackDemoId;
+      const key = `${posDemoId}:${pos.round_number}`;
+      if (!selectedSet.has(key)) continue;
       if (multiRoundSelectedPlayers.size > 0 && !multiRoundSelectedPlayers.has(pos.player_id)) continue;
-      if (!roundIndexes.has(pos.round_number)) roundIndexes.set(pos.round_number, new Map());
-      const idx = roundIndexes.get(pos.round_number)!;
+      if (!roundIndexes.has(key)) roundIndexes.set(key, new Map());
+      const idx = roundIndexes.get(key)!;
       let snap = idx.get(pos.tick);
       if (!snap) { snap = new Map(); idx.set(pos.tick, snap); }
       snap.set(pos.player_id, pos);
     }
 
-    const result = new Map<number, { tickIndex: TickIndex; sortedTicks: number[] }>();
-    for (const [rn, idx] of roundIndexes.entries()) {
-      result.set(rn, { tickIndex: idx, sortedTicks: getSortedTicks(idx) });
+    const result = new Map<string, { tickIndex: TickIndex; sortedTicks: number[] }>();
+    for (const [key, idx] of roundIndexes.entries()) {
+      result.set(key, { tickIndex: idx, sortedTicks: getSortedTicks(idx) });
     }
     return result;
-  }, [isMultiRoundMode, multiRoundSelectedRounds, multiRoundSelectedPlayers, positions]);
+  }, [isMultiRoundMode, effectiveMultiKeys, multiRoundSelectedPlayers, positions, demo?.id]);
 
   // ---------------------------------------------------------------------------
   // Player label (number 1-10)
@@ -685,10 +715,13 @@ const RadarViewer: React.FC = () => {
 
     // ---- Multi-round overlay mode ----
     if (isMultiRoundMode && perRoundData) {
-      for (const rn of multiRoundSelectedRounds) {
-        const roundInfo = rounds.find((r) => r.round_number === rn);
+      for (const key of effectiveMultiKeys) {
+        const sep = key.indexOf(':');
+        const dId = key.slice(0, sep);
+        const rn  = parseInt(key.slice(sep + 1), 10);
+        const roundInfo = resolveRoundInfo(dId, rn);
         if (!roundInfo) continue;
-        const rdData = perRoundData.get(rn);
+        const rdData = perRoundData.get(key);
         if (!rdData) continue;
 
         const absoluteTick = roundInfo.freeze_end_tick + multiRoundRelativeTick;
@@ -704,10 +737,16 @@ const RadarViewer: React.FC = () => {
         }
       }
 
-      // Draw grenades for multi-round (selected players only)
+      // Draw grenades for multi-round. In team-session mode grenades are only
+      // loaded for the active demo, so we restrict to keys matching its id.
       if (showGrenades) {
-        for (const rn of multiRoundSelectedRounds) {
-          const roundInfo = rounds.find((r) => r.round_number === rn);
+        const activeDemoId = demo?.id;
+        for (const key of effectiveMultiKeys) {
+          const sep = key.indexOf(':');
+          const dId = key.slice(0, sep);
+          const rn  = parseInt(key.slice(sep + 1), 10);
+          if (teamSession && dId !== activeDemoId) continue;
+          const roundInfo = resolveRoundInfo(dId, rn);
           if (!roundInfo) continue;
           const absoluteTick = roundInfo.freeze_end_tick + multiRoundRelativeTick;
           const roundGrenades = grenades.filter((g) => {
@@ -717,7 +756,7 @@ const RadarViewer: React.FC = () => {
             if (g.expire_tick !== null && absoluteTick >= g.expire_tick) return false;
             return true;
           });
-          const rdData = perRoundData.get(rn);
+          const rdData = perRoundData.get(key);
           for (const g of roundGrenades) {
             const throwSnap = rdData
               ? getSnapshotAtTick(g.throw_tick, rdData.tickIndex, rdData.sortedTicks)
@@ -848,8 +887,8 @@ const RadarViewer: React.FC = () => {
     canvasSize, calibration, snapshot, showDeadPlayers, showTrails, trailSnapshots,
     selectedPlayerIds, playerLabel, isHeatmapMode, demo, showGrenades, showYaw,
     visibleGrenades, tickIndex, sortedTicks, currentTick, zoom, panX, panY,
-    isMultiRoundMode, perRoundData, multiRoundSelectedRounds, multiRoundRelativeTick,
-    multiRoundSelectedPlayers, rounds, grenades,
+    isMultiRoundMode, perRoundData, effectiveMultiKeys, multiRoundRelativeTick,
+    multiRoundSelectedPlayers, rounds, grenades, teamSession, resolveRoundInfo,
     showBomb, events, playerStateEvents, activeRound,
   ]);
 
@@ -917,7 +956,7 @@ const RadarViewer: React.FC = () => {
       )}
       {isMultiRoundMode && (
         <div className={styles.multiRoundBadge}>
-          Multi-round overlay — {multiRoundSelectedRounds.length} rounds
+          Multi-round overlay — {effectiveMultiKeys.length} rounds
         </div>
       )}
       {!demo && (

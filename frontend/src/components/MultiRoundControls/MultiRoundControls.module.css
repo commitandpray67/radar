@@ -159,6 +159,64 @@
   gap: 3px;
 }
 
+/* ── Team-session round groups (per-match grouping) ─────────────── */
+.teamGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.teamGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.teamGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.matchTag {
+  background: #1a3d5c;
+  color: #5b9bd5;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0;
+  flex-shrink: 0;
+}
+
+.matchFile {
+  flex: 1;
+  color: #6a7a8a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.matchSideCT {
+  color: #5b9bd5;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.matchSideT {
+  color: #e07b39;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
 .halfDivider {
   width: 100%;
   height: 1px;

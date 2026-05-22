@@ -121,8 +121,10 @@ interface HeatmapState {
 interface MultiRoundState {
   /** Whether multi-round overlay mode is active */
   isMultiRoundMode: boolean;
-  /** Round numbers included in the overlay */
+  /** Round numbers included in the overlay (single-demo) */
   multiRoundSelectedRounds: number[];
+  /** Composite "demoId:roundNumber" keys in team-session multi-round mode */
+  multiRoundTeamKeys: string[];
   /** SteamID64 player IDs to show (empty = all) */
   multiRoundSelectedPlayers: Set<number>;
   /** Relative tick cursor (0 = freeze_end_tick of each round) */
@@ -132,6 +134,8 @@ interface MultiRoundState {
   setMultiRoundMode: (on: boolean) => void;
   toggleMultiRoundRound: (rn: number) => void;
   setMultiRoundRounds: (rounds: number[]) => void;
+  toggleMultiRoundTeamKey: (key: string) => void;
+  setMultiRoundTeamKeys: (keys: string[]) => void;
   toggleMultiRoundPlayer: (playerId: number) => void;
   setMultiRoundPlayers: (ids: number[]) => void;
   setMultiRoundRelativeTick: (tick: number) => void;
@@ -247,6 +251,7 @@ export const useAppStore = create<AppStore>()(
             selectedRoundsForHeatmap: [],
             isMultiRoundMode: false,
             multiRoundSelectedRounds: [],
+            multiRoundTeamKeys: [],
             multiRoundSelectedPlayers: new Set(),
             multiRoundRelativeTick: 0,
             multiRoundIsPlaying: false,
@@ -360,6 +365,7 @@ export const useAppStore = create<AppStore>()(
       // ----- Multi-round state -----
       isMultiRoundMode: false,
       multiRoundSelectedRounds: [],
+      multiRoundTeamKeys: [],
       multiRoundSelectedPlayers: new Set(),
       multiRoundRelativeTick: 0,
       multiRoundIsPlaying: false,
@@ -398,6 +404,15 @@ export const useAppStore = create<AppStore>()(
         }, false, 'toggleMultiRoundRound'),
       setMultiRoundRounds: (rounds) =>
         set({ multiRoundSelectedRounds: rounds }, false, 'setMultiRoundRounds'),
+      toggleMultiRoundTeamKey: (key) =>
+        set((s) => {
+          const next = s.multiRoundTeamKeys.includes(key)
+            ? s.multiRoundTeamKeys.filter((k) => k !== key)
+            : [...s.multiRoundTeamKeys, key];
+          return { multiRoundTeamKeys: next };
+        }, false, 'toggleMultiRoundTeamKey'),
+      setMultiRoundTeamKeys: (keys) =>
+        set({ multiRoundTeamKeys: keys }, false, 'setMultiRoundTeamKeys'),
       toggleMultiRoundPlayer: (playerId) =>
         set((s) => {
           const next = new Set(s.multiRoundSelectedPlayers);
@@ -417,7 +432,12 @@ export const useAppStore = create<AppStore>()(
       activeDemoId: null,
       teamHeatmapRoundKeys: [],
 
-      setTeamSession: (teamSession) => set({ teamSession }, false, 'setTeamSession'),
+      setTeamSession: (teamSession) =>
+        set({
+          teamSession,
+          teamHeatmapRoundKeys: [],
+          multiRoundTeamKeys: [],
+        }, false, 'setTeamSession'),
       setActiveDemoId: (activeDemoId) => set({ activeDemoId }, false, 'setActiveDemoId'),
       setTeamHeatmapRoundKeys: (teamHeatmapRoundKeys) =>
         set({ teamHeatmapRoundKeys }, false, 'setTeamHeatmapRoundKeys'),

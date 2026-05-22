@@ -5,12 +5,19 @@
  * When active, all selected rounds play simultaneously on the same map,
  * synced from their individual freeze_end_tick (round-relative time = 0).
  * All player dots are rendered in a neutral colour regardless of team.
+ *
+ * Single-demo mode: round numbers selected from the active demo only.
+ * Team-session mode: composite "demoId:roundNumber" keys span all demos in
+ * the session; eco filters operate from the team's perspective (taking each
+ * demo's halftime swap into account).
  */
 
 import React, { useCallback, useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import {
   toRangeString, getHalftimeRound, toggleEcoRounds, getRoundsForEcoClass,
+  getTeamRoundsByDemo, getTeamEcoMatches, toggleTeamEcoRounds,
+  filterPlayersToRoster, teamRoundKey,
   ECO_COLOR, ECO_LABEL, type EcoClass,
 } from '../../utils/roundUtils';
 import styles from './MultiRoundControls.module.css';
@@ -32,21 +39,30 @@ const MultiRoundControls: React.FC = () => {
   const isActive       = useAppStore((s) => s.isMultiRoundMode);
   const selRounds      = useAppStore((s) => s.multiRoundSelectedRounds);
   const selPlayers     = useAppStore((s) => s.multiRoundSelectedPlayers);
+  const teamSession    = useAppStore((s) => s.teamSession);
+  const teamKeys       = useAppStore((s) => s.multiRoundTeamKeys);
 
-  const setMode            = useAppStore((s) => s.setMultiRoundMode);
-  const toggleRound        = useAppStore((s) => s.toggleMultiRoundRound);
-  const setRounds          = useAppStore((s) => s.setMultiRoundRounds);
-  const togglePlayer       = useAppStore((s) => s.toggleMultiRoundPlayer);
-  const setPlayers_        = useAppStore((s) => s.setMultiRoundPlayers);
+  const setMode             = useAppStore((s) => s.setMultiRoundMode);
+  const toggleRound         = useAppStore((s) => s.toggleMultiRoundRound);
+  const setRounds           = useAppStore((s) => s.setMultiRoundRounds);
+  const toggleTeamKey       = useAppStore((s) => s.toggleMultiRoundTeamKey);
+  const setTeamKeys         = useAppStore((s) => s.setMultiRoundTeamKeys);
+  const togglePlayer        = useAppStore((s) => s.toggleMultiRoundPlayer);
+  const setPlayers_         = useAppStore((s) => s.setMultiRoundPlayers);
 
+  // ── Player list: filter to roster in team mode ────────────────────────────
+  const displayPlayers = useMemo(
+    () => filterPlayersToRoster(players, teamSession),
+    [players, teamSession],
+  );
+
+  // ── Single-demo derivations ───────────────────────────────────────────────
   const nonKnifeRounds = useMemo(
     () => rounds.filter((r) => !r.is_knife_round),
     [rounds],
   );
-
   const halftimeRound    = useMemo(() => getHalftimeRound(nonKnifeRounds), [nonKnifeRounds]);
   const halftimeBoundary = halftimeRound ?? Infinity;
-
   const allRoundNums   = useMemo(() => nonKnifeRounds.map((r) => r.round_number), [nonKnifeRounds]);
   const firstHalfNums  = useMemo(
     () => nonKnifeRounds.filter((r) => r.round_number <= halftimeBoundary).map((r) => r.round_number),
@@ -57,16 +73,26 @@ const MultiRoundControls: React.FC = () => {
     [nonKnifeRounds, halftimeBoundary],
   );
 
-  const canActivate = selRounds.length >= 2;
+  // ── Team-session derivations ──────────────────────────────────────────────
+  const teamGroups = useMemo(
+    () => (teamSession ? getTeamRoundsByDemo(teamSession) : []),
+    [teamSession],
+  );
+  const allTeamKeys = useMemo(
+    () => teamGroups.flatMap((g) => g.rounds.map((r) => teamRoundKey(g.demoId, r.round_number))),
+    [teamGroups],
+  );
 
-  const handleActivate = useCallback(() => {
-    if (!canActivate) return;
-    setMode(true);
-  }, [canActivate, setMode]);
+  // ── Selection size / activation ───────────────────────────────────────────
+  const selectionCount = teamSession ? teamKeys.length : selRounds.length;
+  const canActivate    = selectionCount >= 2;
 
-  const handleDeactivate = useCallback(() => {
-    setMode(false);
-  }, [setMode]);
+  const handleActivate   = useCallback(() => { if (canActivate) setMode(true); },  [canActivate, setMode]);
+  const handleDeactivate = useCallback(() => setMode(false), [setMode]);
+
+  // Common helpers for team-mode tag state
+  const teamKeySet = useMemo(() => new Set(teamKeys), [teamKeys]);
+  const selRoundSet = useMemo(() => new Set(selRounds), [selRounds]);
 
   return (
     <div className={styles.root}>
@@ -79,7 +105,9 @@ const MultiRoundControls: React.FC = () => {
       </div>
 
       <p className={styles.hint}>
-        Select 2+ rounds and players, then activate to replay them overlaid on the same map.
+        {teamSession
+          ? 'Pick 2+ rounds from any match, then activate to overlay them on the same map.'
+          : 'Select 2+ rounds and players, then activate to replay them overlaid on the same map.'}
       </p>
 
       {/* ── Players ──────────────────────────────────────────────── */}
@@ -89,7 +117,7 @@ const MultiRoundControls: React.FC = () => {
           <div className={styles.headerActions}>
             <button
               className={styles.smallBtn}
-              onClick={() => setPlayers_(players.map((p) => p.player_id))}
+              onClick={() => setPlayers_(displayPlayers.map((p) => p.player_id))}
             >
               All
             </button>
@@ -101,7 +129,7 @@ const MultiRoundControls: React.FC = () => {
           </div>
         </div>
         <div className={styles.playerList}>
-          {players.map((p, idx) => {
+          {displayPlayers.map((p, idx) => {
             const isSel = selPlayers.has(p.player_id);
             const isCT  = p.initial_team === 'CT';
             return (
@@ -127,46 +155,82 @@ const MultiRoundControls: React.FC = () => {
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
           <span>Rounds</span>
-          {selRounds.length > 0 && (
-            <span className={styles.pill}>{selRounds.length} selected</span>
+          {selectionCount > 0 && (
+            <span className={styles.pill}>{selectionCount} selected</span>
           )}
         </div>
 
-        <div className={styles.quickSelectRow}>
-          <button className={styles.quickBtn} onClick={() => setRounds(allRoundNums)}>
-            All
-          </button>
-          <button
-            className={styles.quickBtn}
-            onClick={() => setRounds(firstHalfNums)}
-            disabled={firstHalfNums.length === 0}
-            title="Rounds 1–12"
-          >
-            1st half
-          </button>
-          <button
-            className={styles.quickBtn}
-            onClick={() => setRounds(secondHalfNums)}
-            disabled={secondHalfNums.length === 0}
-            title="Rounds 13+"
-          >
-            2nd half
-          </button>
-          <button
-            className={`${styles.quickBtn} ${styles.quickBtnClear}`}
-            onClick={() => setRounds([])}
-            disabled={selRounds.length === 0}
-          >
-            Clear
-          </button>
-        </div>
+        {/* Quick-select row */}
+        {teamSession ? (
+          <div className={styles.quickSelectRow}>
+            <button
+              className={styles.quickBtn}
+              onClick={() => setTeamKeys(allTeamKeys)}
+              disabled={allTeamKeys.length === 0}
+            >
+              All
+            </button>
+            <button
+              className={`${styles.quickBtn} ${styles.quickBtnClear}`}
+              onClick={() => setTeamKeys([])}
+              disabled={teamKeys.length === 0}
+            >
+              Clear
+            </button>
+          </div>
+        ) : (
+          <div className={styles.quickSelectRow}>
+            <button className={styles.quickBtn} onClick={() => setRounds(allRoundNums)}>
+              All
+            </button>
+            <button
+              className={styles.quickBtn}
+              onClick={() => setRounds(firstHalfNums)}
+              disabled={firstHalfNums.length === 0}
+              title="Rounds 1–12"
+            >
+              1st half
+            </button>
+            <button
+              className={styles.quickBtn}
+              onClick={() => setRounds(secondHalfNums)}
+              disabled={secondHalfNums.length === 0}
+              title="Rounds 13+"
+            >
+              2nd half
+            </button>
+            <button
+              className={`${styles.quickBtn} ${styles.quickBtnClear}`}
+              onClick={() => setRounds([])}
+              disabled={selRounds.length === 0}
+            >
+              Clear
+            </button>
+          </div>
+        )}
 
+        {/* Eco filter bar */}
         <div className={styles.ecoFilterBar}>
           {ECO_TAGS.map(({ side, cls, label }) => {
-            const matchingNums = getRoundsForEcoClass(nonKnifeRounds, side, cls)
-              .map((r) => r.round_number);
+            if (teamSession) {
+              const matching = getTeamEcoMatches(teamSession, side, cls);
+              if (matching.length === 0) return null;
+              const allOn = matching.every((k) => teamKeySet.has(k));
+              return (
+                <button
+                  key={`${side}-${cls}`}
+                  className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
+                  style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
+                  onClick={() => setTeamKeys(toggleTeamEcoRounds(teamSession, side, cls, teamKeys))}
+                  title={`${label} — ${ECO_LABEL[cls]} (${matching.length} round${matching.length === 1 ? '' : 's'})`}
+                >
+                  {label}
+                </button>
+              );
+            }
+            const matchingNums = getRoundsForEcoClass(nonKnifeRounds, side, cls).map((r) => r.round_number);
             if (matchingNums.length === 0) return null;
-            const allOn = matchingNums.every((n) => selRounds.includes(n));
+            const allOn = matchingNums.every((n) => selRoundSet.has(n));
             return (
               <button
                 key={`${side}-${cls}`}
@@ -182,28 +246,72 @@ const MultiRoundControls: React.FC = () => {
         </div>
 
         {/* Individual round toggles */}
-        <div className={styles.roundGrid}>
-          {nonKnifeRounds.map((r, idx) => {
-            const displayNum = idx + 1;
-            const isSel = selRounds.includes(r.round_number);
-            const isHalf2Start = r.round_number === halftimeBoundary + 1;
-            return (
-              <React.Fragment key={r.round_number}>
-                {isHalf2Start && <div className={styles.halfDivider} />}
-                <button
-                  className={`${styles.roundBtn} ${isSel ? styles.roundBtnSel : ''}`}
-                  onClick={() => toggleRound(r.round_number)}
-                  title={`Round ${displayNum}`}
-                >
-                  {displayNum}
-                </button>
-              </React.Fragment>
-            );
-          })}
-        </div>
+        {teamSession ? (
+          <div className={styles.teamGroups}>
+            {teamGroups.map((g) => (
+              <div key={g.demoId} className={styles.teamGroup}>
+                <div className={styles.teamGroupHeader}>
+                  <span className={styles.matchTag}>M{g.matchNum}</span>
+                  <span className={styles.matchFile} title={g.filename}>{g.filename}</span>
+                  <span
+                    className={teamSession.team_sides[g.demoId] === 'CT' ? styles.matchSideCT : styles.matchSideT}
+                  >
+                    {teamSession.team_sides[g.demoId] ?? '—'}
+                  </span>
+                </div>
+                <div className={styles.roundGrid}>
+                  {g.rounds.map((r, idx) => {
+                    const displayNum = idx + 1;
+                    const key = teamRoundKey(g.demoId, r.round_number);
+                    const isSel = teamKeySet.has(key);
+                    const isHalf2Start = idx === 12;
+                    return (
+                      <React.Fragment key={key}>
+                        {isHalf2Start && <div className={styles.halfDivider} />}
+                        <button
+                          className={`${styles.roundBtn} ${isSel ? styles.roundBtnSel : ''}`}
+                          onClick={() => toggleTeamKey(key)}
+                          title={`M${g.matchNum} · Round ${displayNum}`}
+                        >
+                          {displayNum}
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.roundGrid}>
+            {nonKnifeRounds.map((r, idx) => {
+              const displayNum = idx + 1;
+              const isSel = selRoundSet.has(r.round_number);
+              const isHalf2Start = r.round_number === halftimeBoundary + 1;
+              return (
+                <React.Fragment key={r.round_number}>
+                  {isHalf2Start && <div className={styles.halfDivider} />}
+                  <button
+                    className={`${styles.roundBtn} ${isSel ? styles.roundBtnSel : ''}`}
+                    onClick={() => toggleRound(r.round_number)}
+                    title={`Round ${displayNum}`}
+                  >
+                    {displayNum}
+                  </button>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        )}
 
-        {selRounds.length > 0 && (
+        {/* Summary (only for single-demo; team mode summary inferred from groups) */}
+        {!teamSession && selRounds.length > 0 && (
           <p className={styles.roundsSummary}>{toRangeString(selRounds)}</p>
+        )}
+        {teamSession && teamKeys.length > 0 && (
+          <p className={styles.roundsSummary}>
+            {teamKeys.length} round{teamKeys.length === 1 ? '' : 's'} across matches
+          </p>
         )}
       </div>
 

@@ -13,6 +13,7 @@ import { useAppStore } from '../../store/demoStore';
 import { generateHeatmap, generateTeamHeatmap } from '../../utils/api';
 import {
   toRangeString, getHalftimeRound, toggleEcoRounds, getRoundsForEcoClass,
+  getTeamEcoMatches, toggleTeamEcoRounds, filterPlayersToRoster,
   ECO_COLOR, ECO_LABEL, type EcoClass,
 } from '../../utils/roundUtils';
 import type { PlayerInfo } from '../../types';
@@ -52,6 +53,15 @@ const HeatmapControls: React.FC = () => {
   const setSelectedPlayers   = useAppStore((s) => s.setSelectedPlayers);
   const teamSession          = useAppStore((s) => s.teamSession);
   const teamHeatmapKeys      = useAppStore((s) => s.teamHeatmapRoundKeys);
+  const setTeamHeatmapKeys   = useAppStore((s) => s.setTeamHeatmapRoundKeys);
+
+  // ---------------------------------------------------------------------------
+  // Player list: filter to team roster in team-session mode
+  // ---------------------------------------------------------------------------
+  const displayPlayers = useMemo(
+    () => filterPlayersToRoster(players, teamSession),
+    [players, teamSession],
+  );
 
   // ---------------------------------------------------------------------------
   // Round groups (derived from loaded round data)
@@ -61,6 +71,8 @@ const HeatmapControls: React.FC = () => {
     () => rounds.filter((r) => !r.is_knife_round),
     [rounds],
   );
+
+  const teamKeySet = useMemo(() => new Set(teamHeatmapKeys), [teamHeatmapKeys]);
 
   const halftimeRound    = useMemo(() => getHalftimeRound(nonKnifeRounds), [nonKnifeRounds]);
   const halftimeBoundary = halftimeRound ?? Infinity;
@@ -220,7 +232,7 @@ const HeatmapControls: React.FC = () => {
             </div>
 
             <div className={styles.playerList}>
-              {players.map((p, idx) => {
+              {displayPlayers.map((p, idx) => {
                 const isSelected = selectedPlayers.has(p.player_id);
                 const isCT = p.initial_team === 'CT';
                 return (
@@ -239,31 +251,37 @@ const HeatmapControls: React.FC = () => {
                       <span className={styles.playerName}>{p.name}</span>
                     </button>
 
-                    {/* Side quick-select: sets player + their half-specific rounds */}
-                    <div className={styles.sideButtons}>
-                      <button
-                        className={`${styles.sideBtn} ${styles.tBtn}`}
-                        onClick={() => handleSelectSideRounds(p, 'T')}
-                        title={`Select rounds where ${p.name} plays as T`}
-                      >
-                        T
-                      </button>
-                      <button
-                        className={`${styles.sideBtn} ${styles.ctBtn}`}
-                        onClick={() => handleSelectSideRounds(p, 'CT')}
-                        title={`Select rounds where ${p.name} plays as CT`}
-                      >
-                        CT
-                      </button>
-                    </div>
+                    {/* Side quick-select: sets player + their half-specific rounds.
+                        Hidden in team-session mode where the eco filter bar serves
+                        the equivalent role across all demos. */}
+                    {!teamSession && (
+                      <div className={styles.sideButtons}>
+                        <button
+                          className={`${styles.sideBtn} ${styles.tBtn}`}
+                          onClick={() => handleSelectSideRounds(p, 'T')}
+                          title={`Select rounds where ${p.name} plays as T`}
+                        >
+                          T
+                        </button>
+                        <button
+                          className={`${styles.sideBtn} ${styles.ctBtn}`}
+                          onClick={() => handleSelectSideRounds(p, 'CT')}
+                          title={`Select rounds where ${p.name} plays as CT`}
+                        >
+                          CT
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
 
-            <p className={styles.sideHint}>
-              T / CT → auto-select that player's rounds for that side
-            </p>
+            {!teamSession && (
+              <p className={styles.sideHint}>
+                T / CT → auto-select that player's rounds for that side
+              </p>
+            )}
           </div>
 
           {/* ── Rounds ───────────────────────────────────────────── */}
@@ -286,15 +304,33 @@ const HeatmapControls: React.FC = () => {
                 <div className={styles.quickSelectRow}>
                   <button
                     className={`${styles.quickBtn} ${styles.quickBtnClear}`}
-                    onClick={() => useAppStore.getState().setTeamHeatmapRoundKeys([])}
+                    onClick={() => setTeamHeatmapKeys([])}
                     disabled={teamHeatmapKeys.length === 0}
                   >
                     Clear
                   </button>
                 </div>
+                <div className={styles.ecoFilterBar}>
+                  {ECO_TAGS.map(({ side, cls, label }) => {
+                    const matching = getTeamEcoMatches(teamSession, side, cls);
+                    if (matching.length === 0) return null;
+                    const allOn = matching.every((k) => teamKeySet.has(k));
+                    return (
+                      <button
+                        key={`${side}-${cls}`}
+                        className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
+                        style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
+                        onClick={() => setTeamHeatmapKeys(toggleTeamEcoRounds(teamSession, side, cls, teamHeatmapKeys))}
+                        title={`${label} — ${ECO_LABEL[cls]} (${matching.length} round${matching.length === 1 ? '' : 's'})`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
                 {teamHeatmapKeys.length === 0 ? (
                   <p className={styles.hint}>
-                    Click rounds from any match in the left panel to include them
+                    Click rounds from any match in the left panel, or use the eco filters
                   </p>
                 ) : (
                   <p className={styles.roundsSummary}>

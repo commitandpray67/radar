@@ -32,6 +32,8 @@ const PlaybackControls: React.FC = () => {
   const multiRoundRelativeTick = useAppStore((s) => s.multiRoundRelativeTick);
   const multiRoundIsPlaying    = useAppStore((s) => s.multiRoundIsPlaying);
   const multiRoundRounds       = useAppStore((s) => s.multiRoundSelectedRounds);
+  const multiRoundTeamKeys     = useAppStore((s) => s.multiRoundTeamKeys);
+  const teamSession            = useAppStore((s) => s.teamSession);
 
   const setCurrentTick          = useAppStore((s) => s.setCurrentTick);
   const setIsPlaying            = useAppStore((s) => s.setIsPlaying);
@@ -66,14 +68,29 @@ const PlaybackControls: React.FC = () => {
 
   // ---- Multi-round mode: max relative tick across selected rounds ----
   const multiMaxRelTick = useMemo(() => {
-    if (!isMultiRoundMode || multiRoundRounds.length === 0) return 0;
+    if (!isMultiRoundMode) return 0;
+    if (teamSession) {
+      if (multiRoundTeamKeys.length === 0) return 0;
+      return Math.max(
+        ...multiRoundTeamKeys.map((k) => {
+          const sep = k.indexOf(':');
+          const dId = k.slice(0, sep);
+          const rn  = parseInt(k.slice(sep + 1), 10);
+          const r = teamSession.rounds.find(
+            (x) => x.demo_id === dId && x.round_number === rn,
+          );
+          return r ? r.end_tick - r.freeze_end_tick : 0;
+        }),
+      );
+    }
+    if (multiRoundRounds.length === 0) return 0;
     return Math.max(
       ...multiRoundRounds.map((rn) => {
         const r = rounds.find((x) => x.round_number === rn);
         return r ? r.end_tick - r.freeze_end_tick : 0;
       }),
     );
-  }, [isMultiRoundMode, multiRoundRounds, rounds]);
+  }, [isMultiRoundMode, teamSession, multiRoundTeamKeys, multiRoundRounds, rounds]);
 
   // ---- Event markers for scrubber ----
   const MARKER_TYPES = new Set(['player_death', 'bomb_planted', 'bomb_defused', 'bomb_exploded']);
@@ -135,10 +152,20 @@ const PlaybackControls: React.FC = () => {
       const rStart = activeRoundInfo?.start_tick ?? 0;
       const rEnd   = activeRoundInfo?.end_tick   ?? 0;
       const maxRelTick = s.isMultiRoundMode
-        ? Math.max(0, ...s.multiRoundSelectedRounds.map((rn) => {
-            const r = s.rounds.find((x) => x.round_number === rn);
-            return r ? r.end_tick - r.freeze_end_tick : 0;
-          }))
+        ? (s.teamSession
+            ? Math.max(0, ...s.multiRoundTeamKeys.map((k) => {
+                const sep = k.indexOf(':');
+                const dId = k.slice(0, sep);
+                const rn  = parseInt(k.slice(sep + 1), 10);
+                const r = s.teamSession!.rounds.find(
+                  (x) => x.demo_id === dId && x.round_number === rn,
+                );
+                return r ? r.end_tick - r.freeze_end_tick : 0;
+              }))
+            : Math.max(0, ...s.multiRoundSelectedRounds.map((rn) => {
+                const r = s.rounds.find((x) => x.round_number === rn);
+                return r ? r.end_tick - r.freeze_end_tick : 0;
+              })))
         : 0;
       const advance = ticksPerInterval(s.demo?.tick_rate ?? 64, s.speedMultiplier, 500);
       if (e.code === 'Space') {
@@ -173,7 +200,9 @@ const PlaybackControls: React.FC = () => {
     if (activeRound && activeRound < rounds.length) setActiveRound(activeRound + 1);
   };
 
-  const disabled = !demo || (isMultiRoundMode ? multiRoundRounds.length === 0 : activeRound === null);
+  const disabled = !demo || (isMultiRoundMode
+    ? (teamSession ? multiRoundTeamKeys.length === 0 : multiRoundRounds.length === 0)
+    : activeRound === null);
 
   // ---- Time display ----
   const currentTime = isMultiRoundMode

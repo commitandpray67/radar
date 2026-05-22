@@ -19,6 +19,8 @@ export function useRoundPositions(): void {
   const activeRound            = useAppStore((s) => s.activeRound);
   const isMultiRoundMode       = useAppStore((s) => s.isMultiRoundMode);
   const multiRoundRounds       = useAppStore((s) => s.multiRoundSelectedRounds);
+  const teamSession            = useAppStore((s) => s.teamSession);
+  const multiRoundTeamKeys     = useAppStore((s) => s.multiRoundTeamKeys);
   const setPositions           = useAppStore((s) => s.setPositions);
   const setPositionsLoading    = useAppStore((s) => s.setPositionsLoading);
 
@@ -51,9 +53,9 @@ export function useRoundPositions(): void {
     return () => { controller.abort(); };
   }, [demo?.id, activeRound, isMultiRoundMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Multi-round mode ─────────────────────────────────────────────────────
+  // ── Multi-round mode (single demo) ───────────────────────────────────────
   useEffect(() => {
-    if (!demo || !isMultiRoundMode || multiRoundRounds.length === 0) return;
+    if (!demo || !isMultiRoundMode || teamSession || multiRoundRounds.length === 0) return;
 
     const key = `multi:${demo.id}:${multiRoundRounds.slice().sort().join(',')}`;
     fetchKeyRef.current = key;
@@ -61,7 +63,6 @@ export function useRoundPositions(): void {
 
     const controller = new AbortController();
 
-    // Fetch each round in parallel, then merge into one array
     Promise.all(
       multiRoundRounds.map((rn) =>
         getPositions(demo.id, { round_number: rn }, controller.signal)
@@ -81,5 +82,50 @@ export function useRoundPositions(): void {
       });
 
     return () => { controller.abort(); };
-  }, [demo?.id, isMultiRoundMode, multiRoundRounds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [demo?.id, isMultiRoundMode, teamSession?.id, multiRoundRounds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Multi-round mode (team session, cross-demo) ──────────────────────────
+  useEffect(() => {
+    if (!isMultiRoundMode || !teamSession || multiRoundTeamKeys.length === 0) return;
+
+    const sortedKeys = multiRoundTeamKeys.slice().sort();
+    const key = `multi-team:${teamSession.id}:${sortedKeys.join(',')}`;
+    fetchKeyRef.current = key;
+    setPositionsLoading(true);
+
+    const controller = new AbortController();
+
+    // Parse composite keys into (demoId, roundNumber) tuples
+    const pairs = sortedKeys.map((k) => {
+      const sep = k.indexOf(':');
+      return { demoId: k.slice(0, sep), rn: parseInt(k.slice(sep + 1), 10) };
+    });
+
+    Promise.all(
+      pairs.map(({ demoId, rn }) =>
+        getPositions(demoId, { round_number: rn }, controller.signal)
+      )
+    )
+      .then((perRound: PlayerPosition[][]) => {
+        if (fetchKeyRef.current !== key) return;
+        // Tag each position with its demo_id (the API may not include it).
+        const merged: PlayerPosition[] = [];
+        perRound.forEach((rows, i) => {
+          const demoId = pairs[i].demoId;
+          for (const p of rows) merged.push({ ...p, demo_id: demoId } as PlayerPosition);
+        });
+        // Pass union of round numbers so tick index still indexes them all.
+        const rns = Array.from(new Set(pairs.map((p) => p.rn)));
+        setPositions(merged, rns);
+      })
+      .catch((err) => {
+        if (err?.name === 'CanceledError' || err?.name === 'AbortError') return;
+        console.error('Failed to load team multi-round positions', err);
+      })
+      .finally(() => {
+        if (fetchKeyRef.current === key) setPositionsLoading(false);
+      });
+
+    return () => { controller.abort(); };
+  }, [isMultiRoundMode, teamSession?.id, multiRoundTeamKeys.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 }

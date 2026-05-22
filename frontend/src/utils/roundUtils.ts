@@ -1,4 +1,4 @@
-import type { RoundInfo } from '../types';
+import type { RoundInfo, PlayerInfo, TeamSessionDetail } from '../types';
 
 // Collapse consecutive round numbers into ranges, e.g. [2,3,4,7] → "2–4, 7"
 export function toRangeString(nums: number[]): string {
@@ -79,4 +79,88 @@ export function toggleEcoRounds(
     return current.filter((n) => !matching.includes(n));
   }
   return [...new Set([...current, ...matching])];
+}
+
+// ---------------------------------------------------------------------------
+// Team-session helpers (rounds span multiple demos)
+// ---------------------------------------------------------------------------
+
+/** Composite key for a round in team mode: "<demoId>:<roundNumber>". */
+export function teamRoundKey(demoId: string, roundNumber: number): string {
+  return `${demoId}:${roundNumber}`;
+}
+
+/** Compute the team's side in a round, accounting for halftime swap. */
+function sideAfterHalftime(initial: 'CT' | 'T', isFirstHalf: boolean): 'CT' | 'T' {
+  if (isFirstHalf) return initial;
+  return initial === 'CT' ? 'T' : 'CT';
+}
+
+/** Group team-session rounds by demo (preserves demo_ids order; knife rounds filtered). */
+export function getTeamRoundsByDemo(
+  teamSession: TeamSessionDetail,
+): { demoId: string; matchNum: number; filename: string; rounds: RoundInfo[] }[] {
+  const byDemo = new Map<string, RoundInfo[]>();
+  for (const r of teamSession.rounds) {
+    if (r.is_knife_round) continue;
+    if (!byDemo.has(r.demo_id)) byDemo.set(r.demo_id, []);
+    byDemo.get(r.demo_id)!.push(r);
+  }
+  return teamSession.demo_ids.map((demoId, idx) => ({
+    demoId,
+    matchNum: idx + 1,
+    filename: teamSession.demos.find((d) => d.id === demoId)?.filename ?? demoId.slice(0, 8),
+    rounds: byDemo.get(demoId) ?? [],
+  }));
+}
+
+/** Composite keys for rounds where the team played `side` with eco class `cls`. */
+export function getTeamEcoMatches(
+  teamSession: TeamSessionDetail,
+  side: 'CT' | 'T',
+  cls: EcoClass,
+): string[] {
+  const out: string[] = [];
+  for (const group of getTeamRoundsByDemo(teamSession)) {
+    const initial = teamSession.team_sides[group.demoId];
+    if (!initial) continue;
+    group.rounds.forEach((r, idx) => {
+      const teamSide = sideAfterHalftime(initial, idx < 12);
+      if (teamSide !== side) return;
+      const teamEquip = teamSide === 'CT' ? (r.ct_equip_value ?? 0) : (r.t_equip_value ?? 0);
+      if (classifyEco(teamEquip) !== cls) return;
+      out.push(teamRoundKey(group.demoId, r.round_number));
+    });
+  }
+  return out;
+}
+
+/** Toggle all team-perspective (side, cls) rounds in/out of a composite-key set. */
+export function toggleTeamEcoRounds(
+  teamSession: TeamSessionDetail,
+  side: 'CT' | 'T',
+  cls: EcoClass,
+  current: string[],
+): string[] {
+  const matching = getTeamEcoMatches(teamSession, side, cls);
+  if (matching.length === 0) return current;
+  const matchSet = new Set(matching);
+  const allSelected = matching.every((k) => current.includes(k));
+  if (allSelected) {
+    return current.filter((k) => !matchSet.has(k));
+  }
+  return [...new Set([...current, ...matching])];
+}
+
+/** Filter players to the team roster (core + extended). player_id is SteamID64. */
+export function filterPlayersToRoster(
+  players: PlayerInfo[],
+  teamSession: TeamSessionDetail | null,
+): PlayerInfo[] {
+  if (!teamSession) return players;
+  const roster = new Set<string>([
+    ...teamSession.core_roster,
+    ...teamSession.extended_roster,
+  ]);
+  return players.filter((p) => roster.has(String(p.player_id)));
 }

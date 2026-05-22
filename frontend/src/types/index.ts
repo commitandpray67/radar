@@ -49,6 +49,9 @@ export interface PlayerPosition {
   team_num: number;     // 2 = T, 3 = CT
   is_alive: number;     // 0 | 1 (from SQLite)
   yaw?: number;         // view angle degrees (0=East)
+  /** Tagged client-side in team-session multi-round mode to disambiguate same
+   *  round_number coming from different demos. Undefined in single-demo mode. */
+  demo_id?: string;
 }
 
 export interface GameEvent {
