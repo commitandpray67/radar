@@ -22,10 +22,43 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
 
 from analytics.coordinates import world_to_radar_batch, RADAR_IMAGE_SIZE
 from maps.calibration import MapCalibration
+
+
+def _gaussian_blur(arr: np.ndarray, sigma: float) -> np.ndarray:
+    """Separable Gaussian blur in pure numpy — replaces scipy.ndimage.gaussian_filter."""
+    radius = max(1, int(sigma * 3 + 0.5))
+    x = np.arange(-radius, radius + 1, dtype=np.float64)
+    kernel = np.exp(-0.5 * (x / sigma) ** 2)
+    kernel /= kernel.sum()
+    out = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=1, arr=arr)
+    out = np.apply_along_axis(lambda c: np.convolve(c, kernel, mode="same"), axis=0, arr=out)
+    return out
+
+
+def _make_inferno_lut() -> np.ndarray:
+    """Build a (256, 3) uint8 LUT for the inferno colormap (replaces matplotlib.cm)."""
+    stops = np.array([
+        [0.000, 0.001462, 0.000466, 0.013866],
+        [0.125, 0.091154, 0.043586, 0.238501],
+        [0.250, 0.258234, 0.038571, 0.406485],
+        [0.375, 0.416292, 0.064140, 0.455358],
+        [0.500, 0.578410, 0.148039, 0.404560],
+        [0.625, 0.741388, 0.280198, 0.231214],
+        [0.750, 0.873490, 0.433390, 0.100728],
+        [0.875, 0.964394, 0.648659, 0.160677],
+        [1.000, 0.988362, 0.998364, 0.644924],
+    ], dtype=np.float64)
+    t = np.linspace(0.0, 1.0, 256)
+    r = np.interp(t, stops[:, 0], stops[:, 1])
+    g = np.interp(t, stops[:, 0], stops[:, 2])
+    b = np.interp(t, stops[:, 0], stops[:, 3])
+    return (np.column_stack([r, g, b]) * 255).astype(np.uint8)
+
+
+_INFERNO_LUT: np.ndarray = _make_inferno_lut()
 
 
 @dataclass
@@ -166,7 +199,7 @@ def compute_heatmap(
 
     # ---- 8. Gaussian smoothing --------------------------------------------
     if request.blur_sigma > 0:
-        density_grid = gaussian_filter(density_grid, sigma=request.blur_sigma)
+        density_grid = _gaussian_blur(density_grid, sigma=request.blur_sigma)
 
     # ---- 9. Power transform then normalise --------------------------------
     # Apply sqrt before normalising so that cells visited briefly (movement
@@ -205,30 +238,21 @@ def heatmap_to_rgba(
     colormap: "inferno" (dark→red→orange→yellow) gives warm, intuitive heat.
     alpha_scale: maximum alpha for the hottest cell (0-1).
     """
-    import matplotlib.cm as cm  # only imported when rendering; lightweight dep
-
-    cmap = cm.get_cmap(colormap)
-
-    # Upscale density grid to full image_size using bilinear for smooth edges
     from PIL import Image as PILImage
 
+    # Upscale density grid to full image_size using bilinear for smooth edges
     grid_img = PILImage.fromarray((result.density * 255).astype(np.uint8), mode="L")
-    grid_img = grid_img.resize(
-        (image_size, image_size), resample=PILImage.BILINEAR
-    )
-    density_full = np.array(grid_img) / 255.0  # shape (H, W), [0, 1]
+    grid_img = grid_img.resize((image_size, image_size), resample=PILImage.BILINEAR)
+    density_full = np.array(grid_img) / 255.0  # shape (H, W), values in [0, 1]
 
-    # Apply colormap → shape (H, W, 4) with float [0, 1]
-    rgba = cmap(density_full)  # type: ignore[attr-defined]
+    # Apply inferno colormap via precomputed LUT → (H, W, 3) uint8
+    idx = (density_full * 255).astype(np.uint8)
+    rgb = _INFERNO_LUT[idx]  # (H, W, 3)
 
-    # Alpha: use a mild power curve so medium-density areas (movement paths)
-    # are clearly visible rather than nearly transparent.
-    # density^0.6 compresses the transparency falloff: a cell with density=0.2
-    # gets alpha 0.2^0.6 ≈ 0.34 instead of linear 0.2, making paths visible.
-    rgba[:, :, 3] = (density_full ** 0.6) * alpha_scale
+    # Alpha: power curve so movement paths stay visible (see density^0.6 note above)
+    alpha = ((density_full ** 0.6) * alpha_scale * 255).astype(np.uint8)
 
-    # Convert to uint8
-    return (rgba * 255).astype(np.uint8)
+    return np.dstack([rgb, alpha])
 
 
 def heatmap_to_base64_png(
