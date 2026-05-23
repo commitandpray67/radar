@@ -23,7 +23,7 @@ _UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", str(_DATA_DIR / "uploads")))
 _JOB_MAP_FILE = _DATA_DIR / "jobs" / "job_map.json"
 _DEMO_STORE = _DATA_DIR / "demos"
 _VOICE_CACHE = _DATA_DIR / "voice"
-_MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "500")) * 1_000_000
+_MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "2000")) * 1_000_000
 
 
 def _demo_file_path(demo_id: str) -> Path:

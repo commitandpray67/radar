@@ -17,9 +17,9 @@ import uvicorn
 
 APP_NAME = "CS2Radar"
 
-# Maximum file upload size accepted by the server (500 MB).
+# Maximum file upload size accepted by the server (2 GB default).
 # Exposed as an env var so it can be overridden without a rebuild.
-MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "500")) * 1_000_000
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "2000")) * 1_000_000
 
 
 def _user_data_dir() -> Path:
