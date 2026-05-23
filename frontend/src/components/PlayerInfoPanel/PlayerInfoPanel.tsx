@@ -131,7 +131,7 @@ const PlayerInfoPanel: React.FC = () => {
   // Voice / mute state
   const mutedPlayerIds   = useAppStore((s) => s.mutedPlayerIds);
   const toggleMutePlayer = useAppStore((s) => s.toggleMutePlayer);
-  const muteTeam         = useAppStore((s) => s.muteTeam);
+  const mutePlayers      = useAppStore((s) => s.mutePlayers);
   const muteAll          = useAppStore((s) => s.muteAll);
   const unmuteAll        = useAppStore((s) => s.unmuteAll);
 
@@ -387,8 +387,18 @@ const PlayerInfoPanel: React.FC = () => {
             )}
           </div>
           <div className={styles.voiceBarRow}>
-            <button className={styles.masterMuteBtn} onClick={() => muteTeam('CT')}>Mute CT</button>
-            <button className={styles.masterMuteBtn} onClick={() => muteTeam('T')}>Mute T</button>
+            <button
+              className={styles.masterMuteBtn}
+              onClick={() => mutePlayers(sortedPlayers.ct.map((p) => p.player_id))}
+            >
+              Mute CT
+            </button>
+            <button
+              className={styles.masterMuteBtn}
+              onClick={() => mutePlayers(sortedPlayers.t.map((p) => p.player_id))}
+            >
+              Mute T
+            </button>
             <button className={styles.masterMuteBtn} onClick={muteAll}>Mute All</button>
             <button className={styles.masterMuteBtn} onClick={unmuteAll}>Unmute All</button>
           </div>

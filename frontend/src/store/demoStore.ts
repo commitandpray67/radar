@@ -155,8 +155,8 @@ interface VoiceState {
   /** SteamID64s of players whose voice is muted */
   mutedPlayerIds: Set<number>;
   toggleMutePlayer: (playerId: number) => void;
-  muteTeam: (team: 'CT' | 'T') => void;
-  unmuteTeam: (team: 'CT' | 'T') => void;
+  mutePlayers: (playerIds: number[]) => void;
+  unmutePlayers: (playerIds: number[]) => void;
   muteAll: () => void;
   unmuteAll: () => void;
 }
@@ -469,23 +469,19 @@ export const useAppStore = create<AppStore>()(
           return { mutedPlayerIds: next };
         }, false, 'toggleMutePlayer'),
 
-      muteTeam: (team) =>
+      mutePlayers: (playerIds) =>
         set((s) => {
           const next = new Set(s.mutedPlayerIds);
-          for (const p of s.players) {
-            if (p.initial_team === team) next.add(p.player_id);
-          }
+          for (const id of playerIds) next.add(id);
           return { mutedPlayerIds: next };
-        }, false, 'muteTeam'),
+        }, false, 'mutePlayers'),
 
-      unmuteTeam: (team) =>
+      unmutePlayers: (playerIds) =>
         set((s) => {
           const next = new Set(s.mutedPlayerIds);
-          for (const p of s.players) {
-            if (p.initial_team === team) next.delete(p.player_id);
-          }
+          for (const id of playerIds) next.delete(id);
           return { mutedPlayerIds: next };
-        }, false, 'unmuteTeam'),
+        }, false, 'unmutePlayers'),
 
       muteAll: () =>
         set((s) => ({

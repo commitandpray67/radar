@@ -58,7 +58,7 @@ from ._utils import _rows
 logger = logging.getLogger(__name__)
 
 # Bump when round-extraction or schema logic changes so cached demos are re-parsed.
-PARSER_VERSION = 23
+PARSER_VERSION = 24
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ def parse_demo(
 
     # ---- Game events -------------------------------------------------------
     _progress(0.90, "Extracting game events")
-    events = _extract_events(parser, rounds)
+    events = _extract_events(parser, rounds, map_name=map_name)
 
     # ---- Grenades ----------------------------------------------------------
     _progress(0.92, "Extracting grenade events")

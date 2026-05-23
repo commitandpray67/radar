@@ -58,6 +58,13 @@ const MultiRoundControls: React.FC = () => {
     [players, teamSession],
   );
 
+  // Selected players scope the eco filters to rounds where those players
+  // (not the team overall) were on the requested side.
+  const selectedPlayerInfos = useMemo(
+    () => displayPlayers.filter((p) => selPlayers.has(p.player_id)),
+    [displayPlayers, selPlayers],
+  );
+
   // ── Single-demo derivations ───────────────────────────────────────────────
   const nonKnifeRounds = useMemo(
     () => rounds.filter((r) => !r.is_knife_round),
@@ -230,7 +237,9 @@ const MultiRoundControls: React.FC = () => {
                 </button>
               );
             }
-            const matchingNums = getRoundsForEcoClass(nonKnifeRounds, side, cls).map((r) => r.round_number);
+            const matchingNums = getRoundsForEcoClass(
+              nonKnifeRounds, side, cls, selectedPlayerInfos,
+            ).map((r) => r.round_number);
             if (matchingNums.length === 0) return null;
             const allOn = matchingNums.every((n) => selRoundSet.has(n));
             return (
@@ -238,7 +247,9 @@ const MultiRoundControls: React.FC = () => {
                 key={`${side}-${cls}`}
                 className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
                 style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
-                onClick={() => setRounds(toggleEcoRounds(nonKnifeRounds, side, cls, selRounds))}
+                onClick={() => setRounds(toggleEcoRounds(
+                  nonKnifeRounds, side, cls, selRounds, selectedPlayerInfos,
+                ))}
                 title={`${label} — ${ECO_LABEL[cls]}`}
               >
                 {label}

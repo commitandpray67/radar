@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
+def _extract_events(
+    parser,
+    rounds: list[RoundInfo],
+    map_name: str | None = None,
+) -> list[GameEvent]:
     """Extract kill and bomb events."""
     _rn = _build_round_lookup(rounds)
     events: list[GameEvent] = []
@@ -50,18 +54,39 @@ def _extract_events(parser, rounds: list[RoundInfo]) -> list[GameEvent]:
     except Exception as exc:
         logger.warning("Could not parse player_death events: %s", exc)
 
+    # Resolve bombsite centres for position-based site labelling. demoparser2's
+    # `site` column reports the bombsite trigger's entity index (varies per
+    # map), not a 0/1 site index, so the planter's X/Y is the reliable signal.
+    from maps.calibration import get_calibration  # local import to avoid cycle
+
+    calibration = get_calibration(map_name) if map_name else None
+    site_a = calibration.bombsite_a if calibration else None
+    site_b = calibration.bombsite_b if calibration else None
+
+    def _classify_site(ux: object, uy: object) -> str | None:
+        if site_a is None or site_b is None:
+            return None
+        try:
+            px = float(ux)  # type: ignore[arg-type]
+            py = float(uy)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        da = (px - site_a[0]) ** 2 + (py - site_a[1]) ** 2
+        db = (px - site_b[0]) ** 2 + (py - site_b[1]) ** 2
+        return "A" if da <= db else "B"
+
     # Bomb events
     for event_name in ("bomb_planted", "bomb_defused", "bomb_exploded"):
         try:
-            extra = ["tick", "site"] if event_name == "bomb_planted" else ["tick"]
-            df = parser.parse_event(event_name, other=extra)
+            kwargs: dict = {"other": ["tick"]}
+            if event_name == "bomb_planted":
+                kwargs["player"] = ["X", "Y"]
+            df = parser.parse_event(event_name, **kwargs)
             for row in _rows(df):
                 tick = _to_int(row.get("tick", 0))
                 weapon: str | None = None
                 if event_name == "bomb_planted":
-                    site_raw = row.get("site", row.get("bombsite"))
-                    if site_raw is not None:
-                        weapon = "A" if int(site_raw) == 0 else "B"
+                    weapon = _classify_site(row.get("user_X"), row.get("user_Y"))
                 events.append(
                     GameEvent(
                         tick=tick,

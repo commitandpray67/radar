@@ -47,6 +47,11 @@ class MapCalibration:
     image: str = ""
     # For multi-level maps: ordered list of layers (bottom → top)
     layers: list[RadarLayer] = field(default_factory=list)
+    # Approximate world-coordinate centres of bombsites A and B. Used to label
+    # bomb_planted events by computing which centre the planter is closer to;
+    # leave as None if unknown (events fall back to the parser's site index).
+    bombsite_a: tuple[float, float] | None = None
+    bombsite_b: tuple[float, float] | None = None
 
     @property
     def is_multilevel(self) -> bool:
@@ -74,18 +79,24 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         pos_y=3239.0,
         scale=4.4,
         image="de_dust2.png",
+        bombsite_a=(1240.0, 2540.0),
+        bombsite_b=(-1547.0, 2685.0),
     ),
     "de_mirage": MapCalibration(
         pos_x=-3230.0,
         pos_y=1713.0,
         scale=5.0,
         image="de_mirage.png",
+        bombsite_a=(1175.0, -19.0),
+        bombsite_b=(-1841.0, -1847.0),
     ),
     "de_inferno": MapCalibration(
         pos_x=-2087.0,
         pos_y=3870.0,
         scale=4.9,
         image="de_inferno.png",
+        bombsite_a=(1936.0, 421.0),
+        bombsite_b=(170.0, 2790.0),
     ),
     "de_cache": MapCalibration(
         pos_x=-2000.0,
@@ -98,18 +109,24 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         pos_y=1781.0,
         scale=5.2,
         image="de_overpass.png",
+        bombsite_a=(-3270.0, 100.0),
+        bombsite_b=(-2068.0, 1015.0),
     ),
     "de_ancient": MapCalibration(
         pos_x=-2953.0,
         pos_y=2164.0,
         scale=5.0,
         image="de_ancient.png",
+        bombsite_a=(-470.0, -1340.0),
+        bombsite_b=(-1740.0, 320.0),
     ),
     "de_anubis": MapCalibration(
         pos_x=-2796.0,
         pos_y=3328.0,
         scale=5.22,
         image="de_anubis.png",
+        bombsite_a=(1200.0, 800.0),
+        bombsite_b=(-650.0, -500.0),
     ),
     "de_vertigo": MapCalibration(
         pos_x=-3168.0,
@@ -129,6 +146,8 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
                 label="Upper",
             ),
         ],
+        bombsite_a=(-680.0, -540.0),
+        bombsite_b=(-1990.0, 1490.0),
     ),
     "de_nuke": MapCalibration(
         pos_x=-3453.0,
@@ -148,6 +167,10 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
                 label="Upper",
             ),
         ],
+        # Nuke A/B are stacked vertically; we use rough X/Y centres knowing the
+        # nearest-neighbour check is robust as long as A and B don't collide.
+        bombsite_a=(-700.0, -920.0),
+        bombsite_b=(-700.0, -700.0),
     ),
     # [ESTIMATED] — update once Valve overview file is verified
     "de_train": MapCalibration(
@@ -155,6 +178,8 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         pos_y=2392.0,
         scale=4.7,
         image="de_train.png",
+        bombsite_a=(-475.0, -445.0),
+        bombsite_b=(-1640.0, 405.0),
     ),
     "de_office": MapCalibration(
         pos_x=-1838.0,

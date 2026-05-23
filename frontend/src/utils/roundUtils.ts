@@ -76,14 +76,31 @@ export const ECO_COLOR: Record<EcoClass, string> = {
   eco:    '#8a2020',  // dark red
 };
 
-/** Filter a round list to those where the given side's economy matches cls. */
+/** A player's side in a given round, accounting for the halftime swap.
+ *  `roundIdx` is the position of the round in the display list (knife rounds
+ *  excluded); the first 12 entries are the first half. */
+function playerSideInRound(player: PlayerInfo, roundIdx: number): 'CT' | 'T' {
+  const initial = player.initial_team === 'CT' ? 'CT' : 'T';
+  if (roundIdx < 12) return initial;
+  return initial === 'CT' ? 'T' : 'CT';
+}
+
+/** Filter a round list to those where the given side's economy matches cls.
+ *  If `selectedPlayers` is non-empty, additionally require at least one
+ *  selected player to have been on `side` that round (so e.g. clicking
+ *  "CT Full" with player X selected only matches rounds where X was on CT). */
 export function getRoundsForEcoClass(
   rounds: RoundInfo[],
   side: 'CT' | 'T',
   cls: EcoClass,
+  selectedPlayers: PlayerInfo[] = [],
 ): RoundInfo[] {
   const pistolRns = getPistolRoundNumbers(rounds);
-  return rounds.filter((r) => classifyRoundEco(r, side, pistolRns) === cls);
+  return rounds.filter((r, idx) => {
+    if (classifyRoundEco(r, side, pistolRns) !== cls) return false;
+    if (selectedPlayers.length === 0) return true;
+    return selectedPlayers.some((p) => playerSideInRound(p, idx) === side);
+  });
 }
 
 /** Toggle all rounds of (side, cls) in/out of the given selection set. */
@@ -92,8 +109,11 @@ export function toggleEcoRounds(
   side: 'CT' | 'T',
   cls: EcoClass,
   current: number[],
+  selectedPlayers: PlayerInfo[] = [],
 ): number[] {
-  const matching = getRoundsForEcoClass(rounds, side, cls).map((r) => r.round_number);
+  const matching = getRoundsForEcoClass(rounds, side, cls, selectedPlayers).map(
+    (r) => r.round_number,
+  );
   if (matching.length === 0) return current;
   const allSelected = matching.every((n) => current.includes(n));
   if (allSelected) {

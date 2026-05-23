@@ -67,6 +67,12 @@ const HeatmapControls: React.FC = () => {
     [players, teamSession],
   );
 
+  // Currently-selected players (scopes the eco filters to their rounds).
+  const selectedPlayerInfos = useMemo(
+    () => displayPlayers.filter((p) => selectedPlayers.has(p.player_id)),
+    [displayPlayers, selectedPlayers],
+  );
+
   // ---------------------------------------------------------------------------
   // Round groups (derived from loaded round data)
   // ---------------------------------------------------------------------------
@@ -430,8 +436,9 @@ const HeatmapControls: React.FC = () => {
                 </div>
                 <div className={styles.ecoFilterBar}>
                   {ECO_TAGS.map(({ side, cls, label }) => {
-                    const matchingNums = getRoundsForEcoClass(nonKnifeRounds, side, cls)
-                      .map((r) => r.round_number);
+                    const matchingNums = getRoundsForEcoClass(
+                      nonKnifeRounds, side, cls, selectedPlayerInfos,
+                    ).map((r) => r.round_number);
                     if (matchingNums.length === 0) return null;
                     const allOn = matchingNums.every((n) => heatmapRounds.includes(n));
                     return (
@@ -439,7 +446,9 @@ const HeatmapControls: React.FC = () => {
                         key={`${side}-${cls}`}
                         className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
                         style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
-                        onClick={() => setHeatmapRounds(toggleEcoRounds(nonKnifeRounds, side, cls, heatmapRounds))}
+                        onClick={() => setHeatmapRounds(toggleEcoRounds(
+                          nonKnifeRounds, side, cls, heatmapRounds, selectedPlayerInfos,
+                        ))}
                         title={`${label} — ${ECO_LABEL[cls]}`}
                       >
                         {label}
