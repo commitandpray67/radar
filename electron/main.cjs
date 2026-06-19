@@ -44,6 +44,12 @@ function killBackend() {
 app.on("quit", killBackend);
 process.on("SIGTERM", () => { killBackend(); app.quit(); });
 process.on("SIGINT",  () => { killBackend(); process.exit(0); });
+// A crash in the main process must still reap the backend child, otherwise the
+// spawned radar-server would be orphaned and keep holding its port + SQLite db.
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception in Electron main process:", err);
+  killBackend();
+});
 
 // ---------------------------------------------------------------------------
 // Backend process management

@@ -90,6 +90,69 @@ export function getSnapshotAtTick(
   return index.get(nearest);
 }
 
+// Don't interpolate across gaps larger than this — a big gap usually means a
+// round boundary / respawn, where interpolation would slide dots across the map.
+const MAX_INTERP_GAP_TICKS = 128; // ~2 s at 64 tick
+
+/** Shortest-arc linear interpolation between two angles in degrees. */
+function lerpAngleDeg(a: number, b: number, t: number): number {
+  const diff = ((b - a + 540) % 360) - 180;
+  return a + diff * t;
+}
+
+/**
+ * Like getSnapshotAtTick, but linearly interpolates each player's position
+ * (and view angle) between the nearest sampled ticks before and after `tick`,
+ * giving smooth playback instead of dots stepping every sample interval.
+ *
+ * Interpolation is skipped — falling back to the "before" sample — when there
+ * is no later sample, the gap is too large (round boundary), or a player's
+ * life state / round differs between the two samples.
+ */
+export function getInterpolatedSnapshot(
+  tick: number,
+  index: TickIndex,
+  sortedTicks: number[],
+): TickSnapshot | undefined {
+  if (!sortedTicks.length) return undefined;
+  const i = nearestTickIndex(tick, sortedTicks);
+  if (i === -1) return undefined;
+
+  const beforeTick = sortedTicks[i];
+  const beforeSnap = index.get(beforeTick);
+  if (!beforeSnap) return undefined;
+
+  const afterTick = sortedTicks[i + 1];
+  if (beforeTick === tick || afterTick === undefined) return beforeSnap;
+
+  const gap = afterTick - beforeTick;
+  if (gap <= 0 || gap > MAX_INTERP_GAP_TICKS || tick <= beforeTick) return beforeSnap;
+  const afterSnap = index.get(afterTick);
+  if (!afterSnap) return beforeSnap;
+
+  const frac = (tick - beforeTick) / gap;
+  const out: TickSnapshot = new Map();
+  for (const [pid, b] of beforeSnap.entries()) {
+    const a = afterSnap.get(pid);
+    // Only interpolate when the player exists in both samples with the same
+    // life state and round — never slide a corpse or cross a respawn.
+    if (!a || a.is_alive !== b.is_alive || a.round_number !== b.round_number) {
+      out.set(pid, b);
+      continue;
+    }
+    out.set(pid, {
+      ...b,
+      tick,
+      x: b.x + (a.x - b.x) * frac,
+      y: b.y + (a.y - b.y) * frac,
+      z: b.z + (a.z - b.z) * frac,
+      yaw:
+        b.yaw != null && a.yaw != null ? lerpAngleDeg(b.yaw, a.yaw, frac) : b.yaw,
+    });
+  }
+  return out;
+}
+
 /**
  * Compute the ticks-per-second advancement for the playback timer
  * based on current speed multiplier and tick rate.

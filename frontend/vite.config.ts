@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
+// `mode` is 'production' for `vite build`, 'development' for the dev server.
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
     port: 5173,
@@ -15,6 +16,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Don't ship source maps in production — they expose full source in the
+    // shipped desktop app. Keep them for dev/preview builds.
+    sourcemap: mode !== 'production',
   },
-})
+}))

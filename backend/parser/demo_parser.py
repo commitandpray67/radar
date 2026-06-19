@@ -58,7 +58,7 @@ from ._utils import _rows
 logger = logging.getLogger(__name__)
 
 # Bump when round-extraction or schema logic changes so cached demos are re-parsed.
-PARSER_VERSION = 24
+PARSER_VERSION = 25
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ def parse_demo(
 
     # ---- Grenades ----------------------------------------------------------
     _progress(0.92, "Extracting grenade events")
-    grenades = _extract_grenades(parser, rounds)
+    grenades = _extract_grenades(parser, rounds, tick_rate)
 
     # ---- Economy -----------------------------------------------------------
     _progress(0.93, "Extracting economy data")
@@ -209,6 +209,27 @@ def parse_demo(
         )
         for p in players
     ]
+
+    # ---- Sanity checks -----------------------------------------------------
+    # A demoparser2 schema change (after a CS2 update) can make an event query
+    # return nothing rather than raising, leaving a demo that looks parsed but
+    # is silently missing whole feature sets. Warn loudly so it's visible in
+    # the logs instead of surfacing as a confusing empty UI.
+    non_knife = [r for r in rounds if not r.is_knife_round]
+    if rounds and not events:
+        logger.warning("Demo %s parsed with 0 game events — parser may be out of date", map_name)
+    elif len(non_knife) >= 5 and not any(e.event_type == "player_death" for e in events):
+        logger.warning(
+            "Demo %s has %d rounds but 0 kills — kill extraction likely failed",
+            map_name,
+            len(non_knife),
+        )
+    if len(non_knife) >= 5 and not grenades:
+        logger.warning(
+            "Demo %s has %d rounds but 0 grenades — grenade extraction may have failed",
+            map_name,
+            len(non_knife),
+        )
 
     _progress(1.0, "Parsing complete")
     return ParsedDemo(

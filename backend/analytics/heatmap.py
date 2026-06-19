@@ -263,7 +263,7 @@ def heatmap_to_rgba(
 
     # Upscale density grid to full image_size using bilinear for smooth edges
     grid_img = PILImage.fromarray((result.density * 255).astype(np.uint8), mode="L")
-    grid_img = grid_img.resize((image_size, image_size), resample=PILImage.BILINEAR)
+    grid_img = grid_img.resize((image_size, image_size), resample=PILImage.Resampling.BILINEAR)
     density_full = np.array(grid_img) / 255.0  # shape (H, W), values in [0, 1]
 
     # Apply inferno colormap via precomputed LUT → (H, W, 3) uint8

@@ -151,7 +151,9 @@ def _build_tracks(bucket_sorted: list[dict]) -> list[list[dict]]:
 # ---------------------------------------------------------------------------
 
 
-def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
+def _extract_grenades(
+    parser, rounds: list[RoundInfo], tick_rate: float = 64.0
+) -> list[GrenadeEvent]:
     """Match weapon_fire (throw) events to detonation events, attach trajectories."""
     _rn = _build_round_lookup(rounds)
 
@@ -296,7 +298,10 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         logger.warning("Could not extract trajectories via parse_grenades(): %s", exc)
 
     # ---- Match throws to detonations ---------------------------------------
-    MAX_FLIGHT_TICKS = 448
+    # Flight/effect tick budgets below are calibrated at 64 tick; scale them so
+    # 128-tick demos get correct durations (e.g. a smoke is ~18 s on any rate).
+    _tick_scale = tick_rate / 64.0 if tick_rate and tick_rate > 0 else 1.0
+    MAX_FLIGHT_TICKS = int(round(448 * _tick_scale))
     used_det: set[int] = set()
     grenades: list[GrenadeEvent] = []
 
@@ -317,9 +322,12 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
             diff = det["tick"] - throw["tick"]
             if diff < 0 or diff > MAX_FLIGHT_TICKS:
                 continue
-            if det["thrower_id"] and throw["thrower_id"]:
-                if det["thrower_id"] != throw["thrower_id"]:
-                    continue
+            # thrower_id 0 = unknown (world/bot); only enforce a match when both
+            # the throw and the detonation have a known, non-zero thrower.
+            det_thrower = det["thrower_id"]
+            throw_thrower = throw["thrower_id"]
+            if det_thrower and throw_thrower and det_thrower != throw_thrower:
+                continue
             if diff < best_diff:
                 best_diff = diff
                 best_idx = i
@@ -338,6 +346,9 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
         used_det.add(best_idx)
         det = detonations[best_idx]
         nade_type = throw["grenade_type"]
+        # Throws with an unknown grenade type are skipped at creation time, so
+        # this is always a concrete string here (narrows str | None for mypy).
+        assert nade_type is not None
 
         # Nearest-neighbour expire-tick lookup (200-unit radius)
         expire_tick: int | None = None
@@ -349,7 +360,8 @@ def _extract_grenades(parser, rounds: list[RoundInfo]) -> list[GrenadeEvent]:
                 if expire_tick is None or candidate["tick"] < expire_tick:
                     expire_tick = candidate["tick"]
         if expire_tick is None:
-            expire_tick = det["tick"] + _EFFECT_TICKS.get(nade_type, 64)
+            base_ticks = _EFFECT_TICKS.get(nade_type, 64)
+            expire_tick = det["tick"] + int(round(base_ticks * _tick_scale))
 
         grenades.append(
             GrenadeEvent(

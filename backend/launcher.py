@@ -37,7 +37,11 @@ def _user_data_dir() -> Path:
         fallback = Path(tempfile.gettempdir()) / "cs2radar_data"
         fallback.mkdir(parents=True, exist_ok=True)
         print(
-            f"WARNING: could not create user data dir ({exc}); falling back to {fallback}",
+            "=" * 70 + "\n"
+            f"WARNING: could not create the normal user data dir ({exc}).\n"
+            f"Falling back to a TEMP directory: {fallback}\n"
+            "Data stored here (your parsed demo cache) may be DELETED on reboot "
+            "and will NOT persist. Fix your home-directory permissions to keep data.\n" + "=" * 70,
             file=sys.stderr,
         )
         return fallback

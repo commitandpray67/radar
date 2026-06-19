@@ -45,8 +45,8 @@ export async function listDemos(): Promise<DemoMeta[]> {
   return res.data;
 }
 
-export async function getDemo(demoId: string): Promise<DemoMeta> {
-  const res = await http.get(`/demos/${demoId}`);
+export async function getDemo(demoId: string, signal?: AbortSignal): Promise<DemoMeta> {
+  const res = await http.get(`/demos/${demoId}`, { signal });
   return res.data;
 }
 
@@ -130,13 +130,13 @@ export function watchParseStatus(
 // Rounds / Players / Positions / Events
 // ---------------------------------------------------------------------------
 
-export async function getRounds(demoId: string): Promise<RoundInfo[]> {
-  const res = await http.get(`/demos/${demoId}/rounds`);
+export async function getRounds(demoId: string, signal?: AbortSignal): Promise<RoundInfo[]> {
+  const res = await http.get(`/demos/${demoId}/rounds`, { signal });
   return res.data;
 }
 
-export async function getPlayers(demoId: string): Promise<PlayerInfo[]> {
-  const res = await http.get(`/demos/${demoId}/players`);
+export async function getPlayers(demoId: string, signal?: AbortSignal): Promise<PlayerInfo[]> {
+  const res = await http.get(`/demos/${demoId}/players`, { signal });
   return res.data;
 }
 
@@ -163,8 +163,9 @@ export async function getPositions(
 export async function getEvents(
   demoId: string,
   params: { round_number?: number; event_type?: string } = {},
+  signal?: AbortSignal,
 ): Promise<GameEvent[]> {
-  const res = await http.get(`/demos/${demoId}/events`, { params });
+  const res = await http.get(`/demos/${demoId}/events`, { params, signal });
   return res.data;
 }
 
@@ -175,8 +176,9 @@ export async function getEvents(
 export async function getGrenades(
   demoId: string,
   params: { round_number?: number } = {},
+  signal?: AbortSignal,
 ): Promise<GrenadeEvent[]> {
-  const res = await http.get(`/demos/${demoId}/grenades`, { params });
+  const res = await http.get(`/demos/${demoId}/grenades`, { params, signal });
   return (res.data as Array<Record<string, unknown>>).map((g) => {
     const raw = g.trajectory;
     let trajectory: GrenadeEvent['trajectory'] = null;
@@ -203,11 +205,12 @@ export async function getGrenades(
 export async function getPlayerStateEvents(
   demoId: string,
   params: { round_number?: number; player_ids?: number[] } = {},
+  signal?: AbortSignal,
 ): Promise<PlayerStateEvent[]> {
   const query: Record<string, string | number> = {};
   if (params.round_number !== undefined) query.round_number = params.round_number;
   if (params.player_ids?.length) query.player_ids = params.player_ids.join(',');
-  const res = await http.get(`/demos/${demoId}/player-state-events`, { params: query });
+  const res = await http.get(`/demos/${demoId}/player-state-events`, { params: query, signal });
   return res.data;
 }
 

@@ -12,6 +12,7 @@ import asyncio
 import json
 import math
 import os
+import tempfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -52,7 +53,18 @@ def _persist_job_mapping(job_id: str, demo_id: str) -> None:
                 data = {}
         data[job_id] = demo_id
         _JOB_MAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _JOB_MAP_FILE.write_text(json.dumps(data))
+        # Atomic write: a crash mid-write must not corrupt the whole map.
+        fd, tmp = tempfile.mkstemp(dir=str(_JOB_MAP_FILE.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps(data))
+            os.replace(tmp, _JOB_MAP_FILE)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except Exception:
         pass  # non-fatal
 

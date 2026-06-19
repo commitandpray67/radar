@@ -40,6 +40,7 @@ import logging
 import random
 import struct
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +305,7 @@ def extract_voice_for_round(
         from demoparser2 import DemoParser  # noqa: PLC0415
 
         parser = DemoParser(demo_path)
-        all_packets: list[dict] = parser.parse_voice()
+        all_packets: list[Any] = parser.parse_voice()
     except Exception as exc:
         logger.error("parse_voice() failed for %s: %s", demo_path, exc)
         return {}

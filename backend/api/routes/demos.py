@@ -274,18 +274,16 @@ async def parse_status_stream(job_id: str):
             await asyncio.sleep(0.5)
 
         if job is None:
+            # Resolve ONLY via the persisted job→demo mapping. We must not guess
+            # "the most recent demo" here: that could report a completely
+            # unrelated demo as this job's result.
             demo_id_hint = _load_job_demo_id(job_id)
             row = None
-            async with get_connection() as conn:
-                if demo_id_hint:
+            if demo_id_hint:
+                async with get_connection() as conn:
                     cur = await conn.execute(
                         "SELECT id, filename, map_name FROM demos WHERE id = ?",
                         (demo_id_hint,),
-                    )
-                    row = await cur.fetchone()
-                if row is None:
-                    cur = await conn.execute(
-                        "SELECT id, filename, map_name FROM demos ORDER BY parsed_at DESC LIMIT 1"
                     )
                     row = await cur.fetchone()
 
@@ -315,7 +313,7 @@ async def parse_status_stream(job_id: str):
         while True:
             job = _parse_jobs.get(job_id, job)
             yield f"data: {json.dumps(_sanitize_nan(job))}\n\n"
-            if job["status"] in ("complete", "error"):
+            if job is None or job["status"] in ("complete", "error"):
                 return
             await asyncio.sleep(0.5)
 

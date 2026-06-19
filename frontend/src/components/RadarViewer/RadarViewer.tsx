@@ -28,6 +28,7 @@ import { TEAM_COLORS } from '../../types';
 import Killfeed from '../Killfeed/Killfeed';
 import { worldToCanvas, type CalibrationParams } from '../../utils/coordinates';
 import {
+  getInterpolatedSnapshot,
   getSnapshotAtTick,
   getSortedTicks,
   nearestTickIndex,
@@ -72,6 +73,11 @@ const RadarViewer: React.FC = () => {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const radarImgRef  = useRef<HTMLImageElement | null>(null);
+  const dprRef       = useRef(1);
+  // Off-screen canvas caching the static background (radar image or grid
+  // placeholder). Rebuilt only when its inputs change, then blitted per frame.
+  const bgCanvasRef  = useRef<HTMLCanvasElement | null>(null);
+  const bgKeyRef     = useRef('');
   const [canvasSize, setCanvasSize] = useState(600);
 
   const { zoom, panX, panY, isDragging, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, resetView } =
@@ -190,6 +196,23 @@ const RadarViewer: React.FC = () => {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // Size the canvas backing store for the device pixel ratio so rendering is
+  // crisp on HiDPI / Retina displays. CSS size stays at canvasSize logical px,
+  // so click math and the drawing coordinate system are unaffected.
+  // ---------------------------------------------------------------------------
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    dprRef.current = dpr;
+    canvas.width = Math.max(1, Math.round(canvasSize * dpr));
+    canvas.height = Math.max(1, Math.round(canvasSize * dpr));
+    canvas.style.width = `${canvasSize}px`;
+    canvas.style.height = `${canvasSize}px`;
+    bgKeyRef.current = ''; // force background cache rebuild at new size/dpr
+  }, [canvasSize]);
+
+  // ---------------------------------------------------------------------------
   // Per-round index for multi-round mode (O(n) one pass).
   // Keyed by composite "demoId:roundNumber" so the same round_number from
   // different demos in a team session doesn't collide.
@@ -253,7 +276,7 @@ const RadarViewer: React.FC = () => {
   // Current snapshot (single-round mode)
   // ---------------------------------------------------------------------------
   const snapshot = useMemo<TickSnapshot | undefined>(
-    () => getSnapshotAtTick(currentTick, tickIndex, sortedTicks),
+    () => getInterpolatedSnapshot(currentTick, tickIndex, sortedTicks),
     [currentTick, tickIndex, sortedTicks],
   );
 
@@ -262,6 +285,9 @@ const RadarViewer: React.FC = () => {
   // ---------------------------------------------------------------------------
   const visibleGrenades = useMemo<GrenadeEvent[]>(() => {
     if (!showGrenades || activeRound === null) return [];
+    // Scale the fallback effect duration to this demo's tick rate (the defaults
+    // are calibrated at 64 tick, so a 128-tick demo needs ~2× the ticks).
+    const tickScale = demo && demo.tick_rate > 0 ? demo.tick_rate / 64 : 1;
     return grenades.filter((g) => {
       if (g.round_number !== activeRound) return false;
       if (currentTick < g.throw_tick) return false;
@@ -270,12 +296,29 @@ const RadarViewer: React.FC = () => {
       const effectiveExpire =
         g.expire_tick ??
         (g.detonate_tick !== null
-          ? g.detonate_tick + (DEFAULT_EFFECT_TICKS[g.grenade_type] ?? 64)
+          ? g.detonate_tick + Math.round((DEFAULT_EFFECT_TICKS[g.grenade_type] ?? 64) * tickScale)
           : null);
       if (effectiveExpire !== null && currentTick >= effectiveExpire) return false;
       return true;
     });
-  }, [showGrenades, grenades, activeRound, currentTick]);
+  }, [showGrenades, grenades, activeRound, currentTick, demo]);
+
+  // ---------------------------------------------------------------------------
+  // C4 equip events for the active round, sorted by tick. Precomputed so the
+  // draw loop doesn't linear-scan ALL player-state events every frame to find
+  // the current bomb carrier.
+  // ---------------------------------------------------------------------------
+  const c4EquipsThisRound = useMemo<Array<{ tick: number; playerId: number }>>(() => {
+    if (activeRound === null) return [];
+    const out: Array<{ tick: number; playerId: number }> = [];
+    for (const ev of playerStateEvents) {
+      if (ev.round_number !== activeRound || ev.event_type !== 'equip') continue;
+      const w = typeof ev.weapon === 'string' ? ev.weapon.toLowerCase().trim() : '';
+      const norm = w.startsWith('weapon_') || w.startsWith('item_') ? w : w ? `weapon_${w}` : '';
+      if (norm === 'weapon_c4') out.push({ tick: ev.tick, playerId: ev.player_id });
+    }
+    return out.sort((a, b) => a.tick - b.tick);
+  }, [playerStateEvents, activeRound]);
 
   // ---------------------------------------------------------------------------
   // Main draw function
@@ -286,39 +329,65 @@ const RadarViewer: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const dpr = dprRef.current;
+    // Base transform scales everything by the device pixel ratio (HiDPI), then
+    // the per-frame pan/zoom is layered on top.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, canvasSize, canvasSize);
     ctx.save();
     ctx.translate(panX, panY);
     ctx.scale(zoom, zoom);
 
-    // Background
-    if (radarImgRef.current) {
-      ctx.drawImage(radarImgRef.current, 0, 0, canvasSize, canvasSize);
-    } else {
-      ctx.fillStyle = '#1a2332';
-      ctx.fillRect(0, 0, canvasSize, canvasSize);
-      ctx.strokeStyle = '#2a3a52';
-      ctx.lineWidth = 1;
-      const step = canvasSize / 8;
-      for (let i = 0; i <= 8; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * step, 0);
-        ctx.lineTo(i * step, canvasSize);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, i * step);
-        ctx.lineTo(canvasSize, i * step);
-        ctx.stroke();
+    // Background — rebuild the cached off-screen layer only when its inputs
+    // change, then blit it. Avoids re-running the grid/text draw every frame.
+    const ensureBackground = (): HTMLCanvasElement | null => {
+      const hasImg = !!radarImgRef.current;
+      const key = `${canvasSize}|${dpr}|${hasImg ? '1' : '0'}|${demo?.map_name ?? ''}`;
+      if (bgKeyRef.current === key && bgCanvasRef.current) return bgCanvasRef.current;
+      let bg = bgCanvasRef.current;
+      if (!bg) {
+        bg = document.createElement('canvas');
+        bgCanvasRef.current = bg;
       }
-      ctx.fillStyle = '#4a5a6a';
-      ctx.font = '14px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(
-        demo ? `${demo.map_name} — radar image not found` : 'No demo loaded',
-        canvasSize / 2,
-        canvasSize / 2,
-      );
-    }
+      bg.width = Math.max(1, Math.round(canvasSize * dpr));
+      bg.height = Math.max(1, Math.round(canvasSize * dpr));
+      const bctx = bg.getContext('2d');
+      if (!bctx) return null;
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      bctx.clearRect(0, 0, canvasSize, canvasSize);
+      if (radarImgRef.current) {
+        bctx.drawImage(radarImgRef.current, 0, 0, canvasSize, canvasSize);
+      } else {
+        bctx.fillStyle = '#1a2332';
+        bctx.fillRect(0, 0, canvasSize, canvasSize);
+        bctx.strokeStyle = '#2a3a52';
+        bctx.lineWidth = 1;
+        const step = canvasSize / 8;
+        for (let i = 0; i <= 8; i++) {
+          bctx.beginPath();
+          bctx.moveTo(i * step, 0);
+          bctx.lineTo(i * step, canvasSize);
+          bctx.stroke();
+          bctx.beginPath();
+          bctx.moveTo(0, i * step);
+          bctx.lineTo(canvasSize, i * step);
+          bctx.stroke();
+        }
+        bctx.fillStyle = '#4a5a6a';
+        bctx.font = '14px Inter, sans-serif';
+        bctx.textAlign = 'center';
+        bctx.fillText(
+          demo ? `${demo.map_name} — radar image not found` : 'No demo loaded',
+          canvasSize / 2,
+          canvasSize / 2,
+        );
+      }
+      bgKeyRef.current = key;
+      return bg;
+    };
+
+    const bgCanvas = ensureBackground();
+    if (bgCanvas) ctx.drawImage(bgCanvas, 0, 0, canvasSize, canvasSize);
 
     if (!calibration) {
       ctx.restore();
@@ -441,10 +510,13 @@ const RadarViewer: React.FC = () => {
         const { cx: txCx, cy: txCy } = throwerPos
           ? worldToCanvas(throwerPos.x, throwerPos.y, calibration, canvasSize)
           : { cx: dxCx, cy: dxCy };
-        const trajectoryPoints = (g.trajectory ?? []).map((pt) => {
-          const { cx, cy } = worldToCanvas(pt.x, pt.y, calibration, canvasSize);
-          return { tick: pt.tick, cx, cy };
-        });
+        const trajectoryPoints = (g.trajectory ?? [])
+          .filter((pt) => pt.x != null && pt.y != null)
+          .map((pt) => {
+            const { cx, cy } = worldToCanvas(pt.x, pt.y, calibration, canvasSize);
+            return { tick: pt.tick, cx, cy };
+          })
+          .filter((pt) => isFinite(pt.cx) && isFinite(pt.cy));
         drawGrenade(ctx, g, currentTick, txCx, txCy, dxCx, dxCy, canvasSize, trajectoryPoints);
       }
     }
@@ -504,14 +576,11 @@ const RadarViewer: React.FC = () => {
       const bombRoundInfo = rounds.find((r) => r.round_number === activeRound);
       const bombPlantedTick = bombRoundInfo?.bomb_planted_tick ?? null;
       if (bombPlantedTick === null || currentTick < bombPlantedTick) {
+        // Last C4 equip at or before the current tick (events are pre-sorted).
         let carrierId: number | null = null;
-        for (const ev of playerStateEvents) {
-          if (ev.round_number !== activeRound) continue;
-          if (ev.tick > currentTick) continue;
-          const w = typeof ev.weapon === 'string' ? ev.weapon.toLowerCase().trim() : '';
-          const norm =
-            w.startsWith('weapon_') || w.startsWith('item_') ? w : w ? `weapon_${w}` : '';
-          if (ev.event_type === 'equip' && norm === 'weapon_c4') carrierId = ev.player_id;
+        for (const e of c4EquipsThisRound) {
+          if (e.tick > currentTick) break;
+          carrierId = e.playerId;
         }
         if (carrierId !== null) {
           const carrierPos = snapshot.get(carrierId);
@@ -560,7 +629,7 @@ const RadarViewer: React.FC = () => {
     resolveRoundInfo,
     showBomb,
     events,
-    playerStateEvents,
+    c4EquipsThisRound,
     activeRound,
   ]);
 
@@ -607,8 +676,6 @@ const RadarViewer: React.FC = () => {
       )}
       <canvas
         ref={canvasRef}
-        width={canvasSize}
-        height={canvasSize}
         className={styles.canvas}
         style={{ cursor: isDragging.current ? 'grabbing' : zoom > 1 ? 'grab' : 'default' }}
         onClick={handleCanvasClick}
