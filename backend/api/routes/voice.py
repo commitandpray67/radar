@@ -21,11 +21,17 @@ from ._shared import _demo_file_path, _voice_dir
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Fallback window (seconds) added past a round's end when it has no following
+# round (the final round of the match) and extended playback is requested.
+# Comfortably covers mp_round_restart_delay plus a little post-round buffer.
+_POST_ROUND_DELAY_S = 12.0
+
 
 @router.get("/demos/{demo_id}/voice")
 async def get_voice_manifest(
     demo_id: str,
     round_number: int = Query(...),
+    extended: bool = Query(False),
 ):
     """
     Return a voice manifest for a specific round.
@@ -33,6 +39,11 @@ async def get_voice_manifest(
     Extraction is lazy: OGG Opus clips are generated on first request and
     cached for subsequent calls.  Returns available=False when the demo has
     no voice data or its source file is no longer on disk.
+
+    When ``extended`` is set the extraction window is stretched past round
+    end to the next round's start (i.e. through the post-round restart delay)
+    so voice communication during that period is not lost.  Extended clips are
+    cached separately from the standard round-only clips.
     """
     async with get_connection() as conn:
         cur = await conn.execute("SELECT tick_rate FROM demos WHERE id = ?", (demo_id,))
@@ -54,15 +65,38 @@ async def get_voice_manifest(
         )
         player_rows = await cur.fetchall()
 
+        next_start_tick: int | None = None
+        if extended:
+            cur = await conn.execute(
+                "SELECT start_tick FROM rounds "
+                "WHERE demo_id = ? AND round_number > ? "
+                "ORDER BY round_number LIMIT 1",
+                (demo_id, round_number),
+            )
+            next_row = await cur.fetchone()
+            if next_row is not None:
+                next_start_tick = int(next_row["start_tick"])
+
     tick_rate: float = demo_row["tick_rate"] or 64.0
     start_tick: int = round_row["start_tick"]
     end_tick: int = round_row["end_tick"]
     name_map: dict[int, str] = {r["player_id"]: r["name"] for r in player_rows}
 
+    # Effective extraction window.  Extended mode reaches into the post-round
+    # restart delay: up to the next round's freeze start (where that round's
+    # own window begins), or a fixed buffer past end for the final round.
+    extract_start = start_tick
+    extract_end = end_tick
+    if extended:
+        if next_start_tick is not None and next_start_tick > end_tick:
+            extract_end = next_start_tick
+        else:
+            extract_end = end_tick + int(_POST_ROUND_DELAY_S * tick_rate)
+
     empty_response = {
         "round_number": round_number,
-        "start_tick": start_tick,
-        "end_tick": end_tick,
+        "start_tick": extract_start,
+        "end_tick": extract_end,
         "tick_rate": tick_rate,
         "available": False,
         "players": [],
@@ -77,7 +111,7 @@ async def get_voice_manifest(
         )
         return empty_response
 
-    voice_dir = _voice_dir(demo_id, round_number)
+    voice_dir = _voice_dir(demo_id, round_number, extended)
     loop = asyncio.get_event_loop()
     from voice.extractor import extract_voice_for_round
 
@@ -86,8 +120,8 @@ async def get_voice_manifest(
             None,
             lambda: extract_voice_for_round(
                 str(demo_path),
-                start_tick,
-                end_tick,
+                extract_start,
+                extract_end,
                 tick_rate,
                 voice_dir,
             ),
@@ -101,13 +135,14 @@ async def get_voice_manifest(
         )
         return empty_response
 
+    ext_q = "?extended=true" if extended else ""
     players = []
     for steamid, clip_list in clip_map.items():
         clips = [
             {
                 "start_tick": clip_start_tick,
                 "audio_url": (
-                    f"/api/demos/{demo_id}/voice/{round_number}/{steamid}_{clip_idx}.ogg"
+                    f"/api/demos/{demo_id}/voice/{round_number}/{steamid}_{clip_idx}.ogg{ext_q}"
                 ),
             }
             for clip_idx, (clip_start_tick, _) in enumerate(clip_list)
@@ -122,8 +157,8 @@ async def get_voice_manifest(
 
     return {
         "round_number": round_number,
-        "start_tick": start_tick,
-        "end_tick": end_tick,
+        "start_tick": extract_start,
+        "end_tick": extract_end,
         "tick_rate": tick_rate,
         "available": bool(players),
         "players": players,
@@ -131,8 +166,17 @@ async def get_voice_manifest(
 
 
 @router.get("/demos/{demo_id}/voice/{round_number}/{filename}.ogg")
-async def get_voice_audio(demo_id: str, round_number: int, filename: str):
-    """Serve a cached per-player OGG Opus clip for a specific round."""
+async def get_voice_audio(
+    demo_id: str,
+    round_number: int,
+    filename: str,
+    extended: bool = Query(False),
+):
+    """Serve a cached per-player OGG Opus clip for a specific round.
+
+    ``extended`` must match the flag the manifest was requested with so the
+    correct cache sub-directory (round-only vs. round+restart-delay) is used.
+    """
     # Validate path components to prevent directory traversal.
     # demo_id: 64-char hex SHA-256; round_number: typed int by FastAPI;
     # filename: <steamid>_<clip_idx> pattern.
@@ -143,7 +187,7 @@ async def get_voice_audio(demo_id: str, round_number: int, filename: str):
     if not re.fullmatch(r"\d+_\d+", filename):
         raise HTTPException(400, "Invalid audio filename")
 
-    ogg_path = _voice_dir(demo_id, round_number) / f"{filename}.ogg"
+    ogg_path = _voice_dir(demo_id, round_number, extended) / f"{filename}.ogg"
     if not ogg_path.exists():
         raise HTTPException(404, "Voice audio not found — request the manifest first")
 

@@ -32,9 +32,15 @@ def _demo_file_path(demo_id: str) -> Path:
     return _DEMO_STORE / f"{demo_id}.dem"
 
 
-def _voice_dir(demo_id: str, round_number: int) -> Path:
-    """Cache directory for voice OGG files for one round."""
-    return _VOICE_CACHE / demo_id / str(round_number)
+def _voice_dir(demo_id: str, round_number: int, extended: bool = False) -> Path:
+    """Cache directory for voice OGG files for one round.
+
+    Extended windows (round + post-round restart delay) are cached in a
+    separate ``{round}_ext`` sub-directory so their clips never collide with
+    the standard round-only clips.
+    """
+    sub = f"{round_number}_ext" if extended else str(round_number)
+    return _VOICE_CACHE / demo_id / sub
 
 
 # ---------------------------------------------------------------------------

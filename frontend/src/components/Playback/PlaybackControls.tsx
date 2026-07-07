@@ -25,6 +25,8 @@ const PlaybackControls: React.FC = () => {
   const showBomb      = useAppStore((s) => s.showBomb);
   const showGrenades  = useAppStore((s) => s.showGrenades);
   const showYaw       = useAppStore((s) => s.showYaw);
+  const extendedPlayback   = useAppStore((s) => s.extendedPlayback);
+  const continuousPlayback = useAppStore((s) => s.continuousPlayback);
   const events        = useAppStore((s) => s.events);
 
   // Multi-round mode
@@ -44,6 +46,8 @@ const PlaybackControls: React.FC = () => {
   const toggleShowBomb          = useAppStore((s) => s.toggleShowBomb);
   const toggleShowGrenades      = useAppStore((s) => s.toggleShowGrenades);
   const toggleShowYaw           = useAppStore((s) => s.toggleShowYaw);
+  const toggleExtendedPlayback  = useAppStore((s) => s.toggleExtendedPlayback);
+  const toggleContinuousPlayback = useAppStore((s) => s.toggleContinuousPlayback);
   const setMultiRoundRelTick    = useAppStore((s) => s.setMultiRoundRelativeTick);
   const setMultiRoundIsPlaying  = useAppStore((s) => s.setMultiRoundIsPlaying);
 
@@ -59,6 +63,35 @@ const PlaybackControls: React.FC = () => {
   // including buy-phase communication.  Multi-round mode is unaffected (uses 0).
   const roundStart = roundInfo?.start_tick ?? 0;
   const roundEnd   = roundInfo?.end_tick ?? 0;
+  const tickRate   = demo?.tick_rate ?? 64;
+
+  // ---- Extended playback window (single-round only) ----
+  // When enabled, playback runs past round end through the post-round restart
+  // delay — up to the next round's freeze start (where that round begins), or
+  // a fixed buffer past end for the final round.  Lets the user hear voice
+  // comms that happen after the round is decided.
+  const effectiveEnd = useMemo(() => {
+    if (!extendedPlayback || isMultiRoundMode || !roundInfo) return roundEnd;
+    const idx = rounds.findIndex((r) => r.round_number === activeRound);
+    const next = idx >= 0 ? rounds[idx + 1] : undefined;
+    if (next && next.start_tick > roundEnd) return next.start_tick;
+    return roundEnd + Math.round(tickRate * 12);
+  }, [extendedPlayback, isMultiRoundMode, roundInfo, rounds, activeRound, roundEnd, tickRate]);
+
+  // Advance to the next round and keep playing (continuous playback).
+  // Returns false when there is no next round (playback should then stop).
+  const advanceToNextRoundContinuous = useCallback((): boolean => {
+    const s = useAppStore.getState();
+    const idx = s.rounds.findIndex((r) => r.round_number === s.activeRound);
+    const next = idx >= 0 ? s.rounds[idx + 1] : undefined;
+    if (!next) return false;
+    // setActiveRound resets currentTick to the round start and pauses; resume
+    // immediately so playback flows seamlessly into the next round.
+    s.setActiveRound(next.round_number);
+    s.setIsPlaying(true);
+    lastTickAtRef.current = null;
+    return true;
+  }, []);
 
   // Display round number = position among non-knife rounds (1-indexed)
   const displayRounds = rounds.filter((r) => !r.is_knife_round);
@@ -96,13 +129,13 @@ const PlaybackControls: React.FC = () => {
   const MARKER_TYPES = new Set(['player_death', 'bomb_planted', 'bomb_defused', 'bomb_exploded']);
   const activeRoundEvents = useMemo(() => {
     if (isMultiRoundMode || activeRound === null || !roundInfo) return [];
-    const span = roundEnd - roundStart;
+    const span = effectiveEnd - roundStart;
     if (span <= 0) return [];
     return events
       .filter((e) => e.round_number === activeRound && MARKER_TYPES.has(e.event_type))
       .map((e) => ({ ...e, pct: ((e.tick - roundStart) / span) * 100 }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, activeRound, roundStart, roundEnd, isMultiRoundMode, roundInfo]);
+  }, [events, activeRound, roundStart, effectiveEnd, isMultiRoundMode, roundInfo]);
 
   // ---- Playback tick function ----
   const tick = useCallback(() => {
@@ -120,11 +153,20 @@ const PlaybackControls: React.FC = () => {
       // Don't auto-stop; user controls the timeline manually
     } else {
       if (!roundInfo) return;
-      const next = Math.min(roundEnd, useAppStore.getState().currentTick + advance);
+      const next = Math.min(effectiveEnd, useAppStore.getState().currentTick + advance);
       setCurrentTick(next);
-      if (next >= roundEnd) setIsPlaying(false);
+      if (next >= effectiveEnd) {
+        // At the end of the (possibly extended) window: either roll into the
+        // next round or stop.  Continuous playback only applies when extended.
+        if (extendedPlayback && continuousPlayback) {
+          if (!advanceToNextRoundContinuous()) setIsPlaying(false);
+        } else {
+          setIsPlaying(false);
+        }
+      }
     }
-  }, [demo, roundInfo, speed, roundEnd, multiMaxRelTick, isMultiRoundMode,
+  }, [demo, roundInfo, speed, effectiveEnd, multiMaxRelTick, isMultiRoundMode,
+      extendedPlayback, continuousPlayback, advanceToNextRoundContinuous,
       setCurrentTick, setIsPlaying, setMultiRoundRelTick]);
 
   // ---- Interval management ----
@@ -151,6 +193,15 @@ const PlaybackControls: React.FC = () => {
       const activeRoundInfo = s.rounds.find((r) => r.round_number === s.activeRound);
       const rStart = activeRoundInfo?.start_tick ?? 0;
       const rEnd   = activeRoundInfo?.end_tick   ?? 0;
+      // Extended playback stretches the right edge into the post-round window.
+      let rEffEnd = rEnd;
+      if (s.extendedPlayback && !s.isMultiRoundMode && activeRoundInfo) {
+        const idx = s.rounds.findIndex((r) => r.round_number === s.activeRound);
+        const nxt = idx >= 0 ? s.rounds[idx + 1] : undefined;
+        rEffEnd = (nxt && nxt.start_tick > rEnd)
+          ? nxt.start_tick
+          : rEnd + Math.round((s.demo?.tick_rate ?? 64) * 12);
+      }
       const maxRelTick = s.isMultiRoundMode
         ? (s.teamSession
             ? Math.max(0, ...s.multiRoundTeamKeys.map((k) => {
@@ -179,7 +230,7 @@ const PlaybackControls: React.FC = () => {
         if (s.isMultiRoundMode) {
           s.setMultiRoundRelativeTick(Math.min(maxRelTick, s.multiRoundRelativeTick + advance));
         } else {
-          s.setCurrentTick(Math.min(rEnd, s.currentTick + advance));
+          s.setCurrentTick(Math.min(rEffEnd, s.currentTick + advance));
         }
       } else if (e.code === 'ArrowLeft') {
         if (s.isMultiRoundMode) {
@@ -210,10 +261,10 @@ const PlaybackControls: React.FC = () => {
     : (roundInfo ? tickToTime(currentTick, roundInfo.start_tick, demo?.tick_rate ?? 64) : '0:00');
   const endTime = isMultiRoundMode
     ? tickToTime(multiMaxRelTick, 0, demo?.tick_rate ?? 64)
-    : (roundInfo ? tickToTime(roundInfo.end_tick, roundInfo.start_tick, demo?.tick_rate ?? 64) : '0:00');
+    : (roundInfo ? tickToTime(effectiveEnd, roundInfo.start_tick, demo?.tick_rate ?? 64) : '0:00');
 
   const sliderMin   = isMultiRoundMode ? 0 : roundStart;
-  const sliderMax   = isMultiRoundMode ? (multiMaxRelTick || 1) : (roundEnd || roundStart + 1);
+  const sliderMax   = isMultiRoundMode ? (multiMaxRelTick || 1) : (effectiveEnd || roundStart + 1);
   const sliderValue = isMultiRoundMode ? multiRoundRelativeTick : currentTick;
 
   const handleSliderChange = (v: number) => {
@@ -347,6 +398,22 @@ const PlaybackControls: React.FC = () => {
             >
               💣
             </button>
+            <button
+              className={`${styles.toggleBtn} ${extendedPlayback ? styles.on : ''}`}
+              onClick={toggleExtendedPlayback}
+              title="Extended playback — include freeze time + post-round restart delay (hear all voice comms)"
+            >
+              ⏱
+            </button>
+            {extendedPlayback && (
+              <button
+                className={`${styles.toggleBtn} ${continuousPlayback ? styles.on : ''}`}
+                onClick={toggleContinuousPlayback}
+                title="Continuous playback — auto-advance to the next round"
+              >
+                ⏭
+              </button>
+            )}
           </>
         )}
         <button

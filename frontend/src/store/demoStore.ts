@@ -82,6 +82,13 @@ interface PlaybackState {
   showGrenades: boolean;
   showYaw: boolean;
 
+  /** Extend single-round playback to cover freeze time + post-round restart
+   *  delay so voice comms in those windows can be heard. */
+  extendedPlayback: boolean;
+  /** When extended playback is on, auto-advance to the next round at the end
+   *  instead of pausing. */
+  continuousPlayback: boolean;
+
   selectedPlayerIds: Set<number>;
 
   setActiveRound: (round: number | null) => void;
@@ -94,6 +101,8 @@ interface PlaybackState {
   toggleShowBomb: () => void;
   toggleShowGrenades: () => void;
   toggleShowYaw: () => void;
+  toggleExtendedPlayback: () => void;
+  toggleContinuousPlayback: () => void;
   togglePlayerSelection: (playerId: number) => void;
   setSelectedPlayers: (ids: number[]) => void;
   clearSelectedPlayers: () => void;
@@ -244,6 +253,8 @@ export const useAppStore = create<AppStore>()(
             activeRound: null,
             currentTick: 0,
             isPlaying: false,
+            extendedPlayback: false,
+            continuousPlayback: false,
             heatmapResult: null,
             heatmapLoading: false,
             heatmapError: null,
@@ -275,6 +286,8 @@ export const useAppStore = create<AppStore>()(
       showBomb: true,
       showGrenades: true,
       showYaw: false,
+      extendedPlayback: false,
+      continuousPlayback: false,
       selectedPlayerIds: new Set(),
 
       setActiveRound: (round) => {
@@ -308,6 +321,17 @@ export const useAppStore = create<AppStore>()(
         set((s) => ({ showGrenades: !s.showGrenades }), false, 'toggleShowGrenades'),
       toggleShowYaw: () =>
         set((s) => ({ showYaw: !s.showYaw }), false, 'toggleShowYaw'),
+      toggleExtendedPlayback: () =>
+        set((s) => (
+          // Turning extended playback off also disables continuous playback,
+          // since the continuous toggle only exists while extended is on.
+          s.extendedPlayback
+            ? { extendedPlayback: false, continuousPlayback: false }
+            : { extendedPlayback: true }
+        ), false, 'toggleExtendedPlayback'),
+      toggleContinuousPlayback: () =>
+        set((s) => ({ continuousPlayback: !s.continuousPlayback }), false,
+          'toggleContinuousPlayback'),
       togglePlayerSelection: (playerId) =>
         set((s) => {
           const next = new Set(s.selectedPlayerIds);

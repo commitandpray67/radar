@@ -262,10 +262,14 @@ export interface VoiceManifest {
 export async function getVoiceManifest(
   demoId: string,
   roundNumber: number,
+  extended = false,
 ): Promise<VoiceManifest> {
-  const res = await http.get(`/demos/${demoId}/voice`, {
-    params: { round_number: roundNumber },
-  });
+  const params: Record<string, string | number | boolean> = {
+    round_number: roundNumber,
+  };
+  // Only send the flag when set so the non-extended cache path is unchanged.
+  if (extended) params.extended = true;
+  const res = await http.get(`/demos/${demoId}/voice`, { params });
   return res.data;
 }
 

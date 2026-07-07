@@ -58,6 +58,7 @@ export function useVoiceLines(): {
   const rounds           = useAppStore((s) => s.rounds);
   const isMultiRoundMode = useAppStore((s) => s.isMultiRoundMode);
   const isHeatmapMode    = useAppStore((s) => s.isHeatmapMode);
+  const extendedPlayback = useAppStore((s) => s.extendedPlayback);
   const isPlaying        = useAppStore((s) => s.isPlaying);
   const currentTick      = useAppStore((s) => s.currentTick);
   const mutedPlayerIds   = useAppStore((s) => s.mutedPlayerIds);
@@ -173,7 +174,7 @@ export function useVoiceLines(): {
 
     (async () => {
       try {
-        const manifest = await getVoiceManifest(demo.id, activeRound);
+        const manifest = await getVoiceManifest(demo.id, activeRound, extendedPlayback);
         if (cancelled) return;
 
         tickRateRef.current = manifest.tick_rate;
@@ -243,7 +244,7 @@ export function useVoiceLines(): {
       stopAll();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo?.id, activeRound, isMultiRoundMode, isHeatmapMode]);
+  }, [demo?.id, activeRound, isMultiRoundMode, isHeatmapMode, extendedPlayback]);
 
   // ── Sync playback with isPlaying / currentTick ────────────────────────────
 
