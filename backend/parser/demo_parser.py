@@ -58,7 +58,7 @@ from ._utils import _rows
 logger = logging.getLogger(__name__)
 
 # Bump when round-extraction or schema logic changes so cached demos are re-parsed.
-PARSER_VERSION = 26
+PARSER_VERSION = 27
 
 
 # ---------------------------------------------------------------------------

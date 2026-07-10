@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from parser._events import _extract_player_state_events, _inventory_item_to_token
+from parser._grenades import _extract_grenades
 from parser.demo_parser import RoundInfo, _extract_positions
 
 
@@ -122,3 +123,64 @@ def test_inventory_sampling_produces_equip_events() -> None:
     assert by_player[222] == {"awp", "usp_silencer", "hegrenade"}
     # Dedup: exactly one AK-47 equip despite two inventory entries.
     assert sum(1 for e in equips if e.player_id == 111 and e.weapon == "ak47") == 1
+
+
+# ---------------------------------------------------------------------------
+# Grenade trajectory fallback (no weapon_fire events)
+# ---------------------------------------------------------------------------
+
+
+class GrenadeDummyParser:
+    """Simulates a demo with NO weapon_fire / detonation events, but WITH
+    parse_grenades() projectile trajectories — the case where utility
+    stopped rendering because grenades are built only from throw events."""
+
+    def parse_event(self, _name, other=None, player=None):
+        raise RuntimeError("no weapon_fire / detonation events in this demo")
+
+    def parse_grenades(self):
+        # A single smoke flying from (0,0) to (500,300) over ticks 100..112.
+        rows = []
+        for i in range(7):
+            rows.append(
+                {
+                    "tick": 100 + i * 2,
+                    "grenade_type": "smoke",
+                    "X": float(i * 80),
+                    "Y": float(i * 50),
+                    "Z": 64.0,
+                    "thrower_steamid": 111.0,
+                }
+            )
+        return rows
+
+
+def test_grenade_fallback_synthesizes_from_trajectories() -> None:
+    rounds = [
+        RoundInfo(
+            round_number=1,
+            start_tick=0,
+            end_tick=5000,
+            freeze_end_tick=100,
+            winner_team="",
+            win_reason="",
+            ct_score=0,
+            t_score=0,
+        )
+    ]
+
+    grenades = _extract_grenades(GrenadeDummyParser(), rounds, tick_rate=64.0)
+
+    # Exactly one smoke synthesized from the trajectory, with a landing point
+    # and a real flight path, despite there being no throw/detonation events.
+    assert len(grenades) == 1
+    g = grenades[0]
+    assert g.grenade_type == "smoke"
+    assert g.throw_tick == 100
+    assert g.detonate_tick == 112
+    assert g.thrower_id == 111
+    assert g.trajectory and len(g.trajectory) >= 2
+    # Landing position matches the last tracked point.
+    assert g.x == 480.0 and g.y == 300.0
+    # Smoke effect duration (~18 s = 1152 ticks at 64 tick) added past landing.
+    assert g.expire_tick == 112 + 1152

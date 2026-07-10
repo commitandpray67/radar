@@ -378,21 +378,69 @@ def _extract_grenades(
             )
         )
 
-    # ---- Attach trajectory waypoints ---------------------------------------
-    if raw_traj:
-        MAX_TRAJ_WP = 48
+    # ---- Build trajectory tracks (used for attachment and fallback) --------
+    MAX_TRAJ_WP = 48
 
-        raw_by_key: dict[tuple, list[dict]] = defaultdict(list)
+    def _sample_track(track: list[dict]) -> list[dict]:
+        """Down-sample a raw track to at most ~MAX_TRAJ_WP {tick,x,y,z} points."""
+        step = max(1, len(track) // MAX_TRAJ_WP)
+        sampled = track[::step]
+        if sampled[-1] is not track[-1]:
+            sampled.append(track[-1])
+        return [{"tick": r["tick"], "x": r["x"], "y": r["y"], "z": r["z"]} for r in sampled]
+
+    track_index: dict[tuple[str, int], list[list[dict]]] = {}
+    if raw_traj:
+        raw_by_key: dict[tuple[str, int], list[dict]] = defaultdict(list)
         for r in raw_traj:
             raw_by_key[(r["gtype"], r["rn"])].append(r)
-
-        track_index: dict[tuple, list[list[dict]]] = {}
         for key, bucket in raw_by_key.items():
             bucket.sort(key=lambda r: r["tick"])
             track_index[key] = _build_tracks(bucket)
 
+    # ---- Fallback: synthesize grenades from trajectories when no throws -----
+    # weapon_fire (and item_* / detonation events) are absent in some demos —
+    # the same ones with blank loadouts.  parse_grenades() is an entity/prop
+    # source (like positions), so it still carries the projectile flight paths
+    # even when the events don't exist.  Rebuild grenade events directly from
+    # those tracks: each track is one thrown nade, its last point ≈ where it
+    # detonated / came to rest.  Triggers only when the throw-based path yielded
+    # nothing renderable, so demos that already work are left untouched.
+    if track_index and not any(g.detonate_tick is not None for g in grenades):
+        grenades = []  # drop any throw-only stubs that carry no position
+        for (gtype, rn), tracks in track_index.items():
+            for track in tracks:
+                if len(track) < 2:
+                    continue
+                last = track[-1]
+                thrower_id = next((p["thrower_id"] for p in track if p["thrower_id"]), 0)
+                base_ticks = _EFFECT_TICKS.get(gtype, 64)
+                grenades.append(
+                    GrenadeEvent(
+                        round_number=rn,
+                        thrower_id=thrower_id,
+                        grenade_type=gtype,
+                        throw_tick=track[0]["tick"],
+                        detonate_tick=last["tick"],
+                        x=last["x"],
+                        y=last["y"],
+                        z=last["z"],
+                        expire_tick=last["tick"] + int(round(base_ticks * _tick_scale)),
+                        trajectory=_sample_track(track),
+                    )
+                )
+        grenades.sort(key=lambda g: g.throw_tick)
+        logger.info(
+            "No weapon_fire throws — synthesized %d grenade events from trajectories",
+            len(grenades),
+        )
+
+    # ---- Attach trajectory waypoints to throw-based grenades ---------------
+    if track_index:
         for g in grenades:
-            if g.detonate_tick is None:
+            # Skip nades that already carry a path (synthesized above) or that
+            # never detonated (nothing to match a flight path to).
+            if g.trajectory or g.detonate_tick is None:
                 continue
             all_tracks = track_index.get((g.grenade_type, g.round_number), [])
             if not all_tracks:
@@ -416,15 +464,7 @@ def _extract_grenades(
                 candidates,
                 key=lambda pts: (pts[-1]["x"] - g.x) ** 2 + (pts[-1]["y"] - g.y) ** 2,
             )
-
-            step = max(1, len(best) // MAX_TRAJ_WP)
-            sampled = best[::step]
-            if sampled[-1] is not best[-1]:
-                sampled.append(best[-1])
-
-            g.trajectory = [
-                {"tick": r["tick"], "x": r["x"], "y": r["y"], "z": r["z"]} for r in sampled
-            ]
+            g.trajectory = _sample_track(best)
 
         attached = sum(1 for g in grenades if g.trajectory)
         logger.info("Attached trajectories to %d/%d grenades", attached, len(grenades))
