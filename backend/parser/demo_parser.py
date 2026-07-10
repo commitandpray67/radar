@@ -58,7 +58,7 @@ from ._utils import _rows
 logger = logging.getLogger(__name__)
 
 # Bump when round-extraction or schema logic changes so cached demos are re-parsed.
-PARSER_VERSION = 25
+PARSER_VERSION = 26
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ def parse_demo(
 
     # ---- Player state events -----------------------------------------------
     _progress(0.94, "Extracting player state events")
-    player_state_events = _extract_player_state_events(parser, rounds)
+    player_state_events = _extract_player_state_events(parser, rounds, tick_rate)
 
     # ---- Correct initial_team from live position data ----------------------
     # parse_player_info() reflects the END of the demo (post-halftime), so

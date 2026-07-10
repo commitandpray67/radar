@@ -10,12 +10,93 @@ Covers:
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 
 from ._types import GameEvent, PlayerStateEvent, RoundInfo
 from ._utils import _build_round_lookup, _rows, _to_int
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Inventory prop → weapon-token mapping
+#
+# The `inventory` entity prop (read via parse_ticks) reports each player's
+# current weapons as human-readable display names ("AK-47", "Smoke Grenade").
+# We map those to the bare weapon tokens the frontend already understands
+# (it prepends "weapon_" during classification), so inventory-sourced equips
+# are indistinguishable from item_purchase/item_equip events downstream.
+#
+# Armor (kevlar/helmet) is deliberately NOT mapped here: the armor bar is
+# driven by the dedicated armor prop, and emitting armor "equips" would
+# interfere with it.  Knives, C4 and Zeus are intentionally unmapped too —
+# they carry no loadout meaning for the pistol/primary/nade panel.
+#
+# Keys are normalised display names (lower-cased, non-alphanumerics stripped).
+# ---------------------------------------------------------------------------
+_INVENTORY_NAME_TO_TOKEN: dict[str, str] = {
+    # Pistols
+    "glock18": "glock",
+    "p2000": "hkp2000",
+    "usps": "usp_silencer",
+    "dualberettas": "elite",
+    "p250": "p250",
+    "tec9": "tec9",
+    "fiveseven": "fiveseven",
+    "cz75auto": "cz75a",
+    "deserteagle": "deagle",
+    "r8revolver": "revolver",
+    # SMGs
+    "mac10": "mac10",
+    "mp9": "mp9",
+    "mp7": "mp7",
+    "mp5sd": "mp5sd",
+    "ump45": "ump45",
+    "p90": "p90",
+    "ppbizon": "bizon",
+    # Rifles
+    "galilar": "galilar",
+    "famas": "famas",
+    "ak47": "ak47",
+    "m4a4": "m4a1",
+    "m4a1s": "m4a1_silencer",
+    "sg553": "sg556",
+    "aug": "aug",
+    # Snipers
+    "ssg08": "ssg08",
+    "awp": "awp",
+    "g3sg1": "g3sg1",
+    "scar20": "scar20",
+    # Heavy
+    "nova": "nova",
+    "xm1014": "xm1014",
+    "sawedoff": "sawedoff",
+    "mag7": "mag7",
+    "m249": "m249",
+    "negev": "negev",
+    # Grenades
+    "smokegrenade": "smokegrenade",
+    "flashbang": "flashbang",
+    "highexplosivegrenade": "hegrenade",
+    "incendiarygrenade": "incgrenade",
+    "molotov": "molotov",
+    "decoygrenade": "decoy",
+}
+
+
+def _inventory_item_to_token(name: object) -> str | None:
+    """Map one inventory entry to a weapon token, or None to skip it."""
+    raw = str(name or "").strip()
+    if not raw:
+        return None
+    low = raw.lower()
+    # Some builds report classnames directly ("weapon_ak47"); pass those
+    # through untouched — the frontend normaliser already handles them.
+    if low.startswith(("weapon_", "item_")):
+        return low
+    norm = re.sub(r"[^a-z0-9]", "", low)
+    return _INVENTORY_NAME_TO_TOKEN.get(norm)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +227,11 @@ def _extract_economy(parser, rounds: list[RoundInfo]) -> list[RoundInfo]:
 # ---------------------------------------------------------------------------
 
 
-def _extract_player_state_events(parser, rounds: list[RoundInfo]) -> list[PlayerStateEvent]:
+def _extract_player_state_events(
+    parser,
+    rounds: list[RoundInfo],
+    tick_rate: float = 64.0,
+) -> list[PlayerStateEvent]:
     """Extract HP/armor changes and weapon equip events."""
     _rn = _build_round_lookup(rounds)
 
@@ -356,6 +441,73 @@ def _extract_player_state_events(parser, rounds: list[RoundInfo]) -> list[Player
                 )
     except Exception as exc:
         logger.debug("Could not parse freeze_end tick state: %s", exc)
+
+    # -- inventory prop sampling (robust weapon source) ----------------------
+    # item_equip / item_pickup / item_purchase events are absent in some demos
+    # (POV recordings, certain sources / parser builds), which leaves loadouts
+    # blank.  The `inventory` entity prop is read the same way as positions and
+    # HP (parse_ticks), so it is populated whenever those are — making it a
+    # reliable fallback.  We sample each player's inventory just after freeze
+    # end (post-buy loadout) and periodically through the round (mid-round
+    # pickups), emitting equip events indistinguishable from the event-based
+    # ones.  Duplicates are harmless: the frontend accumulates weapons into a
+    # Set.  Demos that already have item_* events simply gain confirming data.
+    try:
+        step = max(64, int(round(tick_rate * 5)))  # ~5 s between samples
+        inv_tick_to_round: dict[int, int] = {}
+        for r in rounds:
+            t = max(r.start_tick, r.freeze_end_tick)
+            while t <= r.end_tick:
+                inv_tick_to_round.setdefault(t, r.round_number)
+                t += step
+
+        inv_ticks = sorted(inv_tick_to_round)
+        if inv_ticks:
+            inv_df = parser.parse_ticks(["steamid", "inventory"], ticks=inv_ticks)
+            # Emit each weapon once per (round, player) at the earliest tick it
+            # appears — process rows in tick order and dedupe.  Re-emitting a
+            # held weapon every sample would bloat the table with no benefit
+            # (the frontend accumulates weapons additively).
+            seen_equip: set[tuple[int, int, str]] = set()
+            equip_count = 0
+            for row in sorted(_rows(inv_df), key=lambda r: _to_int(r.get("tick", 0))):
+                tick = _to_int(row.get("tick", 0))
+                rn = inv_tick_to_round.get(tick) or _rn(tick)
+                if not rn:
+                    continue
+                player_id = _event_player_id(row)
+                if player_id == 0:
+                    continue
+                inventory = row.get("inventory")
+                # Accept any non-string iterable (list / tuple / ndarray);
+                # skip None, NaN scalars and bare strings.
+                if inventory is None or isinstance(inventory, str | bytes):
+                    continue
+                try:
+                    items = list(inventory)
+                except TypeError:
+                    continue
+                for item in items:
+                    token = _inventory_item_to_token(item)
+                    if token is None:
+                        continue
+                    key = (rn, player_id, token)
+                    if key in seen_equip:
+                        continue
+                    seen_equip.add(key)
+                    state_events.append(
+                        PlayerStateEvent(
+                            tick=tick,
+                            round_number=rn,
+                            player_id=player_id,
+                            event_type="equip",
+                            weapon=token,
+                        )
+                    )
+                    equip_count += 1
+            logger.info("Inventory sampling produced %d equip events", equip_count)
+    except Exception as exc:
+        logger.warning("Could not sample inventory props: %s", exc)
 
     logger.info("Extracted %d player state events", len(state_events))
     return sorted(state_events, key=lambda e: e.tick)
