@@ -117,8 +117,10 @@ MAP_CALIBRATIONS: dict[str, MapCalibration] = {
         pos_y=2164.0,
         scale=5.0,
         image="de_ancient.png",
-        bombsite_a=(-470.0, -1340.0),
-        bombsite_b=(-1740.0, 320.0),
+        # NOTE: A/B centres were swapped relative to the earlier values, which
+        # mislabelled every plant on this map (A shown as B and vice-versa).
+        bombsite_a=(-1740.0, 320.0),
+        bombsite_b=(-470.0, -1340.0),
     ),
     "de_anubis": MapCalibration(
         pos_x=-2796.0,
