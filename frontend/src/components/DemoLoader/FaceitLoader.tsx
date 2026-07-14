@@ -16,6 +16,7 @@ import {
   resolveFaceitNicknames,
   findFaceitCommonMatches,
   getFaceitStackMapStats,
+  getFaceitPlayerMapStats,
   loadFaceitMatch,
   watchParseStatus,
   getMaps,
@@ -26,6 +27,7 @@ import type {
   FaceitResolvedPlayer,
   FaceitMatchSummary,
   FaceitStackMapStats,
+  FaceitPlayerMapStats,
   ParseJobStatus,
 } from '../../types';
 import styles from './FaceitLoader.module.css';
@@ -34,6 +36,8 @@ const MAX_PLAYERS = 5;
 
 interface Props {
   onComplete: () => void;
+  /** Signals the loader to widen once search results are shown. */
+  onExpand?: (wide: boolean) => void;
 }
 
 function errMsg(e: unknown): string {
@@ -60,7 +64,7 @@ function winRateColor(rate: number): string {
   return '#c0603a';
 }
 
-const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
+const FaceitLoader: React.FC<Props> = ({ onComplete, onExpand }) => {
   const setMaps = useAppStore((s) => s.setMaps);
 
   // ── API key config ──
@@ -77,6 +81,8 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
   const [analyzed, setAnalyzed] = useState(0);
   const [mapStats, setMapStats] = useState<FaceitStackMapStats | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
+  const [playerMapStats, setPlayerMapStats] = useState<FaceitPlayerMapStats[] | null>(null);
+  const [playerMapLoading, setPlayerMapLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
 
@@ -93,6 +99,12 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
       alive = false;
     };
   }, []);
+
+  // Widen the loader card once a search has produced results; reset on unmount.
+  useEffect(() => {
+    onExpand?.(matches !== null);
+    return () => onExpand?.(false);
+  }, [matches, onExpand]);
 
   const isConfigured = !!config?.configured;
   const isEnv = config?.source === 'env';
@@ -122,6 +134,7 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
       setEditingKey(false);
       setMatches(null);
       setMapStats(null);
+      setPlayerMapStats(null);
       setResolved(null);
     } catch (e) {
       setKeyError(errMsg(e));
@@ -137,6 +150,11 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
   const resolvedByNick = new Map(
     (resolved ?? []).map((p) => [p.nickname.toLowerCase(), p]),
   );
+  const nickById = new Map(
+    (resolved ?? [])
+      .filter((p) => p.player_id)
+      .map((p) => [p.player_id as string, p.nickname]),
+  );
 
   const loadMapStats = useCallback(async (ids: string[]) => {
     setMapLoading(true);
@@ -150,10 +168,23 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
     }
   }, []);
 
+  const loadPlayerMapStats = useCallback(async (ids: string[]) => {
+    setPlayerMapLoading(true);
+    setPlayerMapStats(null);
+    try {
+      setPlayerMapStats((await getFaceitPlayerMapStats(ids)).players);
+    } catch {
+      /* per-player stats are a nice-to-have; ignore failures */
+    } finally {
+      setPlayerMapLoading(false);
+    }
+  }, []);
+
   const findMatches = useCallback(async () => {
     setError('');
     setMatches(null);
     setMapStats(null);
+    setPlayerMapStats(null);
     setSearching(true);
     try {
       const wanted = nicks.map((n) => n.trim()).filter(Boolean);
@@ -172,13 +203,14 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
       setMatches(cm.matches);
       setAnalyzed(cm.analyzed);
       void loadMapStats(ids);
+      void loadPlayerMapStats(ids);
     } catch (e) {
       setError(errMsg(e));
       if (isUnconfigured(e)) getFaceitConfig().then(setConfig).catch(() => null);
     } finally {
       setSearching(false);
     }
-  }, [nicks, loadMapStats]);
+  }, [nicks, loadMapStats, loadPlayerMapStats]);
 
   const loadInRadar = useCallback(
     async (matchId: string) => {
@@ -364,6 +396,50 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
             </div>
           )}
 
+          {/* Per-player map stats (lifetime) */}
+          {(playerMapLoading || (playerMapStats && playerMapStats.length > 0)) && (
+            <div className={styles.mapPanel}>
+              <div className={styles.sectionTitle}>
+                Player map stats<span className={styles.subtle}> · lifetime, per queried player</span>
+              </div>
+              {playerMapLoading && <div className={styles.subtle}>Loading player stats…</div>}
+              <div className={styles.playerGrid}>
+                {playerMapStats?.map((ps) => (
+                  <div key={ps.player_id} className={styles.playerCard}>
+                    <div className={styles.playerCardName}>
+                      {nickById.get(ps.player_id) ?? ps.player_id}
+                    </div>
+                    {ps.maps.length === 0 ? (
+                      <div className={styles.subtle}>No map data</div>
+                    ) : (
+                      <>
+                        <div className={`${styles.psRow} ${styles.psHead}`}>
+                          <span className={styles.psMap} />
+                          <span className={styles.psNum}>M</span>
+                          <span className={styles.psNum}>W%</span>
+                          <span className={styles.psNum}>K/D</span>
+                        </div>
+                        {ps.maps.slice(0, 7).map((m) => (
+                          <div key={m.map} className={styles.psRow}>
+                            <span className={styles.psMap}>{m.map.replace(/^de_/, '')}</span>
+                            <span className={styles.psNum}>{m.matches}</span>
+                            <span
+                              className={styles.psNum}
+                              style={{ color: winRateColor(m.win_rate) }}
+                            >
+                              {Math.round(m.win_rate * 100)}
+                            </span>
+                            <span className={styles.psNum}>{m.kd.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Matches list */}
           {matches && (
             <div className={styles.matches}>
@@ -390,6 +466,16 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
                       </span>
                       {m.region && <span className={styles.subtle}>{m.region}</span>}
                       {m.score && <span className={styles.matchScore}>{m.score}</span>}
+                      {m.faceit_url && (
+                        <a
+                          className={styles.matchLink}
+                          href={m.faceit_url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          FACEIT ↗
+                        </a>
+                      )}
                     </div>
                     <div className={styles.matchPlayers}>
                       {m.selected_players.map((p) => (

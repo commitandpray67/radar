@@ -27,6 +27,12 @@
   align-items: center;
   gap: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  transition: width 0.25s ease;
+}
+
+/* Widened when FACEIT search results are shown (more room for stats tables). */
+.card.cardWide {
+  width: 760px;
 }
 
 .logo {

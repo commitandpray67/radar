@@ -118,6 +118,48 @@ def test_aggregate_map_stats_no_win_when_stack_team_not_found() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _extract_player_map_segments (pure)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_player_map_segments() -> None:
+    stats = {
+        "segments": [
+            {
+                "type": "Map",
+                "mode": "5v5",
+                "label": "de_mirage",
+                "stats": {"Matches": "120", "Win Rate %": "58", "Average K/D Ratio": "1.10"},
+            },
+            {
+                "type": "Map",
+                "mode": "5v5",
+                "label": "de_nuke",
+                "stats": {"Matches": "40", "Win Rate %": "50", "Average K/D Ratio": "0.95"},
+            },
+            # Same map under a non-5v5 mode — the 5v5 segment must win.
+            {
+                "type": "Map",
+                "mode": "Wingman",
+                "label": "de_mirage",
+                "stats": {"Matches": "5", "Win Rate %": "20", "Average K/D Ratio": "0.5"},
+            },
+            # Zero matches -> skipped.
+            {"type": "Map", "mode": "5v5", "label": "de_dust2", "stats": {"Matches": "0"}},
+            # Not a map segment -> ignored.
+            {"type": "Overall", "label": "x", "stats": {"Matches": "9"}},
+        ]
+    }
+    segs = faceit._extract_player_map_segments(stats)
+    by = {s.map: s for s in segs}
+    assert [s.map for s in segs] == ["de_mirage", "de_nuke"]  # sorted by matches desc
+    assert by["de_mirage"].matches == 120
+    assert by["de_mirage"].win_rate == 0.58
+    assert by["de_mirage"].kd == 1.1
+    assert "de_dust2" not in by
+
+
+# ---------------------------------------------------------------------------
 # _prepare_dem (gzip magic-byte branch)
 # ---------------------------------------------------------------------------
 

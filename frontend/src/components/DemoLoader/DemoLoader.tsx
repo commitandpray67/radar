@@ -55,6 +55,7 @@ const DemoLoader: React.FC = () => {
   const [showLibrary, setShowLibrary] = useState(false);
   const [tab, setTab] = useState<LoaderTab>('single');
   const [showTeamLibrary, setShowTeamLibrary] = useState(false);
+  const [faceitWide, setFaceitWide] = useState(false);
 
   const setDemo              = useAppStore((s) => s.setDemo);
   const setRounds            = useAppStore((s) => s.setRounds);
@@ -233,7 +234,7 @@ const DemoLoader: React.FC = () => {
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div className={styles.card}>
+      <div className={`${styles.card} ${faceitWide && tab === 'faceit' ? styles.cardWide : ''}`}>
         <div className={styles.logo}>CS2 Radar</div>
         <p className={styles.subtitle}>Demo analysis tool</p>
 
@@ -317,7 +318,10 @@ const DemoLoader: React.FC = () => {
             )}
 
             {tab === 'faceit' && (
-              <FaceitLoader onComplete={() => setPhase('done')} />
+              <FaceitLoader
+                onComplete={() => setPhase('done')}
+                onExpand={setFaceitWide}
+              />
             )}
           </>
         )}

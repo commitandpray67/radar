@@ -363,6 +363,7 @@ import type {
   FaceitResolvedPlayer,
   FaceitCommonMatches,
   FaceitStackMapStats,
+  FaceitPlayerMapStatsResponse,
   FaceitLoadResult,
   FaceitConfig,
 } from '../types';
@@ -396,7 +397,7 @@ export async function findFaceitCommonMatches(
   const res = await http.post('/faceit/common-matches', {
     player_ids: playerIds,
     same_team: opts.same_team ?? true,
-    window: opts.window ?? 200,
+    window: opts.window ?? 300,
   });
   return res.data;
 }
@@ -408,9 +409,16 @@ export async function getFaceitStackMapStats(
   const res = await http.post('/faceit/stack-map-stats', {
     player_ids: playerIds,
     same_team: opts.same_team ?? true,
-    window: opts.window ?? 200,
+    window: opts.window ?? 300,
     max_matches: opts.max_matches ?? 60,
   });
+  return res.data;
+}
+
+export async function getFaceitPlayerMapStats(
+  playerIds: string[],
+): Promise<FaceitPlayerMapStatsResponse> {
+  const res = await http.post('/faceit/player-map-stats', { player_ids: playerIds });
   return res.data;
 }
 

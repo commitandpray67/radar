@@ -335,3 +335,19 @@ export interface FaceitConfig {
   configured: boolean;
   source: 'env' | 'saved' | null;
 }
+
+export interface FaceitPlayerMapSegment {
+  map: string;
+  matches: number;
+  win_rate: number;           // 0..1
+  kd: number;
+}
+
+export interface FaceitPlayerMapStats {
+  player_id: string;
+  maps: FaceitPlayerMapSegment[];
+}
+
+export interface FaceitPlayerMapStatsResponse {
+  players: FaceitPlayerMapStats[];
+}

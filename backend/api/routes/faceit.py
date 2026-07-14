@@ -213,7 +213,7 @@ class ResolveResponse(BaseModel):
 class CommonMatchesPayload(BaseModel):
     player_ids: list[str]
     same_team: bool = True
-    window: int = 200
+    window: int = 300
 
 
 class SelectedPlayerInMatch(BaseModel):
@@ -243,7 +243,7 @@ class CommonMatchesResponse(BaseModel):
 class MapStatsPayload(BaseModel):
     player_ids: list[str]
     same_team: bool = True
-    window: int = 200
+    window: int = 300
     max_matches: int = 60
 
 
@@ -260,6 +260,26 @@ class MapStatsResponse(BaseModel):
     total_matches: int
     analyzed: int
     maps: list[MapStat]
+
+
+class PlayerMapStatsPayload(BaseModel):
+    player_ids: list[str]
+
+
+class PlayerMapSegment(BaseModel):
+    map: str
+    matches: int
+    win_rate: float  # 0..1
+    kd: float
+
+
+class PlayerMapStats(BaseModel):
+    player_id: str
+    maps: list[PlayerMapSegment]
+
+
+class PlayerMapStatsResponse(BaseModel):
+    players: list[PlayerMapStats]
 
 
 class LoadMatchPayload(BaseModel):
@@ -552,6 +572,70 @@ async def stack_map_stats(payload: MapStatsPayload) -> MapStatsResponse:
     usable = [r for r in rounds if r is not None]
     maps = _aggregate_map_stats(usable, ids)
     return MapStatsResponse(total_matches=total, analyzed=len(usable), maps=maps)
+
+
+# ---------------------------------------------------------------------------
+# Per-player map stats (lifetime, from the FACEIT stats endpoint)
+# ---------------------------------------------------------------------------
+
+
+def _num(v: object) -> float:
+    """Parse FACEIT's stringly-typed numbers defensively."""
+    try:
+        return float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _extract_player_map_segments(stats_json: dict) -> list[PlayerMapSegment]:
+    """Extract per-map lifetime stats from a player's stats payload.
+
+    Segments carry a free-form ``stats`` dict; the same map can appear under
+    several modes, so we prefer the 5v5 segment for each map label.
+    """
+    best: dict[str, tuple[int, PlayerMapSegment]] = {}
+    for seg in (stats_json or {}).get("segments") or []:
+        if seg.get("type") != "Map":
+            continue
+        label = seg.get("label") or ""
+        if not label:
+            continue
+        s = seg.get("stats") or {}
+        matches = int(_num(s.get("Matches")))
+        if matches <= 0:
+            continue
+        seg_obj = PlayerMapSegment(
+            map=label,
+            matches=matches,
+            win_rate=round(_num(s.get("Win Rate %")) / 100.0, 4),
+            kd=round(_num(s.get("Average K/D Ratio") or s.get("K/D Ratio")), 2),
+        )
+        mode_rank = 2 if seg.get("mode") == "5v5" else 1
+        if label not in best or mode_rank > best[label][0]:
+            best[label] = (mode_rank, seg_obj)
+    out = [v[1] for v in best.values()]
+    out.sort(key=lambda m: m.matches, reverse=True)
+    return out
+
+
+@router.post("/faceit/player-map-stats", response_model=PlayerMapStatsResponse)
+async def player_map_stats(payload: PlayerMapStatsPayload) -> PlayerMapStatsResponse:
+    """Per-map lifetime stats (matches, win rate, K/D) for each selected player."""
+    ids = _validate_ids(payload.player_ids)
+    _api_key()
+
+    sem = asyncio.Semaphore(_STATS_CONCURRENCY)
+
+    async def _one(pid: str) -> PlayerMapStats:
+        async with sem:
+            try:
+                data = await _faceit_get(f"/players/{pid}/stats/{_GAME}", allow_404=True)
+            except HTTPException:
+                data = None
+        return PlayerMapStats(player_id=pid, maps=_extract_player_map_segments(data or {}))
+
+    players = await asyncio.gather(*(_one(pid) for pid in ids))
+    return PlayerMapStatsResponse(players=list(players))
 
 
 # ---------------------------------------------------------------------------
