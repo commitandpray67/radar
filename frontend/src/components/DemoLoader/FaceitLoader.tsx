@@ -86,6 +86,8 @@ const FaceitLoader: React.FC<Props> = ({ onComplete, onExpand }) => {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
 
+  const [mapFilter, setMapFilter] = useState<string | null>(null);
+
   const [loadingMatchId, setLoadingMatchId] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<ParseJobStatus | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -185,6 +187,7 @@ const FaceitLoader: React.FC<Props> = ({ onComplete, onExpand }) => {
     setMatches(null);
     setMapStats(null);
     setPlayerMapStats(null);
+    setMapFilter(null);
     setSearching(true);
     try {
       const wanted = nicks.map((n) => n.trim()).filter(Boolean);
@@ -400,7 +403,7 @@ const FaceitLoader: React.FC<Props> = ({ onComplete, onExpand }) => {
           {(playerMapLoading || (playerMapStats && playerMapStats.length > 0)) && (
             <div className={styles.mapPanel}>
               <div className={styles.sectionTitle}>
-                Player map stats<span className={styles.subtle}> · lifetime, per queried player</span>
+                Player map stats<span className={styles.subtle}> · last 300 matches</span>
               </div>
               {playerMapLoading && <div className={styles.subtle}>Loading player stats…</div>}
               <div className={styles.playerGrid}>
@@ -419,7 +422,7 @@ const FaceitLoader: React.FC<Props> = ({ onComplete, onExpand }) => {
                           <span className={styles.psNum}>W%</span>
                           <span className={styles.psNum}>K/D</span>
                         </div>
-                        {ps.maps.slice(0, 7).map((m) => (
+                        {ps.maps.map((m) => (
                           <div key={m.map} className={styles.psRow}>
                             <span className={styles.psMap}>{m.map.replace(/^de_/, '')}</span>
                             <span className={styles.psNum}>{m.matches}</span>
@@ -449,72 +452,106 @@ const FaceitLoader: React.FC<Props> = ({ onComplete, onExpand }) => {
                   : 'No matches found'}
                 <span className={styles.subtle}> · scanned {analyzed} recent games</span>
               </div>
+
+              {/* Map filter chips */}
+              {matches.length > 0 && (() => {
+                const mapSet = Array.from(
+                  new Set(matches.map((m) => m.map).filter((mp): mp is string => !!mp))
+                ).sort();
+                return mapSet.length > 1 ? (
+                  <div className={styles.mapFilterRow}>
+                    <button
+                      className={`${styles.mapChip} ${mapFilter === null ? styles.mapChipActive : ''}`}
+                      onClick={() => setMapFilter(null)}
+                    >
+                      All
+                    </button>
+                    {mapSet.map((mp) => (
+                      <button
+                        key={mp}
+                        className={`${styles.mapChip} ${mapFilter === mp ? styles.mapChipActive : ''}`}
+                        onClick={() => setMapFilter((prev) => (prev === mp ? null : mp))}
+                      >
+                        {mp.replace(/^de_/, '')}
+                      </button>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+
               {matches.length === 0 && (
                 <div className={styles.subtle}>
                   Try more players or a longer history window — the search scans each
                   player's most recent games.
                 </div>
               )}
-              {matches.map((m) => {
-                const busy = loadingMatchId === m.match_id;
-                return (
-                  <div key={m.match_id} className={styles.matchRow}>
-                    <div className={styles.matchMeta}>
-                      <span className={styles.matchDate}>{fmtDate(m.started_at)}</span>
-                      <span className={styles.matchComp} title={m.competition_type}>
-                        {m.competition_name || m.competition_type || 'Match'}
-                      </span>
-                      {m.region && <span className={styles.subtle}>{m.region}</span>}
-                      {m.score && <span className={styles.matchScore}>{m.score}</span>}
-                      {m.faceit_url && (
-                        <a
-                          className={styles.matchLink}
-                          href={m.faceit_url}
-                          target="_blank"
-                          rel="noreferrer"
+              {matches
+                .filter((m) => mapFilter === null || m.map === mapFilter)
+                .map((m) => {
+                  const busy = loadingMatchId === m.match_id;
+                  return (
+                    <div key={m.match_id} className={styles.matchRow}>
+                      <div className={styles.matchMeta}>
+                        <span className={styles.matchDate}>{fmtDate(m.started_at)}</span>
+                        {m.map && (
+                          <span className={styles.matchMap}>
+                            {m.map.replace(/^de_/, '')}
+                          </span>
+                        )}
+                        <span className={styles.matchComp} title={m.competition_type}>
+                          {m.competition_name || m.competition_type || 'Match'}
+                        </span>
+                        {m.region && <span className={styles.subtle}>{m.region}</span>}
+                        {m.score && <span className={styles.matchScore}>{m.score}</span>}
+                        {m.faceit_url && (
+                          <a
+                            className={styles.matchLink}
+                            href={m.faceit_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            FACEIT ↗
+                          </a>
+                        )}
+                      </div>
+                      <div className={styles.matchPlayers}>
+                        {m.selected_players.map((p) => (
+                          <span
+                            key={p.player_id}
+                            className={`${styles.playerTag} ${
+                              p.faction === 'faction1' ? styles.fac1 : styles.fac2
+                            }`}
+                          >
+                            {p.nickname}
+                          </span>
+                        ))}
+                      </div>
+                      {busy ? (
+                        <div className={styles.loadProgress}>
+                          <div className={styles.progressText}>
+                            {loadStatus?.message ?? 'Downloading demo…'}
+                          </div>
+                          <div className={styles.progressTrack}>
+                            <div
+                              className={styles.progressFill}
+                              style={{
+                                width: `${Math.round((loadStatus?.progress ?? 0) * 100)}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          className={styles.loadBtn}
+                          onClick={() => loadInRadar(m.match_id)}
+                          disabled={loadingMatchId !== null}
                         >
-                          FACEIT ↗
-                        </a>
+                          Load in radar
+                        </button>
                       )}
                     </div>
-                    <div className={styles.matchPlayers}>
-                      {m.selected_players.map((p) => (
-                        <span
-                          key={p.player_id}
-                          className={`${styles.playerTag} ${
-                            p.faction === 'faction1' ? styles.fac1 : styles.fac2
-                          }`}
-                        >
-                          {p.nickname}
-                        </span>
-                      ))}
-                    </div>
-                    {busy ? (
-                      <div className={styles.loadProgress}>
-                        <div className={styles.progressText}>
-                          {loadStatus?.message ?? 'Downloading demo…'}
-                        </div>
-                        <div className={styles.progressTrack}>
-                          <div
-                            className={styles.progressFill}
-                            style={{
-                              width: `${Math.round((loadStatus?.progress ?? 0) * 100)}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        className={styles.loadBtn}
-                        onClick={() => loadInRadar(m.match_id)}
-                        disabled={loadingMatchId !== null}
-                      >
-                        Load in radar
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           )}
         </>

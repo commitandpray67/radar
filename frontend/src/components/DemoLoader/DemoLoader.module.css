@@ -32,7 +32,7 @@
 
 /* Widened when FACEIT search results are shown (more room for stats tables). */
 .card.cardWide {
-  width: 760px;
+  width: min(960px, 92vw);
 }
 
 .logo {

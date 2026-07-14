@@ -49,10 +49,11 @@ _CHUNK = 1024 * 1024  # 1 MB
 
 
 # ---------------------------------------------------------------------------
-# Shared HTTP client + auth
+# Shared HTTP clients + auth
 # ---------------------------------------------------------------------------
 
 _client: httpx.AsyncClient | None = None
+_cdn_client: httpx.AsyncClient | None = None
 _client_lock = asyncio.Lock()
 
 
@@ -69,6 +70,19 @@ async def _get_client() -> httpx.AsyncClient:
                     follow_redirects=True,
                 )
     return _client
+
+
+async def _get_cdn_client() -> httpx.AsyncClient:
+    """Separate client for CDN demo downloads — no base_url, follows redirects."""
+    global _cdn_client
+    if _cdn_client is None or _cdn_client.is_closed:
+        async with _client_lock:
+            if _cdn_client is None or _cdn_client.is_closed:
+                _cdn_client = httpx.AsyncClient(
+                    follow_redirects=True,
+                    timeout=httpx.Timeout(30.0, read=120.0),
+                )
+    return _cdn_client
 
 
 # The API key may come from the environment (takes precedence) or be saved
@@ -233,6 +247,7 @@ class MatchSummary(BaseModel):
     faceit_url: str
     score: str
     selected_players: list[SelectedPlayerInMatch]
+    map: str | None = None
 
 
 class CommonMatchesResponse(BaseModel):
@@ -488,6 +503,25 @@ async def common_matches(payload: CommonMatchesPayload) -> CommonMatchesResponse
     _api_key()
     history = await _fetch_history(ids[0], payload.window)
     matches = _filter_common_matches(history, ids, payload.same_team)
+
+    # Enrich each match with the map name from its stats.
+    if matches:
+        sem = asyncio.Semaphore(_STATS_CONCURRENCY)
+
+        async def _get_map(mid: str) -> str | None:
+            async with sem:
+                rnd = await _fetch_match_round(mid)
+            if rnd is None:
+                return None
+            rs = rnd.get("round_stats") or {}
+            return rs.get("Map") or rs.get("map") or None
+
+        map_names = await asyncio.gather(*(_get_map(m.match_id) for m in matches))
+        matches = [
+            m.model_copy(update={"map": mn})
+            for m, mn in zip(matches, map_names, strict=False)
+        ]
+
     return CommonMatchesResponse(matches=matches, analyzed=len(history))
 
 
@@ -614,28 +648,106 @@ def _extract_player_map_segments(stats_json: dict) -> list[PlayerMapSegment]:
         if label not in best or mode_rank > best[label][0]:
             best[label] = (mode_rank, seg_obj)
     out = [v[1] for v in best.values()]
-    out.sort(key=lambda m: m.matches, reverse=True)
+    out.sort(key=lambda m: m.map)
     return out
+
+
+_PLAYER_STATS_WINDOW = 300      # history items fetched per player
+_PLAYER_STATS_CAP = 40          # max match-stats fetches per player (bounds API calls)
 
 
 @router.post("/faceit/player-map-stats", response_model=PlayerMapStatsResponse)
 async def player_map_stats(payload: PlayerMapStatsPayload) -> PlayerMapStatsResponse:
-    """Per-map lifetime stats (matches, win rate, K/D) for each selected player."""
+    """Per-map stats for each player from their most recent 300 matches."""
     ids = _validate_ids(payload.player_ids)
     _api_key()
 
+    # Fetch each player's recent history concurrently.
+    histories: list[list[dict]] = list(
+        await asyncio.gather(*(_fetch_history(pid, _PLAYER_STATS_WINDOW) for pid in ids))
+    )
+
+    # Build per-player faction map and capped match-id list.
+    player_faction_map: dict[str, dict[str, str]] = {}
+    player_match_ids: dict[str, list[str]] = {}
+    for pid, hist in zip(ids, histories, strict=False):
+        fac_map: dict[str, str] = {}
+        mids: list[str] = []
+        for item in hist:
+            mid = item.get("match_id") or ""
+            if not mid:
+                continue
+            factions, _ = _index_players(item)
+            if pid in factions:
+                fac_map[mid] = factions[pid]
+                mids.append(mid)
+        player_faction_map[pid] = fac_map
+        player_match_ids[pid] = mids[:_PLAYER_STATS_CAP]
+
+    # Deduplicate match IDs across players; fetch each set of stats once.
+    all_match_ids = list({mid for mids in player_match_ids.values() for mid in mids})
     sem = asyncio.Semaphore(_STATS_CONCURRENCY)
 
-    async def _one(pid: str) -> PlayerMapStats:
+    async def _one_match(mid: str) -> tuple[str, dict | None]:
         async with sem:
-            try:
-                data = await _faceit_get(f"/players/{pid}/stats/{_GAME}", allow_404=True)
-            except HTTPException:
-                data = None
-        return PlayerMapStats(player_id=pid, maps=_extract_player_map_segments(data or {}))
+            rnd = await _fetch_match_round(mid)
+        return mid, rnd
 
-    players = await asyncio.gather(*(_one(pid) for pid in ids))
-    return PlayerMapStatsResponse(players=list(players))
+    results = await asyncio.gather(*(_one_match(mid) for mid in all_match_ids))
+    stats_by_match: dict[str, dict] = {
+        mid: rnd for mid, rnd in results if rnd is not None
+    }
+
+    # Aggregate per player, per map — sorted alphabetically.
+    players_out: list[PlayerMapStats] = []
+    for pid in ids:
+        agg: dict[str, dict] = {}
+        for mid in player_match_ids[pid]:
+            rnd = stats_by_match.get(mid)
+            if rnd is None:
+                continue
+            rs = rnd.get("round_stats") or {}
+            map_name = rs.get("Map") or rs.get("map")
+            if not map_name:
+                continue
+
+            player_team_id: str | None = None
+            player_kd: float = 0.0
+            for team in rnd.get("teams") or []:
+                for p in team.get("players") or []:
+                    if p.get("player_id") == pid:
+                        player_team_id = team.get("team_id")
+                        ps = p.get("player_stats") or {}
+                        player_kd = _num(ps.get("K/D Ratio") or ps.get("Average K/D Ratio") or 0)
+                        break
+                if player_team_id:
+                    break
+
+            winner = rs.get("Winner") or rs.get("winner")
+            won = (
+                player_team_id is not None
+                and winner is not None
+                and str(winner) == str(player_team_id)
+            )
+
+            bucket = agg.setdefault(map_name, {"played": 0, "wins": 0, "kd_sum": 0.0})
+            bucket["played"] += 1
+            if won:
+                bucket["wins"] += 1
+            bucket["kd_sum"] = float(bucket["kd_sum"]) + player_kd
+
+        out = [
+            PlayerMapSegment(
+                map=map_name,
+                matches=b["played"],
+                win_rate=round(b["wins"] / b["played"], 4) if b["played"] else 0.0,
+                kd=round(float(b["kd_sum"]) / max(b["played"], 1), 2),
+            )
+            for map_name, b in sorted(agg.items())
+        ]
+        players_out.append(PlayerMapStats(player_id=pid, maps=out))
+
+    return PlayerMapStatsResponse(players=players_out)
 
 
 # ---------------------------------------------------------------------------
@@ -646,14 +758,14 @@ async def player_map_stats(payload: PlayerMapStatsPayload) -> PlayerMapStatsResp
 async def _download_capped(url: str, dest: Path) -> None:
     """Stream-download ``url`` to ``dest``, failing fast past the size cap.
 
+    Uses a separate client (no base_url) so CDN hostnames resolve correctly.
     No Authorization header is sent — FACEIT demo URLs are pre-signed CDN links.
     """
-    client = await _get_client()
+    client = await _get_cdn_client()
+    logger.info("Downloading demo from %s", url.split("?")[0])
     written = 0
     try:
-        async with client.stream(
-            "GET", url, headers={}, timeout=httpx.Timeout(30.0, read=120.0)
-        ) as resp:
+        async with client.stream("GET", url) as resp:
             if resp.status_code >= 400:
                 raise HTTPException(502, f"Demo download failed (HTTP {resp.status_code}).")
             with dest.open("wb") as out:

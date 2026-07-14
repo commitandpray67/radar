@@ -152,7 +152,7 @@ def test_extract_player_map_segments() -> None:
     }
     segs = faceit._extract_player_map_segments(stats)
     by = {s.map: s for s in segs}
-    assert [s.map for s in segs] == ["de_mirage", "de_nuke"]  # sorted by matches desc
+    assert [s.map for s in segs] == ["de_mirage", "de_nuke"]  # sorted alphabetically
     assert by["de_mirage"].matches == 120
     assert by["de_mirage"].win_rate == 0.58
     assert by["de_mirage"].kd == 1.1
@@ -300,15 +300,23 @@ async def test_common_matches_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("FACEIT_API_KEY", "test-key")
 
     async def fake_get(path, params=None, *, allow_404=False):
-        assert "/history" in path
-        if (params or {}).get("offset", 0) == 0:
+        if "/history" in path:
+            if (params or {}).get("offset", 0) == 0:
+                return {
+                    "items": [
+                        _history_item("m1", ["A", "B"], ["C", "D"], 300),
+                        _history_item("m2", ["A", "B"], ["C", "D"], 200),
+                    ]
+                }
+            return {"items": []}
+        if "/stats" in path:
+            # Return a minimal stats payload with a map name.
             return {
-                "items": [
-                    _history_item("m1", ["A", "B"], ["C", "D"], 300),
-                    _history_item("m2", ["A", "B"], ["C", "D"], 200),
+                "rounds": [
+                    _round("de_mirage", "t1", {"t1": ["A", "B"], "t2": ["C", "D"]})
                 ]
             }
-        return {"items": []}
+        return None
 
     monkeypatch.setattr(faceit, "_faceit_get", fake_get)
 
@@ -321,3 +329,5 @@ async def test_common_matches_endpoint(monkeypatch) -> None:
     body = resp.json()
     assert [m["match_id"] for m in body["matches"]] == ["m1", "m2"]
     assert body["analyzed"] == 2
+    # Map name should be populated from the stats call.
+    assert body["matches"][0]["map"] == "de_mirage"

@@ -303,6 +303,7 @@ export interface FaceitMatchSummary {
   faceit_url: string;
   score: string;
   selected_players: FaceitSelectedPlayer[];
+  map?: string | null;
 }
 
 export interface FaceitCommonMatches {
