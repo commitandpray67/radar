@@ -241,7 +241,9 @@
 /* ── Per-player map stats ── */
 .playerGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  /* auto-fit (not auto-fill) collapses empty tracks so 4–5 cards stretch to
+     fill the row instead of shrinking around phantom columns. */
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 8px;
 }
 
@@ -267,7 +269,7 @@
 
 .psRow {
   display: grid;
-  grid-template-columns: 1fr 28px 32px 36px;
+  grid-template-columns: 1fr 22px 28px 34px;
   gap: 4px;
   font-size: 11px;
   align-items: center;

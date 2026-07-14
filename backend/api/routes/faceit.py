@@ -26,6 +26,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -755,31 +756,64 @@ async def player_map_stats(payload: PlayerMapStatsPayload) -> PlayerMapStatsResp
 # ---------------------------------------------------------------------------
 
 
-async def _download_capped(url: str, dest: Path) -> None:
-    """Stream-download ``url`` to ``dest``, failing fast past the size cap.
+async def _stream_to_file(client: httpx.AsyncClient, url: str, dest: Path) -> None:
+    """Stream one URL to ``dest`` enforcing the size cap. Raises on any failure."""
+    written = 0
+    async with client.stream("GET", url) as resp:
+        if resp.status_code >= 400:
+            raise HTTPException(502, f"Demo download failed (HTTP {resp.status_code}).")
+        with dest.open("wb") as out:
+            async for chunk in resp.aiter_bytes(_CHUNK):
+                written += len(chunk)
+                if written > _MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"Demo too large (> {_MAX_UPLOAD_BYTES // 1_000_000} MB). "
+                        f"Raise the limit with MAX_UPLOAD_MB.",
+                    )
+                out.write(chunk)
 
-    Uses a separate client (no base_url) so CDN hostnames resolve correctly.
-    No Authorization header is sent — FACEIT demo URLs are pre-signed CDN links.
+
+async def _download_capped(urls: list[str], dest: Path) -> None:
+    """Download a demo, trying every candidate URL with a short retry each.
+
+    FACEIT can return more than one ``demo_url`` (different CDN hosts); we try
+    them in order and retry transient network/DNS hiccups.  No Authorization
+    header is sent — FACEIT demo URLs are pre-signed CDN links.
     """
     client = await _get_cdn_client()
-    logger.info("Downloading demo from %s", url.split("?")[0])
-    written = 0
-    try:
-        async with client.stream("GET", url) as resp:
-            if resp.status_code >= 400:
-                raise HTTPException(502, f"Demo download failed (HTTP {resp.status_code}).")
-            with dest.open("wb") as out:
-                async for chunk in resp.aiter_bytes(_CHUNK):
-                    written += len(chunk)
-                    if written > _MAX_UPLOAD_BYTES:
-                        raise HTTPException(
-                            413,
-                            f"Demo too large (> {_MAX_UPLOAD_BYTES // 1_000_000} MB). "
-                            f"Raise the limit with MAX_UPLOAD_MB.",
-                        )
-                    out.write(chunk)
-    except httpx.RequestError as exc:
-        raise HTTPException(502, f"Demo download failed: {exc}")
+    candidates = [
+        u.strip()
+        for u in (str(x or "").strip() for x in urls)
+        if u.lower().startswith(("http://", "https://"))
+    ]
+    if not candidates:
+        raise HTTPException(502, "FACEIT returned no usable demo URL for this match.")
+
+    last_err = ""
+    for url in candidates:
+        host = urlparse(url).hostname or "?"
+        for attempt in range(3):
+            try:
+                logger.info("Downloading demo from %s (attempt %d)", host, attempt + 1)
+                await _stream_to_file(client, url, dest)
+                return
+            except HTTPException:
+                raise  # size cap / HTTP error — don't retry or mask
+            except httpx.RequestError as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+                logger.warning("Demo download from %s failed: %s", host, last_err)
+                dest.unlink(missing_ok=True)
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+
+    raise HTTPException(
+        502,
+        f"Demo download failed ({last_err}). The FACEIT demo host could not be "
+        f"reached from this machine — usually a DNS or network block (VPN, firewall, "
+        f"or a DNS filter blocking the CDN). Try again, switch DNS servers, or open "
+        f"the match on FACEIT and download the demo manually.",
+    )
 
 
 def _prepare_dem(src: Path, dest: Path) -> None:
@@ -835,7 +869,7 @@ async def load_match(payload: LoadMatchPayload) -> dict:
     tmp = _UPLOAD_DIR / f"{uuid.uuid4().hex}.faceitdl"
     dem_path = _UPLOAD_DIR / f"{uuid.uuid4().hex}_faceit_{safe_id}.dem"
     try:
-        await _download_capped(demo_urls[0], tmp)
+        await _download_capped(demo_urls, tmp)
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _prepare_dem, tmp, dem_path)
     except BaseException:
