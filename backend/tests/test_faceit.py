@@ -1,0 +1,221 @@
+"""Tests for the FACEIT integration routes."""
+
+import gzip
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from api.routes import faceit
+from main import app
+
+# ---------------------------------------------------------------------------
+# Helpers to build fake FACEIT history / stats payloads
+# ---------------------------------------------------------------------------
+
+
+def _player(pid: str, nick: str = "", skill: int = 10) -> dict:
+    return {"player_id": pid, "nickname": nick or pid, "skill_level": skill}
+
+
+def _history_item(match_id: str, faction1: list[str], faction2: list[str], started: int) -> dict:
+    return {
+        "match_id": match_id,
+        "started_at": started,
+        "finished_at": started + 1800,
+        "competition_name": "5v5",
+        "competition_type": "matchmaking",
+        "region": "EU",
+        "faceit_url": "https://www.faceit.com/{lang}/cs2/room/" + match_id,
+        "results": {"winner": "faction1", "score": {"faction1": 13, "faction2": 7}},
+        "teams": {
+            "faction1": {"team_id": "t1", "players": [_player(p) for p in faction1]},
+            "faction2": {"team_id": "t2", "players": [_player(p) for p in faction2]},
+        },
+    }
+
+
+def _round(map_name: str | None, winner_team: str, teams: dict[str, list[str]]) -> dict:
+    rs: dict = {"Winner": winner_team}
+    if map_name is not None:
+        rs["Map"] = map_name
+    return {
+        "round_stats": rs,
+        "teams": [
+            {"team_id": tid, "players": [{"player_id": p} for p in pids]}
+            for tid, pids in teams.items()
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# _filter_common_matches (pure)
+# ---------------------------------------------------------------------------
+
+
+def test_filter_keeps_only_matches_with_all_players() -> None:
+    history = [
+        _history_item("m1", ["A", "B", "X"], ["C", "D", "E"], 300),
+        _history_item("m2", ["A", "Z"], ["C", "D", "E"], 200),  # B absent
+        _history_item("m3", ["A", "B"], ["C", "D"], 100),
+    ]
+    got = faceit._filter_common_matches(history, ["A", "B"], same_team=True)
+    assert [m.match_id for m in got] == ["m1", "m3"]  # sorted by started_at desc
+
+
+def test_filter_same_team_excludes_cross_faction() -> None:
+    history = [_history_item("m1", ["A", "X"], ["B", "Y"], 100)]  # A vs B, opposing
+    assert faceit._filter_common_matches(history, ["A", "B"], same_team=True) == []
+    # Same match qualifies when same_team is not required.
+    loose = faceit._filter_common_matches(history, ["A", "B"], same_team=False)
+    assert [m.match_id for m in loose] == ["m1"]
+
+
+def test_filter_reports_faction_labels() -> None:
+    history = [_history_item("m1", ["A", "B"], ["C", "D"], 100)]
+    m = faceit._filter_common_matches(history, ["A", "B"], same_team=True)[0]
+    assert {p.player_id: p.faction for p in m.selected_players} == {
+        "A": "faction1",
+        "B": "faction1",
+    }
+    assert m.faceit_url.endswith("/en/cs2/room/m1")  # {lang} substituted
+    assert m.score == "13 : 7"
+
+
+# ---------------------------------------------------------------------------
+# _aggregate_map_stats (pure)
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_map_stats_counts_and_winrate() -> None:
+    rounds = [
+        _round("de_mirage", "t1", {"t1": ["A", "B"], "t2": ["C", "D"]}),  # win
+        _round("de_mirage", "t2", {"t1": ["A", "B"], "t2": ["C", "D"]}),  # loss
+        _round("de_nuke", "t1", {"t1": ["A", "B"], "t2": ["C", "D"]}),  # win
+        _round(None, "t1", {"t1": ["A", "B"], "t2": ["C", "D"]}),  # no map -> skipped
+    ]
+    maps = faceit._aggregate_map_stats(rounds, ["A", "B"])
+    by = {m.map: m for m in maps}
+    assert set(by) == {"de_mirage", "de_nuke"}
+    assert maps[0].map == "de_mirage"  # most played first
+    assert by["de_mirage"].played == 2
+    assert by["de_mirage"].wins == 1
+    assert by["de_mirage"].losses == 1
+    assert by["de_mirage"].win_rate == 0.5
+    assert by["de_mirage"].preference_pct == round(2 / 3, 4)
+    assert by["de_nuke"].win_rate == 1.0
+    assert by["de_nuke"].preference_pct == round(1 / 3, 4)
+
+
+def test_aggregate_map_stats_no_win_when_stack_team_not_found() -> None:
+    # Stack split across teams -> no team contains the whole stack -> no win.
+    rounds = [_round("de_train", "t1", {"t1": ["A", "C"], "t2": ["B", "D"]})]
+    maps = faceit._aggregate_map_stats(rounds, ["A", "B"])
+    assert maps[0].played == 1 and maps[0].wins == 0
+
+
+# ---------------------------------------------------------------------------
+# _prepare_dem (gzip magic-byte branch)
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_dem_gunzips_and_passthrough(tmp_path) -> None:
+    raw = b"HL2DEMO\x00fake-demo-bytes" * 100
+
+    gz_src = tmp_path / "in.gz"
+    gz_src.write_bytes(gzip.compress(raw))
+    gz_dest = tmp_path / "out_gz.dem"
+    faceit._prepare_dem(gz_src, gz_dest)
+    assert gz_dest.read_bytes() == raw  # gunzipped
+
+    raw_src = tmp_path / "in.raw"
+    raw_src.write_bytes(raw)
+    raw_dest = tmp_path / "out_raw.dem"
+    faceit._prepare_dem(raw_src, raw_dest)
+    assert raw_dest.read_bytes() == raw  # copied unchanged
+
+
+# ---------------------------------------------------------------------------
+# Endpoints (mocked _faceit_get)
+# ---------------------------------------------------------------------------
+
+
+async def _client() -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+@pytest.mark.asyncio
+async def test_resolve_reports_per_nickname_status(monkeypatch) -> None:
+    monkeypatch.setenv("FACEIT_API_KEY", "test-key")
+
+    async def fake_get(path, params=None, *, allow_404=False):
+        nick = (params or {}).get("nickname")
+        if nick == "good":
+            return {"player_id": "p1", "nickname": "good", "games": {"cs2": {"skill_level": 9}}}
+        if nick == "nocs2":
+            return {"player_id": "p2", "nickname": "nocs2", "games": {"csgo": {}}}
+        return None  # 404 -> not found
+
+    monkeypatch.setattr(faceit, "_faceit_get", fake_get)
+
+    async with await _client() as c:
+        resp = await c.post("/api/faceit/resolve", json={"nicknames": ["good", "nocs2", "ghost"]})
+    assert resp.status_code == 200
+    players = {p["nickname"]: p for p in resp.json()["players"]}
+    assert players["good"]["found"] is True and players["good"]["player_id"] == "p1"
+    assert players["nocs2"]["found"] is False and players["nocs2"]["error"] == "No CS2 profile"
+    assert players["ghost"]["found"] is False and players["ghost"]["error"] == "Nickname not found"
+
+
+@pytest.mark.asyncio
+async def test_missing_api_key_returns_503(monkeypatch) -> None:
+    monkeypatch.delenv("FACEIT_API_KEY", raising=False)
+    async with await _client() as c:
+        resp = await c.post("/api/faceit/resolve", json={"nicknames": ["anyone"]})
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_load_match_without_demo_returns_409(monkeypatch) -> None:
+    monkeypatch.setenv("FACEIT_API_KEY", "test-key")
+
+    async def fake_get(path, params=None, *, allow_404=False):
+        assert path == "/matches/m-1"
+        return {"match_id": "m-1", "demo_url": []}  # no demo
+
+    monkeypatch.setattr(faceit, "_faceit_get", fake_get)
+
+    async with await _client() as c:
+        resp = await c.post("/api/faceit/load-match", json={"match_id": "m-1"})
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_common_matches_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("FACEIT_API_KEY", "test-key")
+
+    async def fake_get(path, params=None, *, allow_404=False):
+        assert "/history" in path
+        if (params or {}).get("offset", 0) == 0:
+            return {
+                "items": [
+                    _history_item("m1", ["A", "B"], ["C", "D"], 300),
+                    _history_item("m2", ["A", "B"], ["C", "D"], 200),
+                ]
+            }
+        return {"items": []}
+
+    monkeypatch.setattr(faceit, "_faceit_get", fake_get)
+
+    async with await _client() as c:
+        resp = await c.post(
+            "/api/faceit/common-matches",
+            json={"player_ids": ["A", "B"], "same_team": True, "window": 50},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [m["match_id"] for m in body["matches"]] == ["m1", "m2"]
+    assert body["analyzed"] == 2

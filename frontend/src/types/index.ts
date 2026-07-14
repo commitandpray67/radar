@@ -271,3 +271,62 @@ export interface TeamDetail {
   created_at: string;
   maps: TeamMapGroup[];
 }
+
+// ---------------------------------------------------------------------------
+// FACEIT integration
+// ---------------------------------------------------------------------------
+
+export interface FaceitResolvedPlayer {
+  nickname: string;
+  player_id: string | null;
+  avatar: string;
+  country: string;
+  skill_level: number | null;
+  found: boolean;
+  error: string | null;
+}
+
+export interface FaceitSelectedPlayer {
+  player_id: string;
+  nickname: string;
+  faction: string;            // "faction1" | "faction2"
+  skill_level: number | null;
+}
+
+export interface FaceitMatchSummary {
+  match_id: string;
+  started_at: number;         // unix seconds
+  finished_at: number;
+  competition_name: string;
+  competition_type: string;
+  region: string;
+  faceit_url: string;
+  score: string;
+  selected_players: FaceitSelectedPlayer[];
+}
+
+export interface FaceitCommonMatches {
+  matches: FaceitMatchSummary[];
+  analyzed: number;
+}
+
+export interface FaceitMapStat {
+  map: string;
+  played: number;
+  wins: number;
+  losses: number;
+  win_rate: number;           // 0..1
+  preference_pct: number;     // 0..1
+}
+
+export interface FaceitStackMapStats {
+  total_matches: number;
+  analyzed: number;
+  maps: FaceitMapStat[];
+}
+
+export interface FaceitLoadResult {
+  job_id: string;
+  demo_id: string;
+  cached: boolean;
+}

@@ -354,3 +354,51 @@ export async function addDemosToTeam(teamId: string, demoIds: string[]): Promise
 export async function removeDemoFromTeam(teamId: string, demoId: string): Promise<void> {
   await http.delete(`/teams/${teamId}/demos/${demoId}`);
 }
+
+// ---------------------------------------------------------------------------
+// FACEIT integration
+// ---------------------------------------------------------------------------
+
+import type {
+  FaceitResolvedPlayer,
+  FaceitCommonMatches,
+  FaceitStackMapStats,
+  FaceitLoadResult,
+} from '../types';
+
+export async function resolveFaceitNicknames(
+  nicknames: string[],
+): Promise<{ players: FaceitResolvedPlayer[] }> {
+  const res = await http.post('/faceit/resolve', { nicknames });
+  return res.data;
+}
+
+export async function findFaceitCommonMatches(
+  playerIds: string[],
+  opts: { same_team?: boolean; window?: number } = {},
+): Promise<FaceitCommonMatches> {
+  const res = await http.post('/faceit/common-matches', {
+    player_ids: playerIds,
+    same_team: opts.same_team ?? true,
+    window: opts.window ?? 200,
+  });
+  return res.data;
+}
+
+export async function getFaceitStackMapStats(
+  playerIds: string[],
+  opts: { same_team?: boolean; window?: number; max_matches?: number } = {},
+): Promise<FaceitStackMapStats> {
+  const res = await http.post('/faceit/stack-map-stats', {
+    player_ids: playerIds,
+    same_team: opts.same_team ?? true,
+    window: opts.window ?? 200,
+    max_matches: opts.max_matches ?? 60,
+  });
+  return res.data;
+}
+
+export async function loadFaceitMatch(matchId: string): Promise<FaceitLoadResult> {
+  const res = await http.post('/faceit/load-match', { match_id: matchId });
+  return res.data;
+}

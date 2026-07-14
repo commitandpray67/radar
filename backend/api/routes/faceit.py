@@ -1,0 +1,538 @@
+"""
+FACEIT integration routes.
+
+Lets the user enter up to five FACEIT nicknames, find the matches those players
+played together (on the same team), inspect the stack's map preferences, and
+load a match's demo straight into the radar via the existing parse pipeline.
+
+  POST /faceit/resolve          – nicknames -> player summaries (validation)
+  POST /faceit/common-matches   – matches where all players were on one team
+  POST /faceit/stack-map-stats  – per-map play frequency + win rate for the stack
+  POST /faceit/load-match       – download a match demo, parse it, return a job
+
+Auth: set the FACEIT_API_KEY environment variable (server-side only — the key
+is never sent to the browser).  Get a free key at developers.faceit.com.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import gzip
+import logging
+import os
+import re
+import shutil
+import uuid
+from pathlib import Path
+
+import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from ._shared import _MAX_UPLOAD_BYTES, _UPLOAD_DIR
+from .demos import start_parse_job
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+FACEIT_BASE = "https://open.faceit.com/data/v4"
+_GAME = "cs2"
+_MAX_PLAYERS = 5
+_HISTORY_PAGE = 100  # max page size the API allows
+_HISTORY_OFFSET_CAP = 1000  # max offset the API allows
+_STATS_CONCURRENCY = 5
+_GZIP_MAGIC = b"\x1f\x8b"
+
+_CHUNK = 1024 * 1024  # 1 MB
+
+
+# ---------------------------------------------------------------------------
+# Shared HTTP client + auth
+# ---------------------------------------------------------------------------
+
+_client: httpx.AsyncClient | None = None
+_client_lock = asyncio.Lock()
+
+
+async def _get_client() -> httpx.AsyncClient:
+    """Lazily create one shared AsyncClient (pooled, bounded concurrency)."""
+    global _client
+    if _client is None or _client.is_closed:
+        async with _client_lock:
+            if _client is None or _client.is_closed:
+                _client = httpx.AsyncClient(
+                    base_url=FACEIT_BASE,
+                    limits=httpx.Limits(max_connections=_STATS_CONCURRENCY),
+                    timeout=httpx.Timeout(15.0, read=30.0),
+                    follow_redirects=True,
+                )
+    return _client
+
+
+def _api_key() -> str:
+    key = os.environ.get("FACEIT_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(
+            503,
+            "FACEIT integration is not configured. Set the FACEIT_API_KEY "
+            "environment variable (get a free key at developers.faceit.com).",
+        )
+    return key
+
+
+def _headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {_api_key()}", "Accept": "application/json"}
+
+
+async def _faceit_get(
+    path: str, params: dict | None = None, *, allow_404: bool = False
+) -> dict | None:
+    """GET a FACEIT Data API endpoint, mapping upstream errors to HTTPExceptions.
+
+    Returns the parsed JSON dict, or ``None`` when ``allow_404`` and the
+    resource does not exist (so callers can treat "not found" as a soft miss).
+    """
+    client = await _get_client()
+    try:
+        resp = await client.get(path, params=params, headers=_headers())
+    except httpx.RequestError as exc:
+        logger.warning("FACEIT request error for %s: %s", path, exc)
+        raise HTTPException(502, "Could not reach FACEIT. Check your connection and retry.")
+
+    if resp.status_code == 401:
+        raise HTTPException(503, "FACEIT rejected the API key (401). Check FACEIT_API_KEY.")
+    if resp.status_code == 429:
+        raise HTTPException(503, "FACEIT rate limit reached. Please wait a moment and retry.")
+    if resp.status_code == 404:
+        if allow_404:
+            return None
+        raise HTTPException(404, "FACEIT resource not found.")
+    if resp.status_code >= 400:
+        logger.warning("FACEIT %s -> %s: %s", path, resp.status_code, resp.text[:200])
+        raise HTTPException(502, f"FACEIT returned an error (HTTP {resp.status_code}).")
+
+    try:
+        data = resp.json()
+    except ValueError:
+        raise HTTPException(502, "FACEIT returned a malformed response.")
+    return data if isinstance(data, dict) else {"items": data}
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
+
+class ResolvePayload(BaseModel):
+    nicknames: list[str]
+
+
+class ResolvedPlayer(BaseModel):
+    nickname: str
+    player_id: str | None = None
+    avatar: str = ""
+    country: str = ""
+    skill_level: int | None = None
+    found: bool = False
+    error: str | None = None
+
+
+class ResolveResponse(BaseModel):
+    players: list[ResolvedPlayer]
+
+
+class CommonMatchesPayload(BaseModel):
+    player_ids: list[str]
+    same_team: bool = True
+    window: int = 200
+
+
+class SelectedPlayerInMatch(BaseModel):
+    player_id: str
+    nickname: str
+    faction: str  # "faction1" | "faction2"
+    skill_level: int | None = None
+
+
+class MatchSummary(BaseModel):
+    match_id: str
+    started_at: int
+    finished_at: int
+    competition_name: str
+    competition_type: str
+    region: str
+    faceit_url: str
+    score: str
+    selected_players: list[SelectedPlayerInMatch]
+
+
+class CommonMatchesResponse(BaseModel):
+    matches: list[MatchSummary]
+    analyzed: int  # how many of the anchor player's matches were scanned
+
+
+class MapStatsPayload(BaseModel):
+    player_ids: list[str]
+    same_team: bool = True
+    window: int = 200
+    max_matches: int = 60
+
+
+class MapStat(BaseModel):
+    map: str
+    played: int
+    wins: int
+    losses: int
+    win_rate: float  # 0..1, fraction of analyzed games on this map that were won
+    preference_pct: float  # 0..1, share of analyzed games played on this map
+
+
+class MapStatsResponse(BaseModel):
+    total_matches: int
+    analyzed: int
+    maps: list[MapStat]
+
+
+class LoadMatchPayload(BaseModel):
+    match_id: str
+
+
+# ---------------------------------------------------------------------------
+# Nickname resolution
+# ---------------------------------------------------------------------------
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in items or []:
+        v = (raw or "").strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+async def _resolve_one(nickname: str) -> ResolvedPlayer:
+    data = await _faceit_get("/players", {"nickname": nickname, "game": _GAME}, allow_404=True)
+    if data is None:
+        return ResolvedPlayer(nickname=nickname, found=False, error="Nickname not found")
+    games = data.get("games") or {}
+    common = {
+        "nickname": data.get("nickname", nickname),
+        "player_id": data.get("player_id"),
+        "avatar": data.get("avatar") or "",
+        "country": data.get("country") or "",
+    }
+    if _GAME not in games:
+        return ResolvedPlayer(**common, found=False, error="No CS2 profile")
+    game_info = games.get(_GAME) or {}
+    skill = game_info.get("skill_level") if isinstance(game_info, dict) else None
+    return ResolvedPlayer(**common, skill_level=skill, found=True)
+
+
+@router.post("/faceit/resolve", response_model=ResolveResponse)
+async def resolve_nicknames(payload: ResolvePayload) -> ResolveResponse:
+    """Resolve up to five nicknames to CS2 player summaries (per-item validity)."""
+    nicks = _dedupe(payload.nicknames)
+    if not nicks:
+        raise HTTPException(400, "Enter at least one nickname.")
+    if len(nicks) > _MAX_PLAYERS:
+        raise HTTPException(400, f"At most {_MAX_PLAYERS} players.")
+    _api_key()  # fail fast (503) if unconfigured, before firing requests
+    players = await asyncio.gather(*(_resolve_one(n) for n in nicks))
+    return ResolveResponse(players=list(players))
+
+
+# ---------------------------------------------------------------------------
+# Common-match discovery
+# ---------------------------------------------------------------------------
+
+
+def _validate_ids(player_ids: list[str]) -> list[str]:
+    ids = _dedupe(player_ids)
+    if not ids:
+        raise HTTPException(400, "Select at least one resolved player.")
+    if len(ids) > _MAX_PLAYERS:
+        raise HTTPException(400, f"At most {_MAX_PLAYERS} players.")
+    return ids
+
+
+def _index_players(item: dict) -> tuple[dict[str, str], dict[str, dict]]:
+    """Return (player_id -> faction, player_id -> player-detail) for a history item."""
+    factions: dict[str, str] = {}
+    details: dict[str, dict] = {}
+    teams = item.get("teams") or {}
+    for fac in ("faction1", "faction2"):
+        for p in (teams.get(fac) or {}).get("players") or []:
+            pid = p.get("player_id")
+            if pid:
+                factions[pid] = fac
+                details[pid] = p
+    return factions, details
+
+
+def _to_match_summary(
+    item: dict, selected: list[str], factions: dict[str, str], details: dict[str, dict]
+) -> MatchSummary:
+    results = item.get("results") or {}
+    score = results.get("score") if isinstance(results, dict) else None
+    score_str = ""
+    if isinstance(score, dict):
+        f1, f2 = score.get("faction1"), score.get("faction2")
+        if f1 is not None and f2 is not None:
+            score_str = f"{f1} : {f2}"
+    return MatchSummary(
+        match_id=item.get("match_id", "") or "",
+        started_at=int(item.get("started_at") or 0),
+        finished_at=int(item.get("finished_at") or 0),
+        competition_name=item.get("competition_name") or "",
+        competition_type=item.get("competition_type") or "",
+        region=item.get("region") or "",
+        faceit_url=(item.get("faceit_url") or "").replace("{lang}", "en"),
+        score=score_str,
+        selected_players=[
+            SelectedPlayerInMatch(
+                player_id=pid,
+                nickname=details.get(pid, {}).get("nickname", ""),
+                faction=factions.get(pid, ""),
+                skill_level=details.get(pid, {}).get("skill_level"),
+            )
+            for pid in selected
+        ],
+    )
+
+
+def _filter_common_matches(
+    history_items: list[dict], selected_ids: list[str], same_team: bool
+) -> list[MatchSummary]:
+    """Pure filter: keep matches where every selected player appears.
+
+    With ``same_team`` also require them all to share one faction.  Anchoring on
+    the first player's history makes this complete within the window, because
+    any match they all co-occurred in necessarily contains the anchor.
+    """
+    sel = _dedupe(selected_ids)
+    out: list[MatchSummary] = []
+    for item in history_items:
+        factions, details = _index_players(item)
+        if not all(pid in factions for pid in sel):
+            continue
+        if same_team and len({factions[pid] for pid in sel}) != 1:
+            continue
+        out.append(_to_match_summary(item, sel, factions, details))
+    out.sort(key=lambda m: m.started_at, reverse=True)
+    return out
+
+
+async def _fetch_history(player_id: str, window: int) -> list[dict]:
+    """Fetch up to ``window`` recent CS2 matches from a player's history."""
+    window = max(1, min(window, _HISTORY_OFFSET_CAP + _HISTORY_PAGE))
+    items: list[dict] = []
+    offset = 0
+    while len(items) < window and offset <= _HISTORY_OFFSET_CAP:
+        limit = min(_HISTORY_PAGE, window - len(items))
+        data = await _faceit_get(
+            f"/players/{player_id}/history",
+            {"game": _GAME, "offset": offset, "limit": limit},
+            allow_404=True,
+        )
+        page = (data or {}).get("items") or []
+        if not page:
+            break
+        items.extend(page)
+        if len(page) < limit:
+            break
+        offset += limit
+    return items[:window]
+
+
+@router.post("/faceit/common-matches", response_model=CommonMatchesResponse)
+async def common_matches(payload: CommonMatchesPayload) -> CommonMatchesResponse:
+    """Find matches where all selected players played (on the same team)."""
+    ids = _validate_ids(payload.player_ids)
+    _api_key()
+    history = await _fetch_history(ids[0], payload.window)
+    matches = _filter_common_matches(history, ids, payload.same_team)
+    return CommonMatchesResponse(matches=matches, analyzed=len(history))
+
+
+# ---------------------------------------------------------------------------
+# Stack map-preference profile
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_match_round(match_id: str) -> dict | None:
+    """Return the first round-stats object for a match, or None if unavailable."""
+    try:
+        data = await _faceit_get(f"/matches/{match_id}/stats", allow_404=True)
+    except HTTPException:
+        # A single match's stats failing must not abort the whole aggregation.
+        return None
+    rounds = (data or {}).get("rounds") or []
+    return rounds[0] if rounds else None
+
+
+def _aggregate_map_stats(round_objs: list[dict], stack_ids: list[str]) -> list[MapStat]:
+    """Aggregate per-map play counts and win rate for the stack.
+
+    Win attribution: within a match's round stats, find the team whose roster
+    contains the whole stack, then compare its team_id to ``round_stats.Winner``.
+    """
+    sel = set(stack_ids)
+    agg: dict[str, dict[str, int]] = {}
+    for rnd in round_objs:
+        rs = rnd.get("round_stats") or {}
+        map_name = rs.get("Map") or rs.get("map")
+        if not map_name:
+            continue
+
+        stack_team_id: str | None = None
+        for team in rnd.get("teams") or []:
+            pids = {p.get("player_id") for p in (team.get("players") or [])}
+            if sel and sel.issubset(pids):
+                stack_team_id = team.get("team_id")
+                break
+
+        bucket = agg.setdefault(map_name, {"played": 0, "wins": 0})
+        bucket["played"] += 1
+        winner = rs.get("Winner") or rs.get("winner")
+        if stack_team_id is not None and winner is not None and str(winner) == str(stack_team_id):
+            bucket["wins"] += 1
+
+    total = sum(b["played"] for b in agg.values()) or 1
+    out = [
+        MapStat(
+            map=name,
+            played=b["played"],
+            wins=b["wins"],
+            losses=b["played"] - b["wins"],
+            win_rate=round(b["wins"] / b["played"], 4) if b["played"] else 0.0,
+            preference_pct=round(b["played"] / total, 4),
+        )
+        for name, b in agg.items()
+    ]
+    out.sort(key=lambda m: (m.played, m.win_rate), reverse=True)
+    return out
+
+
+@router.post("/faceit/stack-map-stats", response_model=MapStatsResponse)
+async def stack_map_stats(payload: MapStatsPayload) -> MapStatsResponse:
+    """Map preference + win-rate profile for the stack across their shared matches."""
+    ids = _validate_ids(payload.player_ids)
+    _api_key()
+    history = await _fetch_history(ids[0], payload.window)
+    matches = _filter_common_matches(history, ids, payload.same_team)
+    total = len(matches)
+
+    cap = max(1, min(payload.max_matches, 200))
+    subset = matches[:cap]
+
+    sem = asyncio.Semaphore(_STATS_CONCURRENCY)
+
+    async def _one(match: MatchSummary) -> dict | None:
+        async with sem:
+            return await _fetch_match_round(match.match_id)
+
+    rounds = await asyncio.gather(*(_one(m) for m in subset))
+    usable = [r for r in rounds if r is not None]
+    maps = _aggregate_map_stats(usable, ids)
+    return MapStatsResponse(total_matches=total, analyzed=len(usable), maps=maps)
+
+
+# ---------------------------------------------------------------------------
+# Load a match demo into the radar
+# ---------------------------------------------------------------------------
+
+
+async def _download_capped(url: str, dest: Path) -> None:
+    """Stream-download ``url`` to ``dest``, failing fast past the size cap.
+
+    No Authorization header is sent — FACEIT demo URLs are pre-signed CDN links.
+    """
+    client = await _get_client()
+    written = 0
+    try:
+        async with client.stream(
+            "GET", url, headers={}, timeout=httpx.Timeout(30.0, read=120.0)
+        ) as resp:
+            if resp.status_code >= 400:
+                raise HTTPException(502, f"Demo download failed (HTTP {resp.status_code}).")
+            with dest.open("wb") as out:
+                async for chunk in resp.aiter_bytes(_CHUNK):
+                    written += len(chunk)
+                    if written > _MAX_UPLOAD_BYTES:
+                        raise HTTPException(
+                            413,
+                            f"Demo too large (> {_MAX_UPLOAD_BYTES // 1_000_000} MB). "
+                            f"Raise the limit with MAX_UPLOAD_MB.",
+                        )
+                    out.write(chunk)
+    except httpx.RequestError as exc:
+        raise HTTPException(502, f"Demo download failed: {exc}")
+
+
+def _prepare_dem(src: Path, dest: Path) -> None:
+    """Produce a raw .dem at ``dest`` from ``src`` — gunzip if gzip-compressed.
+
+    Detection is by magic bytes, not the URL extension.  Runs in a thread (it
+    is blocking IO/CPU).  Enforces the size cap on the decompressed stream too.
+    """
+    with src.open("rb") as f:
+        magic = f.read(2)
+    if magic == _GZIP_MAGIC:
+        written = 0
+        with gzip.open(src, "rb") as gz, dest.open("wb") as out:
+            while True:
+                chunk = gz.read(_CHUNK)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > _MAX_UPLOAD_BYTES:
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(
+                        413,
+                        f"Decompressed demo too large (> {_MAX_UPLOAD_BYTES // 1_000_000} MB).",
+                    )
+                out.write(chunk)
+    else:
+        shutil.copyfile(src, dest)
+
+
+@router.post("/faceit/load-match")
+async def load_match(payload: LoadMatchPayload) -> dict:
+    """Download a FACEIT match's demo, parse it, and return a parse job.
+
+    The frontend polls the existing /api/parse-status/{job_id} SSE stream and
+    then loads the demo into the radar — identical to the upload flow.
+    """
+    match_id = (payload.match_id or "").strip()
+    if not match_id:
+        raise HTTPException(400, "match_id is required.")
+    _api_key()
+
+    detail = await _faceit_get(f"/matches/{match_id}", allow_404=True)
+    if detail is None:
+        raise HTTPException(404, "Match not found on FACEIT.")
+    demo_urls = detail.get("demo_url") or []
+    if not demo_urls:
+        raise HTTPException(
+            409, "No demo is available for this match (it may have expired on FACEIT)."
+        )
+
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", match_id)
+    tmp = _UPLOAD_DIR / f"{uuid.uuid4().hex}.faceitdl"
+    dem_path = _UPLOAD_DIR / f"{uuid.uuid4().hex}_faceit_{safe_id}.dem"
+    try:
+        await _download_capped(demo_urls[0], tmp)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _prepare_dem, tmp, dem_path)
+    except BaseException:
+        dem_path.unlink(missing_ok=True)
+        raise
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    # Ownership of dem_path passes to the parse pipeline (deletes it when done).
+    return await start_parse_job(dem_path, f"faceit_{safe_id}.dem")

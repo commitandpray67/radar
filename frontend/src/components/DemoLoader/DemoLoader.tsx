@@ -31,6 +31,7 @@ import DemoLibrary from '../DemoLibrary/DemoLibrary';
 import TeamLoader from './TeamLoader';
 import TeamSessionLibrary from './TeamSessionLibrary';
 import TeamOrganizer from './TeamOrganizer';
+import FaceitLoader from './FaceitLoader';
 import styles from './DemoLoader.module.css';
 
 type LoadPhase =
@@ -42,7 +43,7 @@ type LoadPhase =
   | 'done'
   | 'error';
 
-type LoaderTab = 'single' | 'team' | 'teams';
+type LoaderTab = 'single' | 'team' | 'teams' | 'faceit';
 
 const DemoLoader: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -257,6 +258,12 @@ const DemoLoader: React.FC = () => {
               >
                 Teams
               </button>
+              <button
+                className={`${styles.tab} ${tab === 'faceit' ? styles.activeTab : ''}`}
+                onClick={() => setTab('faceit')}
+              >
+                FACEIT
+              </button>
             </div>
 
             {tab === 'single' && (
@@ -307,6 +314,10 @@ const DemoLoader: React.FC = () => {
 
             {tab === 'teams' && (
               <TeamOrganizer onSessionLoaded={() => setPhase('done')} />
+            )}
+
+            {tab === 'faceit' && (
+              <FaceitLoader onComplete={() => setPhase('done')} />
             )}
           </>
         )}

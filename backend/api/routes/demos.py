@@ -97,7 +97,19 @@ async def upload_demo(
         tmp_path.unlink(missing_ok=True)
         raise
 
-    demo_id = file_hash(tmp_path)
+    return await start_parse_job(tmp_path, file.filename, force=force)
+
+
+async def start_parse_job(dem_path: Path, filename: str, *, force: bool = False) -> dict:
+    """Hash a local ``.dem``, seed a parse job, honour the cache, and schedule
+    the background parse when needed.
+
+    The caller must have already written ``dem_path`` to disk (any source —
+    an upload or a FACEIT download).  On a cache hit the file is removed here;
+    otherwise ownership passes to the background ``_parse_task`` which deletes
+    it when finished.  Returns ``{job_id, demo_id, cached}``.
+    """
+    demo_id = file_hash(dem_path)
     job_id = str(uuid.uuid4())
 
     _parse_jobs[job_id] = {
@@ -105,7 +117,7 @@ async def upload_demo(
         "progress": 0.0,
         "message": "Queued",
         "demo_id": demo_id,
-        "filename": file.filename,
+        "filename": filename,
     }
 
     # Cache check (skipped when force=True).
@@ -137,9 +149,9 @@ async def upload_demo(
                 "progress": 1.0,
                 "message": "Loaded from cache",
                 "demo_id": demo_id,
-                "filename": file.filename,
+                "filename": filename,
             }
-            tmp_path.unlink(missing_ok=True)
+            dem_path.unlink(missing_ok=True)
             return {"job_id": job_id, "demo_id": demo_id, "cached": True}
 
         logger.info(
@@ -151,9 +163,9 @@ async def upload_demo(
 
     _persist_job_mapping(job_id, demo_id)
 
-    file_size = tmp_path.stat().st_size
+    file_size = dem_path.stat().st_size
     lock = await _get_parse_lock(demo_id)
-    asyncio.create_task(_parse_task(job_id, demo_id, tmp_path, file.filename, file_size, lock))
+    asyncio.create_task(_parse_task(job_id, demo_id, dem_path, filename, file_size, lock))
 
     return {"job_id": job_id, "demo_id": demo_id, "cached": False}
 

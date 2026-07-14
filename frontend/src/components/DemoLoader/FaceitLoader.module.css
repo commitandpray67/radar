@@ -1,0 +1,306 @@
+.root {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: 'Inter', sans-serif;
+}
+
+.hint {
+  font-size: 12px;
+  color: #6a7a8a;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ── Inputs ── */
+.inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  background: #0d1117;
+  border: 1px solid #2a3a52;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #c0cfe0;
+  font-size: 13px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: #3a6ea5;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.badgeOk {
+  background: #14351c;
+  color: #5fbf6f;
+}
+
+.badgeBad {
+  background: #3a1414;
+  color: #d07a6a;
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: #4a5a6a;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+}
+
+.removeBtn:hover {
+  color: #c0603a;
+}
+
+/* ── Actions ── */
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.addBtn {
+  background: none;
+  border: 1px solid #2a3a52;
+  color: #8a9aac;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.addBtn:hover {
+  border-color: #3a6ea5;
+  color: #c0cfe0;
+}
+
+.findBtn {
+  flex: 1;
+  background: #ff5500;
+  border: none;
+  color: #fff;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.findBtn:hover:not(:disabled) {
+  background: #ff6a22;
+}
+
+.findBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.error {
+  background: #3a1414;
+  border: 1px solid #5a2020;
+  color: #e0a090;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c0cfe0;
+  letter-spacing: 0.03em;
+  margin-top: 4px;
+}
+
+.subtle {
+  color: #5a6a7a;
+  font-weight: 400;
+  font-size: 11px;
+}
+
+/* ── Map preferences ── */
+.mapPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: #0d1117;
+  border: 1px solid #202c3c;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.mapRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.mapName {
+  width: 74px;
+  color: #b0c0d0;
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prefBarWrap {
+  flex: 1;
+  height: 8px;
+  background: #1a2432;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.prefBar {
+  height: 100%;
+  background: #3a6ea5;
+  border-radius: 4px;
+}
+
+.mapCount {
+  width: 34px;
+  text-align: right;
+  color: #7a8a9a;
+}
+
+.winRate {
+  width: 46px;
+  text-align: right;
+  font-weight: 600;
+}
+
+/* ── Matches ── */
+.matches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.matchRow {
+  background: #0d1117;
+  border: 1px solid #202c3c;
+  border-radius: 6px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.matchMeta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.matchDate {
+  font-size: 12px;
+  color: #c0cfe0;
+  font-weight: 600;
+}
+
+.matchComp {
+  font-size: 12px;
+  color: #8a9aac;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.matchScore {
+  margin-left: auto;
+  font-size: 12px;
+  color: #b0c0d0;
+  font-variant-numeric: tabular-nums;
+}
+
+.matchPlayers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.playerTag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.fac1 {
+  background: #14243a;
+  color: #6aa9e0;
+}
+
+.fac2 {
+  background: #3a2410;
+  color: #e0a060;
+}
+
+.loadBtn {
+  align-self: flex-start;
+  background: #1a3a5c;
+  border: 1px solid #2a5a8c;
+  color: #9bc4e8;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.loadBtn:hover:not(:disabled) {
+  background: #234a70;
+  color: #d0e4f8;
+}
+
+.loadBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.loadProgress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progressText {
+  font-size: 11px;
+  color: #8a9aac;
+}
+
+.progressTrack {
+  height: 6px;
+  background: #1a2432;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: #ff5500;
+  transition: width 0.2s;
+}
