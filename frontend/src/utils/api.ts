@@ -364,7 +364,23 @@ import type {
   FaceitCommonMatches,
   FaceitStackMapStats,
   FaceitLoadResult,
+  FaceitConfig,
 } from '../types';
+
+export async function getFaceitConfig(): Promise<FaceitConfig> {
+  const res = await http.get('/faceit/config');
+  return res.data;
+}
+
+export async function saveFaceitApiKey(apiKey: string): Promise<FaceitConfig> {
+  const res = await http.post('/faceit/config', { api_key: apiKey });
+  return res.data;
+}
+
+export async function clearFaceitApiKey(): Promise<FaceitConfig> {
+  const res = await http.delete('/faceit/config');
+  return res.data;
+}
 
 export async function resolveFaceitNicknames(
   nicknames: string[],

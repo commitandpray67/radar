@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import json
 import logging
 import os
 import re
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -29,7 +31,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ._shared import _MAX_UPLOAD_BYTES, _UPLOAD_DIR
+from ._shared import _DATA_DIR, _MAX_UPLOAD_BYTES, _UPLOAD_DIR
 from .demos import start_parse_job
 
 logger = logging.getLogger(__name__)
@@ -69,19 +71,86 @@ async def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+# The API key may come from the environment (takes precedence) or be saved
+# in-app to the data folder.  The saved file lives next to the other app data.
+_CONFIG_FILE = _DATA_DIR / "config.json"
+
+
+def _load_config() -> dict:
+    try:
+        if _CONFIG_FILE.exists():
+            data = json.loads(_CONFIG_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_config(data: dict) -> None:
+    """Atomically persist the config so a crash mid-write can't corrupt it."""
+    _CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(_CONFIG_FILE.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(data))
+        os.replace(tmp, _CONFIG_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _env_key() -> str:
+    return os.environ.get("FACEIT_API_KEY", "").strip()
+
+
+def _saved_key() -> str:
+    return (_load_config().get("faceit_api_key") or "").strip()
+
+
+def _key_source() -> str | None:
+    """Where the active key comes from: 'env', 'saved', or None if unset."""
+    if _env_key():
+        return "env"
+    if _saved_key():
+        return "saved"
+    return None
+
+
 def _api_key() -> str:
-    key = os.environ.get("FACEIT_API_KEY", "").strip()
+    key = _env_key() or _saved_key()
     if not key:
         raise HTTPException(
             503,
-            "FACEIT integration is not configured. Set the FACEIT_API_KEY "
-            "environment variable (get a free key at developers.faceit.com).",
+            "FACEIT integration is not configured. Add your API key in the "
+            "FACEIT tab (get a free key at developers.faceit.com).",
         )
     return key
 
 
 def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {_api_key()}", "Accept": "application/json"}
+
+
+async def _validate_key(key: str) -> None:
+    """Confirm a key works by making one cheap authenticated FACEIT call."""
+    client = await _get_client()
+    try:
+        resp = await client.get(
+            f"/games/{_GAME}",
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+        )
+    except httpx.RequestError:
+        raise HTTPException(502, "Could not reach FACEIT to validate the key. Try again.")
+    if resp.status_code in (401, 403):
+        raise HTTPException(
+            400, "FACEIT rejected this key. Make sure you copied the full Data API key."
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(502, f"FACEIT key validation failed (HTTP {resp.status_code}).")
 
 
 async def _faceit_get(
@@ -195,6 +264,51 @@ class MapStatsResponse(BaseModel):
 
 class LoadMatchPayload(BaseModel):
     match_id: str
+
+
+class ApiKeyPayload(BaseModel):
+    api_key: str
+
+
+class ConfigResponse(BaseModel):
+    configured: bool
+    source: str | None  # "env" | "saved" | None
+
+
+# ---------------------------------------------------------------------------
+# API-key configuration (in-app entry, persisted to the data folder)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/faceit/config", response_model=ConfigResponse)
+async def get_config() -> ConfigResponse:
+    """Report whether a key is configured and where it comes from (never the key)."""
+    src = _key_source()
+    return ConfigResponse(configured=src is not None, source=src)
+
+
+@router.post("/faceit/config", response_model=ConfigResponse)
+async def set_config(payload: ApiKeyPayload) -> ConfigResponse:
+    """Validate an API key against FACEIT and save it to the data folder."""
+    key = (payload.api_key or "").strip()
+    if not key:
+        raise HTTPException(400, "API key must not be empty.")
+    await _validate_key(key)
+    cfg = _load_config()
+    cfg["faceit_api_key"] = key
+    _save_config(cfg)
+    logger.info("FACEIT API key saved via in-app configuration.")
+    return ConfigResponse(configured=True, source=_key_source())
+
+
+@router.delete("/faceit/config", response_model=ConfigResponse)
+async def clear_config() -> ConfigResponse:
+    """Remove the saved API key (an environment key, if set, still applies)."""
+    cfg = _load_config()
+    cfg.pop("faceit_api_key", None)
+    _save_config(cfg)
+    src = _key_source()
+    return ConfigResponse(configured=src is not None, source=src)
 
 
 # ---------------------------------------------------------------------------

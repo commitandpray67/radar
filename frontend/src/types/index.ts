@@ -330,3 +330,8 @@ export interface FaceitLoadResult {
   demo_id: string;
   cached: boolean;
 }
+
+export interface FaceitConfig {
+  configured: boolean;
+  source: 'env' | 'saved' | null;
+}

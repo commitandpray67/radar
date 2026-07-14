@@ -2,11 +2,17 @@
  * FaceitLoader — enter up to 5 FACEIT nicknames, find matches the stack played
  * together (same team), see their map preferences, and load a match's demo
  * straight into the radar via the existing download+parse pipeline.
+ *
+ * The FACEIT Data API key is entered here (or via the FACEIT_API_KEY env var,
+ * which takes precedence) and stored server-side in the app's data folder.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import {
+  getFaceitConfig,
+  saveFaceitApiKey,
+  clearFaceitApiKey,
   resolveFaceitNicknames,
   findFaceitCommonMatches,
   getFaceitStackMapStats,
@@ -16,6 +22,7 @@ import {
 } from '../../utils/api';
 import { loadDemoIntoStore } from '../../utils/demoLoading';
 import type {
+  FaceitConfig,
   FaceitResolvedPlayer,
   FaceitMatchSummary,
   FaceitStackMapStats,
@@ -32,6 +39,10 @@ interface Props {
 function errMsg(e: unknown): string {
   const anyErr = e as { response?: { data?: { detail?: string } }; message?: string };
   return anyErr?.response?.data?.detail ?? anyErr?.message ?? 'Something went wrong.';
+}
+
+function isUnconfigured(e: unknown): boolean {
+  return (e as { response?: { status?: number } })?.response?.status === 503;
 }
 
 function fmtDate(unixSeconds: number): string {
@@ -52,6 +63,14 @@ function winRateColor(rate: number): string {
 const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
   const setMaps = useAppStore((s) => s.setMaps);
 
+  // ── API key config ──
+  const [config, setConfig] = useState<FaceitConfig | null>(null);
+  const [keyInput, setKeyInput] = useState('');
+  const [savingKey, setSavingKey] = useState(false);
+  const [editingKey, setEditingKey] = useState(false);
+  const [keyError, setKeyError] = useState('');
+
+  // ── Finder ──
   const [nicks, setNicks] = useState<string[]>(['', '']);
   const [resolved, setResolved] = useState<FaceitResolvedPlayer[] | null>(null);
   const [matches, setMatches] = useState<FaceitMatchSummary[] | null>(null);
@@ -64,6 +83,50 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
   const [loadingMatchId, setLoadingMatchId] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<ParseJobStatus | null>(null);
   const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    getFaceitConfig()
+      .then((c) => alive && setConfig(c))
+      .catch(() => alive && setConfig({ configured: false, source: null }));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const isConfigured = !!config?.configured;
+  const isEnv = config?.source === 'env';
+
+  const handleSaveKey = useCallback(async () => {
+    const key = keyInput.trim();
+    if (!key) return;
+    setKeyError('');
+    setSavingKey(true);
+    try {
+      const cfg = await saveFaceitApiKey(key);
+      setConfig(cfg);
+      setEditingKey(false);
+      setKeyInput('');
+    } catch (e) {
+      setKeyError(errMsg(e));
+    } finally {
+      setSavingKey(false);
+    }
+  }, [keyInput]);
+
+  const handleClearKey = useCallback(async () => {
+    setKeyError('');
+    try {
+      const cfg = await clearFaceitApiKey();
+      setConfig(cfg);
+      setEditingKey(false);
+      setMatches(null);
+      setMapStats(null);
+      setResolved(null);
+    } catch (e) {
+      setKeyError(errMsg(e));
+    }
+  }, []);
 
   const setNick = (i: number, v: string) =>
     setNicks((prev) => prev.map((n, idx) => (idx === i ? v : n)));
@@ -111,6 +174,7 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
       void loadMapStats(ids);
     } catch (e) {
       setError(errMsg(e));
+      if (isUnconfigured(e)) getFaceitConfig().then(setConfig).catch(() => null);
     } finally {
       setSearching(false);
     }
@@ -132,6 +196,7 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
         onComplete();
       } catch (e) {
         setLoadError(errMsg(e));
+        if (isUnconfigured(e)) getFaceitConfig().then(setConfig).catch(() => null);
       } finally {
         setLoadingMatchId(null);
       }
@@ -139,159 +204,234 @@ const FaceitLoader: React.FC<Props> = ({ onComplete }) => {
     [onComplete, setMaps],
   );
 
-  return (
-    <div className={styles.root}>
-      <p className={styles.hint}>
-        Enter up to {MAX_PLAYERS} FACEIT nicknames to find matches the stack played
-        together (same team), then load one into the radar.
-      </p>
+  // ── API-key settings block ──
+  const showKeyForm = config !== null && (!isConfigured || editingKey);
+  const keyBar = (
+    <div className={styles.keyBar}>
+      {config === null && <span className={styles.subtle}>Checking API key…</span>}
 
-      {/* Nickname inputs */}
-      <div className={styles.inputs}>
-        {nicks.map((n, i) => {
-          const r = n.trim() ? resolvedByNick.get(n.trim().toLowerCase()) : undefined;
-          return (
-            <div key={i} className={styles.inputRow}>
-              <input
-                className={styles.input}
-                placeholder={`Nickname ${i + 1}`}
-                value={n}
-                onChange={(e) => setNick(i, e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') findMatches();
+      {config !== null && isConfigured && !editingKey && (
+        <div className={styles.keyStatus}>
+          <span className={styles.keyOk}>🔑 API key {isEnv ? 'set via environment' : 'saved'}</span>
+          {!isEnv && (
+            <>
+              <button
+                className={styles.linkBtn}
+                onClick={() => {
+                  setEditingKey(true);
+                  setKeyInput('');
                 }}
-                spellCheck={false}
-              />
-              {r && (
-                <span
-                  className={`${styles.badge} ${r.found ? styles.badgeOk : styles.badgeBad}`}
-                  title={r.error ?? r.nickname}
-                >
-                  {r.found ? `✓ lvl ${r.skill_level ?? '?'}` : `✕ ${r.error ?? 'not found'}`}
-                </span>
-              )}
-              {nicks.length > 1 && (
-                <button
-                  className={styles.removeBtn}
-                  onClick={() => removeRow(i)}
-                  title="Remove"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className={styles.actions}>
-        {nicks.length < MAX_PLAYERS && (
-          <button className={styles.addBtn} onClick={addRow}>
-            + Add player
-          </button>
-        )}
-        <button className={styles.findBtn} onClick={findMatches} disabled={searching}>
-          {searching ? 'Searching…' : 'Find matches'}
-        </button>
-      </div>
-
-      {error && <div className={styles.error}>{error}</div>}
-      {loadError && <div className={styles.error}>{loadError}</div>}
-
-      {/* Map preference profile */}
-      {(mapLoading || (mapStats && mapStats.maps.length > 0)) && (
-        <div className={styles.mapPanel}>
-          <div className={styles.sectionTitle}>
-            Map preferences
-            {mapStats && (
-              <span className={styles.subtle}>
-                {' '}· {mapStats.analyzed} of {mapStats.total_matches} analysed
-              </span>
-            )}
-          </div>
-          {mapLoading && <div className={styles.subtle}>Analysing maps…</div>}
-          {mapStats?.maps.map((m) => (
-            <div key={m.map} className={styles.mapRow}>
-              <span className={styles.mapName}>{m.map.replace(/^de_/, '')}</span>
-              <div className={styles.prefBarWrap}>
-                <div
-                  className={styles.prefBar}
-                  style={{ width: `${Math.round(m.preference_pct * 100)}%` }}
-                />
-              </div>
-              <span className={styles.mapCount}>{m.played}×</span>
-              <span className={styles.winRate} style={{ color: winRateColor(m.win_rate) }}>
-                {Math.round(m.win_rate * 100)}% W
-              </span>
-            </div>
-          ))}
+              >
+                Change
+              </button>
+              <button className={styles.linkBtn} onClick={handleClearKey}>
+                Clear
+              </button>
+            </>
+          )}
         </div>
       )}
 
-      {/* Matches list */}
-      {matches && (
-        <div className={styles.matches}>
-          <div className={styles.sectionTitle}>
-            {matches.length > 0
-              ? `${matches.length} match${matches.length === 1 ? '' : 'es'} together`
-              : 'No matches found'}
-            <span className={styles.subtle}> · scanned {analyzed} recent games</span>
+      {showKeyForm && (
+        <div className={styles.keyForm}>
+          <p className={styles.hint}>
+            Paste your FACEIT <b>Data API</b> key — free at developers.faceit.com (create
+            an app → API Keys → server-side key).
+            {isEnv && ' An environment key is already set and takes precedence.'}
+          </p>
+          <div className={styles.keyInputRow}>
+            <input
+              type="password"
+              className={styles.input}
+              placeholder="FACEIT Data API key"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveKey();
+              }}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <button
+              className={styles.findBtn}
+              onClick={handleSaveKey}
+              disabled={savingKey || !keyInput.trim()}
+            >
+              {savingKey ? 'Saving…' : 'Save key'}
+            </button>
           </div>
-          {matches.length === 0 && (
-            <div className={styles.subtle}>
-              Try more players or a longer history window — the search scans each
-              player's most recent games.
-            </div>
+          {editingKey && isConfigured && (
+            <button className={styles.linkBtn} onClick={() => setEditingKey(false)}>
+              Cancel
+            </button>
           )}
-          {matches.map((m) => {
-            const busy = loadingMatchId === m.match_id;
-            return (
-              <div key={m.match_id} className={styles.matchRow}>
-                <div className={styles.matchMeta}>
-                  <span className={styles.matchDate}>{fmtDate(m.started_at)}</span>
-                  <span className={styles.matchComp} title={m.competition_type}>
-                    {m.competition_name || m.competition_type || 'Match'}
-                  </span>
-                  {m.region && <span className={styles.subtle}>{m.region}</span>}
-                  {m.score && <span className={styles.matchScore}>{m.score}</span>}
-                </div>
-                <div className={styles.matchPlayers}>
-                  {m.selected_players.map((p) => (
+          {keyError && <div className={styles.error}>{keyError}</div>}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className={styles.root}>
+      {keyBar}
+
+      {isConfigured && (
+        <>
+          <p className={styles.hint}>
+            Enter up to {MAX_PLAYERS} FACEIT nicknames to find matches the stack played
+            together (same team), then load one into the radar.
+          </p>
+
+          {/* Nickname inputs */}
+          <div className={styles.inputs}>
+            {nicks.map((n, i) => {
+              const r = n.trim() ? resolvedByNick.get(n.trim().toLowerCase()) : undefined;
+              return (
+                <div key={i} className={styles.inputRow}>
+                  <input
+                    className={styles.input}
+                    placeholder={`Nickname ${i + 1}`}
+                    value={n}
+                    onChange={(e) => setNick(i, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') findMatches();
+                    }}
+                    spellCheck={false}
+                  />
+                  {r && (
                     <span
-                      key={p.player_id}
-                      className={`${styles.playerTag} ${
-                        p.faction === 'faction1' ? styles.fac1 : styles.fac2
-                      }`}
+                      className={`${styles.badge} ${r.found ? styles.badgeOk : styles.badgeBad}`}
+                      title={r.error ?? r.nickname}
                     >
-                      {p.nickname}
+                      {r.found ? `✓ lvl ${r.skill_level ?? '?'}` : `✕ ${r.error ?? 'not found'}`}
                     </span>
-                  ))}
+                  )}
+                  {nicks.length > 1 && (
+                    <button
+                      className={styles.removeBtn}
+                      onClick={() => removeRow(i)}
+                      title="Remove"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
-                {busy ? (
-                  <div className={styles.loadProgress}>
-                    <div className={styles.progressText}>
-                      {loadStatus?.message ?? 'Downloading demo…'}
-                    </div>
-                    <div className={styles.progressTrack}>
-                      <div
-                        className={styles.progressFill}
-                        style={{ width: `${Math.round((loadStatus?.progress ?? 0) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    className={styles.loadBtn}
-                    onClick={() => loadInRadar(m.match_id)}
-                    disabled={loadingMatchId !== null}
-                  >
-                    Load in radar
-                  </button>
+              );
+            })}
+          </div>
+
+          <div className={styles.actions}>
+            {nicks.length < MAX_PLAYERS && (
+              <button className={styles.addBtn} onClick={addRow}>
+                + Add player
+              </button>
+            )}
+            <button className={styles.findBtn} onClick={findMatches} disabled={searching}>
+              {searching ? 'Searching…' : 'Find matches'}
+            </button>
+          </div>
+
+          {error && <div className={styles.error}>{error}</div>}
+          {loadError && <div className={styles.error}>{loadError}</div>}
+
+          {/* Map preference profile */}
+          {(mapLoading || (mapStats && mapStats.maps.length > 0)) && (
+            <div className={styles.mapPanel}>
+              <div className={styles.sectionTitle}>
+                Map preferences
+                {mapStats && (
+                  <span className={styles.subtle}>
+                    {' '}· {mapStats.analyzed} of {mapStats.total_matches} analysed
+                  </span>
                 )}
               </div>
-            );
-          })}
-        </div>
+              {mapLoading && <div className={styles.subtle}>Analysing maps…</div>}
+              {mapStats?.maps.map((m) => (
+                <div key={m.map} className={styles.mapRow}>
+                  <span className={styles.mapName}>{m.map.replace(/^de_/, '')}</span>
+                  <div className={styles.prefBarWrap}>
+                    <div
+                      className={styles.prefBar}
+                      style={{ width: `${Math.round(m.preference_pct * 100)}%` }}
+                    />
+                  </div>
+                  <span className={styles.mapCount}>{m.played}×</span>
+                  <span className={styles.winRate} style={{ color: winRateColor(m.win_rate) }}>
+                    {Math.round(m.win_rate * 100)}% W
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Matches list */}
+          {matches && (
+            <div className={styles.matches}>
+              <div className={styles.sectionTitle}>
+                {matches.length > 0
+                  ? `${matches.length} match${matches.length === 1 ? '' : 'es'} together`
+                  : 'No matches found'}
+                <span className={styles.subtle}> · scanned {analyzed} recent games</span>
+              </div>
+              {matches.length === 0 && (
+                <div className={styles.subtle}>
+                  Try more players or a longer history window — the search scans each
+                  player's most recent games.
+                </div>
+              )}
+              {matches.map((m) => {
+                const busy = loadingMatchId === m.match_id;
+                return (
+                  <div key={m.match_id} className={styles.matchRow}>
+                    <div className={styles.matchMeta}>
+                      <span className={styles.matchDate}>{fmtDate(m.started_at)}</span>
+                      <span className={styles.matchComp} title={m.competition_type}>
+                        {m.competition_name || m.competition_type || 'Match'}
+                      </span>
+                      {m.region && <span className={styles.subtle}>{m.region}</span>}
+                      {m.score && <span className={styles.matchScore}>{m.score}</span>}
+                    </div>
+                    <div className={styles.matchPlayers}>
+                      {m.selected_players.map((p) => (
+                        <span
+                          key={p.player_id}
+                          className={`${styles.playerTag} ${
+                            p.faction === 'faction1' ? styles.fac1 : styles.fac2
+                          }`}
+                        >
+                          {p.nickname}
+                        </span>
+                      ))}
+                    </div>
+                    {busy ? (
+                      <div className={styles.loadProgress}>
+                        <div className={styles.progressText}>
+                          {loadStatus?.message ?? 'Downloading demo…'}
+                        </div>
+                        <div className={styles.progressTrack}>
+                          <div
+                            className={styles.progressFill}
+                            style={{
+                              width: `${Math.round((loadStatus?.progress ?? 0) * 100)}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        className={styles.loadBtn}
+                        onClick={() => loadInRadar(m.match_id)}
+                        disabled={loadingMatchId !== null}
+                      >
+                        Load in radar
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

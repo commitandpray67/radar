@@ -13,6 +13,53 @@
   line-height: 1.4;
 }
 
+/* ── API key settings ── */
+.keyBar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.keyStatus {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.keyOk {
+  color: #5fbf6f;
+}
+
+.keyForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #0d1117;
+  border: 1px solid #202c3c;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.keyInputRow {
+  display: flex;
+  gap: 6px;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  color: #6aa9e0;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.linkBtn:hover {
+  color: #9bc4e8;
+}
+
 /* ── Inputs ── */
 .inputs {
   display: flex;

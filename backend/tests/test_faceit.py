@@ -171,8 +171,9 @@ async def test_resolve_reports_per_nickname_status(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_api_key_returns_503(monkeypatch) -> None:
+async def test_missing_api_key_returns_503(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("FACEIT_API_KEY", raising=False)
+    monkeypatch.setattr(faceit, "_CONFIG_FILE", tmp_path / "none.json")  # no saved key
     async with await _client() as c:
         resp = await c.post("/api/faceit/resolve", json={"nicknames": ["anyone"]})
     assert resp.status_code == 503
@@ -191,6 +192,65 @@ async def test_load_match_without_demo_returns_409(monkeypatch) -> None:
     async with await _client() as c:
         resp = await c.post("/api/faceit/load-match", json={"match_id": "m-1"})
     assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_config_reports_env_source(monkeypatch) -> None:
+    monkeypatch.setenv("FACEIT_API_KEY", "env-key")
+    async with await _client() as c:
+        resp = await c.get("/api/faceit/config")
+    assert resp.status_code == 200
+    assert resp.json() == {"configured": True, "source": "env"}
+
+
+@pytest.mark.asyncio
+async def test_config_save_validate_and_clear(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("FACEIT_API_KEY", raising=False)
+    monkeypatch.setattr(faceit, "_CONFIG_FILE", tmp_path / "config.json")
+
+    validated: list[str] = []
+
+    async def fake_validate(key: str) -> None:
+        validated.append(key)  # accept any key
+
+    monkeypatch.setattr(faceit, "_validate_key", fake_validate)
+
+    async with await _client() as c:
+        # Initially nothing is configured.
+        assert (await c.get("/api/faceit/config")).json() == {
+            "configured": False,
+            "source": None,
+        }
+        # Empty key is rejected.
+        assert (await c.post("/api/faceit/config", json={"api_key": "  "})).status_code == 400
+        # Saving validates then persists.
+        saved = await c.post("/api/faceit/config", json={"api_key": "real-key"})
+        assert saved.status_code == 200
+        assert saved.json() == {"configured": True, "source": "saved"}
+        assert validated == ["real-key"]
+        # The saved key now drives _api_key and is reported by GET.
+        assert faceit._saved_key() == "real-key"
+        assert (await c.get("/api/faceit/config")).json()["source"] == "saved"
+        # Clearing removes it.
+        cleared = await c.delete("/api/faceit/config")
+        assert cleared.json() == {"configured": False, "source": None}
+        assert faceit._saved_key() == ""
+
+
+@pytest.mark.asyncio
+async def test_config_save_rejects_bad_key(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("FACEIT_API_KEY", raising=False)
+    monkeypatch.setattr(faceit, "_CONFIG_FILE", tmp_path / "config.json")
+
+    async def bad_validate(key: str) -> None:
+        raise faceit.HTTPException(400, "FACEIT rejected this key.")
+
+    monkeypatch.setattr(faceit, "_validate_key", bad_validate)
+
+    async with await _client() as c:
+        resp = await c.post("/api/faceit/config", json={"api_key": "nope"})
+    assert resp.status_code == 400
+    assert faceit._saved_key() == ""  # not persisted
 
 
 @pytest.mark.asyncio
