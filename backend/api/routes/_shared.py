@@ -9,11 +9,14 @@ launcher can redirect data to the platform-appropriate user directory
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import math
 import os
+import shutil
 import tempfile
 from pathlib import Path
+from typing import BinaryIO
 
 # ---------------------------------------------------------------------------
 # Configurable data paths
@@ -125,3 +128,72 @@ async def _get_parse_lock(demo_id: str) -> asyncio.Lock:
         if demo_id not in _parse_locks:
             _parse_locks[demo_id] = asyncio.Lock()
         return _parse_locks[demo_id]
+
+
+# ---------------------------------------------------------------------------
+# Demo decompression (gzip / zstd) — CS2 demos from FACEIT arrive compressed
+# ---------------------------------------------------------------------------
+
+_GZIP_MAGIC = b"\x1f\x8b"
+_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+_DECOMP_CHUNK = 1024 * 1024  # 1 MB
+
+
+class DecompressionError(Exception):
+    """Raised when a compressed demo cannot be decompressed."""
+
+
+def _copy_capped(reader: BinaryIO, out: BinaryIO, cap: int) -> None:
+    """Stream ``reader`` into ``out`` in chunks, raising past ``cap`` bytes."""
+    written = 0
+    while True:
+        chunk = reader.read(_DECOMP_CHUNK)
+        if not chunk:
+            break
+        written += len(chunk)
+        if written > cap:
+            raise DecompressionError(
+                f"Decompressed demo too large (> {cap // 1_000_000} MB)."
+            )
+        out.write(chunk)
+
+
+def compression_kind(path: Path) -> str | None:
+    """Return 'gzip', 'zstd', or None based on the file's magic bytes."""
+    try:
+        with path.open("rb") as f:
+            magic = f.read(4)
+    except OSError:
+        return None
+    if magic[:2] == _GZIP_MAGIC:
+        return "gzip"
+    if magic[:4] == _ZSTD_MAGIC:
+        return "zstd"
+    return None
+
+
+def decompress_demo(src: Path, dest: Path, *, cap: int | None = None) -> None:
+    """Write a raw demo at ``dest`` from ``src``, decompressing gzip/zstd.
+
+    Detection is by magic bytes, not the file extension.  A non-compressed
+    source is copied through unchanged.  Enforces the size cap on the
+    decompressed stream.  Blocking (IO/CPU) — call via an executor.
+    """
+    cap = _MAX_UPLOAD_BYTES if cap is None else cap
+    kind = compression_kind(src)
+    if kind == "gzip":
+        with gzip.open(src, "rb") as gz, dest.open("wb") as out:
+            _copy_capped(gz, out, cap)
+    elif kind == "zstd":
+        try:
+            import zstandard as zstd
+        except ImportError as exc:  # pragma: no cover - dependency present in prod
+            raise DecompressionError(
+                "This build cannot open .zst demos (zstandard is not installed)."
+            ) from exc
+        dctx = zstd.ZstdDecompressor()
+        with src.open("rb") as fin, dest.open("wb") as out:
+            with dctx.stream_reader(fin) as reader:
+                _copy_capped(reader, out, cap)
+    else:
+        shutil.copyfile(src, dest)

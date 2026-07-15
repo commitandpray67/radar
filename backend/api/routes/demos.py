@@ -35,6 +35,7 @@ from ._shared import (
     _DEMO_STORE,
     _MAX_UPLOAD_BYTES,
     _UPLOAD_DIR,
+    DecompressionError,
     _demo_file_path,
     _get_parse_lock,
     _load_job_demo_id,
@@ -43,6 +44,8 @@ from ._shared import (
     _parse_locks_mu,
     _persist_job_mapping,
     _sanitize_nan,
+    compression_kind,
+    decompress_demo,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,19 +57,36 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
+# Accepted upload extensions.  Compressed demos (FACEIT ships .dem.zst now,
+# older ones .dem.gz) are decompressed automatically after upload.
+_ACCEPTED_SUFFIXES = (".dem", ".dem.zst", ".zst", ".dem.gz", ".gz")
+
+
+def _clean_demo_name(filename: str) -> str:
+    """Strip a compression suffix so the stored name ends in .dem."""
+    lower = filename.lower()
+    for suf in (".dem.zst", ".dem.gz", ".zst", ".gz"):
+        if lower.endswith(suf):
+            base = filename[: -len(suf)]
+            return base if base.lower().endswith(".dem") else base + ".dem"
+    return filename
+
+
 @router.post("/demos/upload")
 async def upload_demo(
     file: UploadFile = File(...),
     force: bool = False,
 ):
     """
-    Accept a .dem file, hash it, and start an async parse.
+    Accept a .dem file (or a compressed .dem.zst / .dem.gz), hash it, and start
+    an async parse.  Compressed uploads are decompressed automatically.
 
     Returns a job_id the client polls via /parse-status/{job_id}.
     Pass ?force=true to bypass the cache and always re-parse.
     """
-    if not file.filename or not file.filename.lower().endswith(".dem"):
-        raise HTTPException(400, "File must be a .dem demo file")
+    name = (file.filename or "").lower()
+    if not name.endswith(_ACCEPTED_SUFFIXES):
+        raise HTTPException(400, "File must be a .dem demo (or a .dem.zst / .dem.gz archive)")
 
     _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     tmp_path = _UPLOAD_DIR / f"{uuid.uuid4().hex}_{file.filename}"
@@ -97,7 +117,25 @@ async def upload_demo(
         tmp_path.unlink(missing_ok=True)
         raise
 
-    return await start_parse_job(tmp_path, file.filename, force=force)
+    # Decompress gzip/zstd (by magic bytes) into a raw .dem before parsing.
+    dem_path = tmp_path
+    if compression_kind(tmp_path) is not None:
+        dem_path = _UPLOAD_DIR / f"{uuid.uuid4().hex}.dem"
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, decompress_demo, tmp_path, dem_path)
+        except DecompressionError as exc:
+            dem_path.unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
+            raise HTTPException(400, str(exc))
+        except Exception:
+            dem_path.unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
+            raise HTTPException(400, "Could not decompress the uploaded archive.")
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    return await start_parse_job(dem_path, _clean_demo_name(file.filename), force=force)
 
 
 async def start_parse_job(dem_path: Path, filename: str, *, force: bool = False) -> dict:

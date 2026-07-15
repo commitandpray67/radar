@@ -27,6 +27,7 @@ import {
   getDemo,
 } from '../../utils/api';
 import type { ParseJobStatus } from '../../types';
+import { DEMO_ACCEPT, isAcceptedDemoFile } from '../../utils/demoFiles';
 import DemoLibrary from '../DemoLibrary/DemoLibrary';
 import TeamLoader from './TeamLoader';
 import TeamSessionLibrary from './TeamSessionLibrary';
@@ -79,8 +80,8 @@ const DemoLoader: React.FC = () => {
 
   const processFile = useCallback(
     async (file: File, force = false) => {
-      if (!file.name.toLowerCase().endsWith('.dem')) {
-        setErrorMsg('Please select a valid CS2 .dem demo file.');
+      if (!isAcceptedDemoFile(file.name)) {
+        setErrorMsg('Please select a CS2 .dem demo (or a .dem.zst / .dem.gz archive).');
         setPhase('error');
         return;
       }
@@ -277,12 +278,14 @@ const DemoLoader: React.FC = () => {
                   <p className={styles.dropText}>
                     Drag &amp; drop a <code>.dem</code> file here
                   </p>
-                  <p className={styles.dropHint}>or click to browse</p>
+                  <p className={styles.dropHint}>
+                    or click to browse — <code>.dem.zst</code> / <code>.dem.gz</code> ok too
+                  </p>
                 </div>
                 <input
                   ref={inputRef}
                   type="file"
-                  accept=".dem"
+                  accept={DEMO_ACCEPT}
                   className={styles.hiddenInput}
                   onChange={onFileChange}
                 />

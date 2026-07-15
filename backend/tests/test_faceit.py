@@ -180,6 +180,44 @@ def test_prepare_dem_gunzips_and_passthrough(tmp_path) -> None:
     assert raw_dest.read_bytes() == raw  # copied unchanged
 
 
+def test_prepare_dem_decompresses_zstd(tmp_path) -> None:
+    import zstandard
+
+    raw = b"HL2DEMO\x00fake-demo-bytes" * 100
+    zst_src = tmp_path / "in.zst"
+    zst_src.write_bytes(zstandard.ZstdCompressor().compress(raw))
+    zst_dest = tmp_path / "out_zst.dem"
+    faceit._prepare_dem(zst_src, zst_dest)
+    assert zst_dest.read_bytes() == raw  # zstd-decompressed
+
+
+def test_compression_kind_detects_magic_bytes(tmp_path) -> None:
+    import zstandard
+
+    from api.routes._shared import compression_kind
+
+    raw = b"HL2DEMO\x00demo"
+    gz = tmp_path / "a.bin"
+    gz.write_bytes(gzip.compress(raw))
+    zst = tmp_path / "b.bin"
+    zst.write_bytes(zstandard.ZstdCompressor().compress(raw))
+    plain = tmp_path / "c.bin"
+    plain.write_bytes(raw)
+
+    assert compression_kind(gz) == "gzip"
+    assert compression_kind(zst) == "zstd"
+    assert compression_kind(plain) is None
+
+
+def test_clean_demo_name_strips_compression_suffix() -> None:
+    from api.routes.demos import _clean_demo_name
+
+    assert _clean_demo_name("match.dem.zst") == "match.dem"
+    assert _clean_demo_name("match.dem.gz") == "match.dem"
+    assert _clean_demo_name("match.zst") == "match.dem"
+    assert _clean_demo_name("match.dem") == "match.dem"
+
+
 # ---------------------------------------------------------------------------
 # DoH resolution + IP-pinned download (CDN DNS-block fallback)
 # ---------------------------------------------------------------------------

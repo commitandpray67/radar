@@ -26,6 +26,9 @@ hidden = [
     "parser",
     *collect_submodules("parser"),       # now a package: _types, _utils, _rounds, _positions, _grenades, _events
     "voice", "voice.extractor",
+    # FACEIT integration (httpx) + compressed-demo support (zstandard)
+    *collect_submodules("httpx"),
+    *collect_submodules("zstandard"),
 ]
 
 a = Analysis(
@@ -47,7 +50,6 @@ a = Analysis(
         "pandas", "pandas.tests",
         "numpy.tests",
         "pytest", "pytest_asyncio",
-        "httpx",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

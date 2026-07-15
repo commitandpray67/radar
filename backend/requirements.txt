@@ -9,5 +9,6 @@ pydantic-settings==2.6.1
 pillow==11.0.0
 platformdirs==4.3.6
 httpx==0.28.0
+zstandard==0.23.0
 # build-time only (not needed at runtime)
 pyinstaller==6.11.1

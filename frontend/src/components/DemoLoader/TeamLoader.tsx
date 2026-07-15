@@ -29,6 +29,7 @@ import {
   getTeamSession,
 } from '../../utils/api';
 import { loadDemoIntoStore } from '../../utils/demoLoading';
+import { DEMO_ACCEPT, isAcceptedDemoFile } from '../../utils/demoFiles';
 import { useAppStore } from '../../store/demoStore';
 import type {
   DemoMeta,
@@ -77,8 +78,8 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
   }, []);
 
   const uploadOne = useCallback(async (file: File): Promise<void> => {
-    if (!file.name.toLowerCase().endsWith('.dem')) {
-      setErrorMsg(`'${file.name}' is not a .dem file`);
+    if (!isAcceptedDemoFile(file.name)) {
+      setErrorMsg(`'${file.name}' is not a .dem / .dem.zst / .dem.gz file`);
       return;
     }
     const tempEntry: UploadedDemo = {
@@ -277,7 +278,7 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
       <input
         ref={inputRef}
         type="file"
-        accept=".dem"
+        accept={DEMO_ACCEPT}
         multiple
         className={styles.hiddenInput}
         onChange={(e) => onFilesPicked(e.target.files)}

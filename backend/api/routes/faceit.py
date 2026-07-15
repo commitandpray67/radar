@@ -17,12 +17,10 @@ is never sent to the browser).  Get a free key at developers.faceit.com.
 from __future__ import annotations
 
 import asyncio
-import gzip
 import json
 import logging
 import os
 import re
-import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -32,7 +30,13 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ._shared import _DATA_DIR, _MAX_UPLOAD_BYTES, _UPLOAD_DIR
+from ._shared import (
+    _DATA_DIR,
+    _MAX_UPLOAD_BYTES,
+    _UPLOAD_DIR,
+    DecompressionError,
+    decompress_demo,
+)
 from .demos import start_parse_job
 
 logger = logging.getLogger(__name__)
@@ -44,7 +48,6 @@ _MAX_PLAYERS = 5
 _HISTORY_PAGE = 100  # max page size the API allows
 _HISTORY_OFFSET_CAP = 1000  # max offset the API allows
 _STATS_CONCURRENCY = 5
-_GZIP_MAGIC = b"\x1f\x8b"
 
 _CHUNK = 1024 * 1024  # 1 MB
 
@@ -907,30 +910,16 @@ async def _download_capped(urls: list[str], dest: Path) -> None:
 
 
 def _prepare_dem(src: Path, dest: Path) -> None:
-    """Produce a raw .dem at ``dest`` from ``src`` — gunzip if gzip-compressed.
+    """Produce a raw .dem at ``dest`` from ``src``, decompressing gzip/zstd.
 
     Detection is by magic bytes, not the URL extension.  Runs in a thread (it
     is blocking IO/CPU).  Enforces the size cap on the decompressed stream too.
     """
-    with src.open("rb") as f:
-        magic = f.read(2)
-    if magic == _GZIP_MAGIC:
-        written = 0
-        with gzip.open(src, "rb") as gz, dest.open("wb") as out:
-            while True:
-                chunk = gz.read(_CHUNK)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > _MAX_UPLOAD_BYTES:
-                    dest.unlink(missing_ok=True)
-                    raise HTTPException(
-                        413,
-                        f"Decompressed demo too large (> {_MAX_UPLOAD_BYTES // 1_000_000} MB).",
-                    )
-                out.write(chunk)
-    else:
-        shutil.copyfile(src, dest)
+    try:
+        decompress_demo(src, dest)
+    except DecompressionError as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(413, str(exc))
 
 
 @router.post("/faceit/load-match")
