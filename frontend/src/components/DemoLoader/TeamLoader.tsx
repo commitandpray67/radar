@@ -1,13 +1,17 @@
 /**
- * TeamLoader — multi-demo upload + validation flow for team-analysis sessions.
+ * TeamLoader — multi-demo upload for team analysis, across any mix of maps.
  *
  * Workflow:
- *   1. User uploads multiple .dem files OR picks them from the library
- *   2. Each demo is uploaded/parsed (or loaded from cache) sequentially
- *   3. Once all demos are in the DB, hit /team-sessions/validate
- *   4. Show roster preview + per-demo team side; ask for a name; create session
+ *   1. User uploads several .dem files (or picks them from the library) — the
+ *      maps can differ.
+ *   2. Each demo is uploaded/parsed (or loaded from cache).
+ *   3. The demos are auto-sorted by map. The user names the team; we create a
+ *      team container and add every parsed demo to it.
+ *   4. The team's maps are listed; clicking a map opens that map's analysis
+ *      (a multi-demo team session, or a single demo when only one exists).
  *
- * Reuses existing single-demo upload/parse machinery.
+ * Reuses the single-demo upload/parse machinery and the team-organizer model
+ * (teams group demos by map; each map opens its own session).
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,17 +19,21 @@ import {
   uploadDemo,
   watchParseStatus,
   listDemos,
+  getDemo,
+  getMaps,
+  createTeam,
+  getTeam,
+  addDemosToTeam,
   validateTeamSession,
   createTeamSession,
   getTeamSession,
 } from '../../utils/api';
 import { loadDemoIntoStore } from '../../utils/demoLoading';
 import { useAppStore } from '../../store/demoStore';
-import { getMaps } from '../../utils/api';
 import type {
   DemoMeta,
   ParseJobStatus,
-  TeamSessionValidation,
+  TeamDetail,
 } from '../../types';
 import styles from './DemoLoader.module.css';
 import teamStyles from './TeamLoader.module.css';
@@ -33,6 +41,7 @@ import teamStyles from './TeamLoader.module.css';
 interface UploadedDemo {
   demo_id: string;
   filename: string;
+  map_name?: string;
   status: 'pending' | 'uploading' | 'parsing' | 'ready' | 'error';
   progress?: number;     // 0..1
   message?: string;
@@ -40,7 +49,7 @@ interface UploadedDemo {
 }
 
 interface Props {
-  onComplete: () => void;       // called after session is created and loaded
+  onComplete: () => void;       // called after a map's session is loaded
 }
 
 const TeamLoader: React.FC<Props> = ({ onComplete }) => {
@@ -49,16 +58,15 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
   const [libraryDemos, setLibraryDemos] = useState<DemoMeta[]>([]);
   const [pickedFromLibrary, setPickedFromLibrary] = useState<Set<string>>(new Set());
   const [showLibrary, setShowLibrary] = useState(false);
-  const [validation, setValidation] = useState<TeamSessionValidation | null>(null);
-  const [validating, setValidating] = useState(false);
-  const [sessionName, setSessionName] = useState('');
+  const [teamName, setTeamName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [teamDetail, setTeamDetail] = useState<TeamDetail | null>(null);
+  const [openingKey, setOpeningKey] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
   const setMaps = useAppStore((s) => s.setMaps);
   const setTeamSession = useAppStore((s) => s.setTeamSession);
   const setActiveDemoId = useAppStore((s) => s.setActiveDemoId);
-  const maps = useAppStore((s) => s.maps);
 
   useEffect(() => {
     getMaps().then(setMaps).catch(() => {});
@@ -67,29 +75,6 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
     ).catch(() => setLibraryDemos([]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Aggregate list of demo_ids that should be validated
-  const allDemoIds = [
-    ...demos.filter((d) => d.status === 'ready').map((d) => d.demo_id),
-    ...Array.from(pickedFromLibrary),
-  ];
-
-  // Re-validate whenever the demo set changes
-  useEffect(() => {
-    setValidation(null);
-    setErrorMsg('');
-    if (allDemoIds.length < 2) return;
-
-    setValidating(true);
-    validateTeamSession(allDemoIds)
-      .then(setValidation)
-      .catch((err) => {
-        const msg = err?.response?.data?.detail ?? err?.message ?? 'Validation failed';
-        setErrorMsg(String(msg));
-      })
-      .finally(() => setValidating(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allDemoIds.join(',')]);
 
   const uploadOne = useCallback(async (file: File): Promise<void> => {
     if (!file.name.toLowerCase().endsWith('.dem')) {
@@ -113,7 +98,6 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
         ));
       });
 
-      // Update with real demo_id
       setDemos((prev) => prev.map((d) =>
         d.filename === file.name
           ? { ...d, demo_id, status: cached ? 'ready' : 'parsing', progress: 0.15 }
@@ -130,8 +114,16 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
         });
       }
 
+      // Fetch the resolved map name so we can group by map.
+      let mapName = '';
+      try {
+        mapName = (await getDemo(demo_id)).map_name;
+      } catch { /* leave blank; grouped under "unknown" */ }
+
       setDemos((prev) => prev.map((d) =>
-        d.demo_id === demo_id ? { ...d, status: 'ready', progress: 1 } : d,
+        d.demo_id === demo_id
+          ? { ...d, status: 'ready', progress: 1, map_name: mapName }
+          : d,
       ));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -139,12 +131,12 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
         d.filename === file.name ? { ...d, status: 'error', error: msg } : d,
       ));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onFilesPicked = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    // Upload sequentially so the UI shows progress per file
+    setErrorMsg('');
+    setTeamDetail(null);   // new uploads invalidate a previously-created team view
     for (const f of Array.from(files)) {
       await uploadOne(f);
     }
@@ -152,9 +144,11 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
 
   const removeUploadedDemo = (demoId: string) => {
     setDemos((prev) => prev.filter((d) => d.demo_id !== demoId));
+    setTeamDetail(null);
   };
 
   const toggleLibraryDemo = (demoId: string) => {
+    setTeamDetail(null);
     setPickedFromLibrary((prev) => {
       const next = new Set(prev);
       if (next.has(demoId)) next.delete(demoId); else next.add(demoId);
@@ -162,41 +156,116 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
     });
   };
 
-  const handleCreate = async () => {
-    if (!validation?.ok) return;
-    if (!sessionName.trim()) {
-      setErrorMsg('Please enter a name for the session');
+  // All demos that will go into the team: parsed uploads + library picks.
+  const libById = new Map(libraryDemos.map((d) => [d.id, d]));
+  const combined = [
+    ...demos
+      .filter((d) => d.status === 'ready' && d.demo_id)
+      .map((d) => ({ id: d.demo_id, filename: d.filename, map: d.map_name || 'unknown' })),
+    ...Array.from(pickedFromLibrary).map((id) => {
+      const d = libById.get(id);
+      return { id, filename: d?.filename ?? id, map: d?.map_name ?? 'unknown' };
+    }),
+  ];
+  // Dedupe by demo id (a library pick could duplicate an upload).
+  const seenIds = new Set<string>();
+  const uniqueCombined = combined.filter((c) => {
+    if (seenIds.has(c.id)) return false;
+    seenIds.add(c.id);
+    return true;
+  });
+
+  // Group by map for the auto-sort preview.
+  const groups = new Map<string, { id: string; filename: string }[]>();
+  for (const c of uniqueCombined) {
+    if (!groups.has(c.map)) groups.set(c.map, []);
+    groups.get(c.map)!.push({ id: c.id, filename: c.filename });
+  }
+  const mapGroups = Array.from(groups.entries())
+    .map(([map_name, ds]) => ({ map_name, demos: ds }))
+    .sort((a, b) => a.map_name.localeCompare(b.map_name));
+
+  const allReady = demos.every((d) => d.status === 'ready' || d.status === 'error');
+  const canCreate = uniqueCombined.length >= 2 && allReady;
+
+  const handleCreateTeam = async () => {
+    if (!teamName.trim()) {
+      setErrorMsg('Please enter a team name');
+      return;
+    }
+    if (uniqueCombined.length < 2) {
+      setErrorMsg('Add at least 2 demos');
       return;
     }
     setCreating(true);
     setErrorMsg('');
     try {
-      const { id } = await createTeamSession(sessionName.trim(), allDemoIds);
-      const session = await getTeamSession(id);
-
-      // Load first demo into the standard store slots so radar/playback work
-      setTeamSession(session);
-      const firstDemoId = session.demo_ids[0];
-      setActiveDemoId(firstDemoId);
-      await loadDemoIntoStore(firstDemoId, { maps });
-
-      onComplete();
+      const team = await createTeam(teamName.trim());
+      await addDemosToTeam(team.id, uniqueCombined.map((c) => c.id));
+      const detail = await getTeam(team.id);
+      setTeamDetail(detail);
     } catch (err) {
       const msg = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail ?? (err as Error)?.message ?? 'Failed to create session';
+        ?.response?.data?.detail ?? (err as Error)?.message ?? 'Failed to create team';
       setErrorMsg(String(msg));
+    } finally {
       setCreating(false);
     }
   };
 
-  const allReady = demos.every((d) => d.status === 'ready' || d.status === 'error');
-  const readyCount = demos.filter((d) => d.status === 'ready').length;
+  // Open one map group: single demo loads directly, multiple form a session.
+  const handleOpenMap = useCallback(async (
+    mapName: string,
+    demoIds: string[],
+  ) => {
+    setOpeningKey(mapName);
+    setErrorMsg('');
+    try {
+      const freshMaps = await getMaps();
+      setMaps(freshMaps);
+
+      if (demoIds.length === 1) {
+        await loadDemoIntoStore(demoIds[0], { maps: freshMaps });
+        onComplete();
+        return;
+      }
+
+      const validation = await validateTeamSession(demoIds);
+      if (!validation.ok) {
+        setErrorMsg(`${mapName}: ${validation.error ?? 'team validation failed'}`);
+        return;
+      }
+
+      const label = teamName.trim() || teamDetail?.name || 'Team';
+      const { id: sessionId } = await createTeamSession(`${label} · ${mapName}`, demoIds);
+      const session = await getTeamSession(sessionId);
+      setTeamSession(session);
+      const firstDemoId = session.demo_ids[0];
+      setActiveDemoId(firstDemoId);
+      await loadDemoIntoStore(firstDemoId, { maps: freshMaps });
+      onComplete();
+    } catch (err) {
+      const msg = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail ?? (err as Error)?.message ?? 'Failed to open map';
+      setErrorMsg(String(msg));
+    } finally {
+      setOpeningKey(null);
+    }
+  }, [teamName, teamDetail, setMaps, setTeamSession, setActiveDemoId, onComplete]);
+
+  // Prefer the freshly-created team detail (map groups from the DB) if present.
+  const displayGroups = teamDetail
+    ? teamDetail.maps.map((m) => ({
+        map_name: m.map_name,
+        demos: m.demos.map((d) => ({ id: d.id, filename: d.filename })),
+      }))
+    : mapGroups;
 
   return (
     <div className={teamStyles.root}>
       <p className={teamStyles.intro}>
-        Upload multiple demos of the same team on the same map for a bigger
-        sample. Need ≥2 demos with ≥4 shared players on the same side.
+        Upload any number of demos — <strong>maps can differ</strong>. They're
+        sorted by map into a team; click a map to analyse that team's matches.
       </p>
 
       <button
@@ -222,14 +291,14 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
               <span className={teamStyles.demoStatus}>
                 {d.status === 'uploading' && `Uploading ${Math.round((d.progress ?? 0) * 100)}%`}
                 {d.status === 'parsing'   && `Parsing ${Math.round((d.progress ?? 0) * 100)}%`}
-                {d.status === 'ready'     && '✓'}
+                {d.status === 'ready'     && (d.map_name ? d.map_name : '✓')}
                 {d.status === 'error'     && `Error: ${d.error}`}
               </span>
-              {d.status === 'ready' && (
+              {(d.status === 'ready' || d.status === 'error') && (
                 <button
                   className={teamStyles.removeBtn}
                   onClick={() => removeUploadedDemo(d.demo_id)}
-                  title="Remove from session"
+                  title="Remove"
                 >
                   ✕
                 </button>
@@ -265,78 +334,68 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
         </div>
       )}
 
-      {allDemoIds.length >= 2 && (
+      {/* Auto-sorted preview + team creation (before the team is created) */}
+      {!teamDetail && uniqueCombined.length > 0 && (
         <div className={teamStyles.validationBox}>
-          {validating && <p className={teamStyles.empty}>Validating…</p>}
-          {!validating && validation && validation.ok && (
-            <>
-              <p className={teamStyles.validOk}>
-                ✓ Detected team on <strong>{validation.map_name}</strong>
-              </p>
-              <p className={teamStyles.rosterLabel}>
-                Roster ({validation.core_roster.length} core
-                {validation.extended_roster.length > validation.core_roster.length
-                  ? `, +${validation.extended_roster.length - validation.core_roster.length} sub${
-                      validation.extended_roster.length - validation.core_roster.length > 1 ? 's' : ''
-                    }`
-                  : ''}):
-              </p>
-              <p className={teamStyles.rosterNames}>
-                {validation.extended_roster.map((sid) => {
-                  const name = validation.roster_names[sid] ?? sid;
-                  const isSub = !validation.core_roster.includes(sid);
-                  return (
-                    <span
-                      key={sid}
-                      className={isSub ? teamStyles.subPlayer : teamStyles.corePlayer}
-                      title={isSub ? 'Substitute (not in all demos)' : 'Core player'}
-                    >
-                      {name}
-                    </span>
-                  );
-                }).reduce<React.ReactNode[]>(
-                  (acc, el, i) => (i === 0 ? [el] : [...acc, ', ', el]), [],
-                )}
-              </p>
-              <p className={teamStyles.sidesLabel}>Per-demo side:</p>
-              {validation.demos.map((d) => (
-                <p key={d.demo_id} className={teamStyles.sideRow}>
-                  <span className={teamStyles.sideFilename}>{d.filename}</span>
-                  <span className={
-                    validation.team_sides[d.demo_id] === 'CT'
-                      ? teamStyles.sideCT
-                      : teamStyles.sideT
-                  }>
-                    started as {validation.team_sides[d.demo_id]}
-                  </span>
-                </p>
-              ))}
-            </>
-          )}
-          {!validating && validation && !validation.ok && (
-            <p className={teamStyles.validErr}>{validation.error}</p>
-          )}
+          <p className={teamStyles.validOk}>
+            {uniqueCombined.length} demo{uniqueCombined.length !== 1 ? 's' : ''} across{' '}
+            {mapGroups.length} map{mapGroups.length !== 1 ? 's' : ''}
+          </p>
+          {mapGroups.map((g) => (
+            <p key={g.map_name} className={teamStyles.sideRow}>
+              <span className={teamStyles.sideFilename}>{g.map_name}</span>
+              <span className={teamStyles.demoStatus}>
+                {g.demos.length} match{g.demos.length !== 1 ? 'es' : ''}
+              </span>
+            </p>
+          ))}
         </div>
       )}
 
-      {validation?.ok && (
+      {!teamDetail && (
         <>
           <input
             type="text"
-            placeholder="Session name (e.g. 'NaVi vs FaZe series')"
-            value={sessionName}
-            onChange={(e) => setSessionName(e.target.value)}
+            placeholder="Team name (e.g. 'NaVi')"
+            value={teamName}
+            onChange={(e) => setTeamName(e.target.value)}
             className={teamStyles.nameInput}
-            maxLength={80}
+            maxLength={60}
           />
           <button
             className={teamStyles.createBtn}
-            onClick={handleCreate}
-            disabled={creating || !sessionName.trim() || !allReady}
+            onClick={handleCreateTeam}
+            disabled={creating || !teamName.trim() || !canCreate}
           >
-            {creating ? 'Creating…' : `Create session (${readyCount + pickedFromLibrary.size} demos)`}
+            {creating
+              ? 'Creating…'
+              : `Create team (${uniqueCombined.length} demo${uniqueCombined.length !== 1 ? 's' : ''})`}
           </button>
         </>
+      )}
+
+      {/* After the team is created: pick a map to open */}
+      {teamDetail && (
+        <div className={teamStyles.validationBox}>
+          <p className={teamStyles.validOk}>
+            ✓ {teamDetail.name} — choose a map to analyse
+          </p>
+          {displayGroups.map((g) => (
+            <div key={g.map_name} className={teamStyles.mapOpenRow}>
+              <span className={teamStyles.mapOpenName}>{g.map_name}</span>
+              <span className={teamStyles.demoStatus}>
+                {g.demos.length} match{g.demos.length !== 1 ? 'es' : ''}
+              </span>
+              <button
+                className={teamStyles.openBtn}
+                onClick={() => handleOpenMap(g.map_name, g.demos.map((d) => d.id))}
+                disabled={openingKey !== null}
+              >
+                {openingKey === g.map_name ? 'Opening…' : 'Open'}
+              </button>
+            </div>
+          ))}
+        </div>
       )}
 
       {errorMsg && <p className={teamStyles.validErr}>{errorMsg}</p>}
