@@ -6,8 +6,11 @@ import {
   classifyRoundEco,
   getRoundsForEcoClass,
   toggleEcoRounds,
+  sideForRound,
+  sideSwapsBeforeRound,
+  getTeamEcoMatches,
 } from './roundUtils';
-import type { RoundInfo, PlayerInfo } from '../types';
+import type { RoundInfo, PlayerInfo, TeamSessionDetail } from '../types';
 
 function round(n: number, ct: number, t: number, opts: Partial<RoundInfo> = {}): RoundInfo {
   return {
@@ -110,6 +113,79 @@ describe('getRoundsForEcoClass — player scoping', () => {
     const nums = getRoundsForEcoClass(rounds, 'T', 'full', [ctPlayer]).map((r) => r.round_number);
     // Second-half T-full rounds (round 13 is a pistol, excluded).
     expect(nums).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
+  });
+});
+
+describe('sideForRound — halftime + overtime swaps', () => {
+  it('keeps the initial side for the first half', () => {
+    expect(sideForRound('CT', 0)).toBe('CT');   // round 1
+    expect(sideForRound('CT', 11)).toBe('CT');  // round 12
+    expect(sideForRound('T', 5)).toBe('T');
+  });
+  it('swaps for the second half of regulation', () => {
+    expect(sideForRound('CT', 12)).toBe('T');   // round 13
+    expect(sideForRound('CT', 23)).toBe('T');   // round 24
+  });
+  it('swaps back at the start of overtime and every 3 rounds after', () => {
+    // OT1 first half (rounds 25–27): back to the initial side.
+    expect(sideForRound('CT', 24)).toBe('CT');  // round 25
+    expect(sideForRound('CT', 26)).toBe('CT');  // round 27
+    // OT1 second half (rounds 28–30): swapped again.
+    expect(sideForRound('CT', 27)).toBe('T');   // round 28
+    expect(sideForRound('CT', 29)).toBe('T');   // round 30
+    // OT2 first half (rounds 31–33): swapped again.
+    expect(sideForRound('CT', 30)).toBe('CT');  // round 31
+  });
+  it('counts swaps monotonically across periods', () => {
+    expect(sideSwapsBeforeRound(0)).toBe(0);
+    expect(sideSwapsBeforeRound(12)).toBe(1);
+    expect(sideSwapsBeforeRound(24)).toBe(2);   // round 25
+    expect(sideSwapsBeforeRound(27)).toBe(3);   // round 28
+    expect(sideSwapsBeforeRound(30)).toBe(4);   // round 31
+  });
+});
+
+describe('getRoundsForEcoClass — overtime side scoping', () => {
+  // 30-round match (regulation + one overtime), CT-value always "full".
+  const rounds = Array.from({ length: 30 }, (_, i) => round(i + 1, 20000, 20000));
+
+  it('scopes a CT-starter to their real CT rounds through overtime', () => {
+    const ctPlayer = player(100, 'CT');
+    const nums = getRoundsForEcoClass(rounds, 'CT', 'full', [ctPlayer]).map((r) => r.round_number);
+    // CT rounds: 1–12 (pistol 1 excluded) and OT1 first half 25–27.
+    expect(nums).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 25, 26, 27]);
+    // The old single-swap logic would have wrongly excluded 25–27 (labelled T).
+  });
+});
+
+describe('getTeamEcoMatches — overtime side classification', () => {
+  function teamRound(demoId: string, n: number, ct: number, t: number): RoundInfo {
+    return { ...round(n, ct, t), demo_id: demoId };
+  }
+
+  it('reads the correct side economy in overtime rounds', () => {
+    // Team started CT. Opponent (T) has a full buy in OT round 25 while the
+    // team (back on CT in OT1 first half) is on an eco.
+    const demoId = 'm1';
+    const rounds: RoundInfo[] = [];
+    for (let n = 1; n <= 30; n++) {
+      // CT economy full in regulation, but in OT round 25 CT (the team) ecos.
+      const ct = n === 25 ? 500 : 20000;
+      const t = n === 25 ? 20000 : 500;
+      rounds.push(teamRound(demoId, n, ct, t));
+    }
+    const session = {
+      demo_ids: [demoId],
+      team_sides: { [demoId]: 'CT' },
+      rounds,
+      demos: [{ id: demoId, filename: 'm1.dem' }],
+    } as unknown as TeamSessionDetail;
+
+    // Round 25 is the team on CT with an eco — must be CT Eco, never T anything.
+    const ctEco = getTeamEcoMatches(session, 'CT', 'eco');
+    expect(ctEco).toContain(`${demoId}:25`);
+    const tFull = getTeamEcoMatches(session, 'T', 'full');
+    expect(tFull).not.toContain(`${demoId}:25`);
   });
 });
 

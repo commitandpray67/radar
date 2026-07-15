@@ -76,13 +76,37 @@ export const ECO_COLOR: Record<EcoClass, string> = {
   eco:    '#8a2020',  // dark red
 };
 
-/** A player's side in a given round, accounting for the halftime swap.
+/** Number of side swaps that have happened by the start of the round at the
+ *  given 0-based index (knife rounds excluded).
+ *
+ *  CS2 is MR12 + MR3 overtime: sides swap once after 12 regulation rounds, then
+ *  again at the start of overtime and every 3 rounds thereafter. Treating every
+ *  post-round-12 round as a single swap (the old behaviour) mislabels overtime
+ *  rounds — a round where the team was actually T reads the opponent's CT
+ *  economy and shows up under a "CT" filter. */
+export function sideSwapsBeforeRound(roundIdx: number): number {
+  const r = roundIdx + 1; // 1-based canonical round number
+  if (r <= 12) return 0;
+  if (r <= 24) return 1;
+  // Overtime: swap at the OT start (round 25) and every 3 rounds after.
+  return 2 + Math.floor((r - 25) / 3);
+}
+
+/** The side a team/player that started on `initial` plays in the round at
+ *  `roundIdx` (0-based, knife rounds excluded), accounting for the halftime
+ *  swap and all overtime swaps. */
+export function sideForRound(initial: 'CT' | 'T', roundIdx: number): 'CT' | 'T' {
+  const flipped = sideSwapsBeforeRound(roundIdx) % 2 === 1;
+  if (!flipped) return initial;
+  return initial === 'CT' ? 'T' : 'CT';
+}
+
+/** A player's side in a given round, accounting for halftime + overtime swaps.
  *  `roundIdx` is the position of the round in the display list (knife rounds
- *  excluded); the first 12 entries are the first half. */
+ *  excluded). */
 function playerSideInRound(player: PlayerInfo, roundIdx: number): 'CT' | 'T' {
   const initial = player.initial_team === 'CT' ? 'CT' : 'T';
-  if (roundIdx < 12) return initial;
-  return initial === 'CT' ? 'T' : 'CT';
+  return sideForRound(initial, roundIdx);
 }
 
 /** Filter a round list to those where the given side's economy matches cls.
@@ -131,12 +155,6 @@ export function teamRoundKey(demoId: string, roundNumber: number): string {
   return `${demoId}:${roundNumber}`;
 }
 
-/** Compute the team's side in a round, accounting for halftime swap. */
-function sideAfterHalftime(initial: 'CT' | 'T', isFirstHalf: boolean): 'CT' | 'T' {
-  if (isFirstHalf) return initial;
-  return initial === 'CT' ? 'T' : 'CT';
-}
-
 /** Group team-session rounds by demo (preserves demo_ids order; knife rounds filtered). */
 export function getTeamRoundsByDemo(
   teamSession: TeamSessionDetail,
@@ -167,7 +185,7 @@ export function getTeamEcoMatches(
     if (!initial) continue;
     const pistolRns = getPistolRoundNumbers(group.rounds);
     group.rounds.forEach((r, idx) => {
-      const teamSide = sideAfterHalftime(initial, idx < 12);
+      const teamSide = sideForRound(initial, idx);
       if (teamSide !== side) return;
       if (classifyRoundEco(r, teamSide, pistolRns) !== cls) return;
       out.push(teamRoundKey(group.demoId, r.round_number));
