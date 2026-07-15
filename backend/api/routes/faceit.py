@@ -792,9 +792,16 @@ async def _stream_to_file(
                 out.write(chunk)
 
 
-# DNS-over-HTTPS resolvers, addressed by IP so they need no DNS themselves.
-# Their TLS certs include these IPs as SANs, so verification still passes.
-_DOH_ENDPOINTS = ("https://1.1.1.1/dns-query", "https://8.8.8.8/resolve")
+# DNS-over-HTTPS resolvers, addressed by *hostname* so they ride the machine's
+# working general DNS (only the CDN domain is blocked) and land on Cloudflare's
+# web anycast IPs (104.16.x) — far less likely to be firewall-blocked than the
+# well-known resolver IPs 1.1.1.1 / 8.8.8.8, which some networks drop outright.
+# The raw-IP endpoints are kept last as a fallback for fully-broken DNS.
+_DOH_ENDPOINTS = (
+    "https://cloudflare-dns.com/dns-query",
+    "https://mozilla.cloudflare-dns.com/dns-query",
+    "https://1.1.1.1/dns-query",
+)
 
 
 async def _doh_resolve(hostname: str) -> list[str]:
@@ -811,9 +818,10 @@ async def _doh_resolve(hostname: str) -> list[str]:
                 endpoint,
                 params={"name": hostname, "type": "A"},
                 headers={"Accept": "application/dns-json"},
-                timeout=httpx.Timeout(8.0),
+                timeout=httpx.Timeout(6.0),
             )
             if resp.status_code != 200:
+                logger.warning("DoH %s returned HTTP %s", endpoint, resp.status_code)
                 continue
             answers = resp.json().get("Answer") or []
             ips = [a["data"] for a in answers if a.get("type") == 1 and a.get("data")]
@@ -821,7 +829,9 @@ async def _doh_resolve(hostname: str) -> list[str]:
                 logger.info("DoH resolved %s -> %s via %s", hostname, ips, endpoint)
                 return ips
         except (httpx.RequestError, ValueError, KeyError) as exc:
-            logger.warning("DoH resolve via %s failed: %s", endpoint, exc)
+            logger.warning(
+                "DoH resolve via %s failed: %s: %s", endpoint, type(exc).__name__, exc
+            )
     return []
 
 
@@ -887,10 +897,12 @@ async def _download_capped(urls: list[str], dest: Path) -> None:
 
     raise HTTPException(
         502,
-        f"Demo download failed ({last_err}). The FACEIT demo host could not be "
-        f"reached from this machine — usually a DNS or network block (VPN, firewall, "
-        f"or a DNS filter blocking the CDN). Try again, switch DNS servers, or open "
-        f"the match on FACEIT and download the demo manually.",
+        f"Demo download failed ({last_err}). This machine cannot reach FACEIT's "
+        f"demo CDN — its domain won't resolve and public DNS resolvers are blocked "
+        f"too, which points to a VPN, firewall, or DNS filter on your network. "
+        f"Fixes: set your system DNS to 1.1.1.1 or 8.8.8.8, disable the VPN/filter, "
+        f"or use the 'FACEIT ↗' link to download the demo and drag it into the "
+        f"Single demo tab.",
     )
 
 
