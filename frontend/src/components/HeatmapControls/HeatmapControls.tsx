@@ -17,6 +17,7 @@ import {
   getTeamRoundsByDemo, teamRoundKey,
   ECO_COLOR, ECO_LABEL, type EcoClass,
 } from '../../utils/roundUtils';
+import { useRoundSides } from '../../hooks/useRoundSides';
 import type { PlayerInfo } from '../../types';
 import styles from './HeatmapControls.module.css';
 
@@ -58,6 +59,9 @@ const HeatmapControls: React.FC = () => {
   const teamHeatmapKeys      = useAppStore((s) => s.teamHeatmapRoundKeys);
   const setTeamHeatmapKeys   = useAppStore((s) => s.setTeamHeatmapRoundKeys);
   const toggleTeamKey        = useAppStore((s) => s.toggleTeamHeatmapRoundKey);
+
+  // Authoritative per-round sides (correct through overtime).
+  const sideMap              = useRoundSides();
 
   // ---------------------------------------------------------------------------
   // Player list: filter to team roster in team-session mode
@@ -344,7 +348,7 @@ const HeatmapControls: React.FC = () => {
                 </div>
                 <div className={styles.ecoFilterBar}>
                   {ECO_TAGS.map(({ side, cls, label }) => {
-                    const matching = getTeamEcoMatches(teamSession, side, cls);
+                    const matching = getTeamEcoMatches(teamSession, side, cls, sideMap);
                     if (matching.length === 0) return null;
                     const allOn = matching.every((k) => teamKeySet.has(k));
                     return (
@@ -352,7 +356,7 @@ const HeatmapControls: React.FC = () => {
                         key={`${side}-${cls}`}
                         className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
                         style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
-                        onClick={() => setTeamHeatmapKeys(toggleTeamEcoRounds(teamSession, side, cls, teamHeatmapKeys))}
+                        onClick={() => setTeamHeatmapKeys(toggleTeamEcoRounds(teamSession, side, cls, teamHeatmapKeys, sideMap))}
                         title={`${label} — ${ECO_LABEL[cls]} (${matching.length} round${matching.length === 1 ? '' : 's'})`}
                       >
                         {label}
@@ -437,7 +441,7 @@ const HeatmapControls: React.FC = () => {
                 <div className={styles.ecoFilterBar}>
                   {ECO_TAGS.map(({ side, cls, label }) => {
                     const matchingNums = getRoundsForEcoClass(
-                      nonKnifeRounds, side, cls, selectedPlayerInfos,
+                      nonKnifeRounds, side, cls, selectedPlayerInfos, sideMap,
                     ).map((r) => r.round_number);
                     if (matchingNums.length === 0) return null;
                     const allOn = matchingNums.every((n) => heatmapRounds.includes(n));
@@ -447,7 +451,7 @@ const HeatmapControls: React.FC = () => {
                         className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
                         style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
                         onClick={() => setHeatmapRounds(toggleEcoRounds(
-                          nonKnifeRounds, side, cls, heatmapRounds, selectedPlayerInfos,
+                          nonKnifeRounds, side, cls, heatmapRounds, selectedPlayerInfos, sideMap,
                         ))}
                         title={`${label} — ${ECO_LABEL[cls]}`}
                       >

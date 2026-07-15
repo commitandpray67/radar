@@ -140,6 +140,16 @@ export async function getPlayers(demoId: string, signal?: AbortSignal): Promise<
   return res.data;
 }
 
+/** Authoritative CT/T side of each player in each round (from actual team_num).
+ *  Shape: { [round_number]: { [player_id]: 'CT' | 'T' } }. */
+export async function getRoundSides(
+  demoId: string,
+  signal?: AbortSignal,
+): Promise<Record<string, Record<string, 'CT' | 'T'>>> {
+  const res = await http.get(`/demos/${demoId}/round-sides`, { signal });
+  return res.data;
+}
+
 export async function getPositions(
   demoId: string,
   params: {

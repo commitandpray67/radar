@@ -20,6 +20,7 @@ import {
   filterPlayersToRoster, teamRoundKey,
   ECO_COLOR, ECO_LABEL, type EcoClass,
 } from '../../utils/roundUtils';
+import { useRoundSides } from '../../hooks/useRoundSides';
 import styles from './MultiRoundControls.module.css';
 
 const ECO_TAGS: { side: 'CT' | 'T'; cls: EcoClass; label: string }[] = [
@@ -43,6 +44,9 @@ const MultiRoundControls: React.FC = () => {
   const selPlayers     = useAppStore((s) => s.multiRoundSelectedPlayers);
   const teamSession    = useAppStore((s) => s.teamSession);
   const teamKeys       = useAppStore((s) => s.multiRoundTeamKeys);
+
+  // Authoritative per-round sides (correct through overtime).
+  const sideMap        = useRoundSides();
 
   const setMode             = useAppStore((s) => s.setMultiRoundMode);
   const toggleRound         = useAppStore((s) => s.toggleMultiRoundRound);
@@ -222,7 +226,7 @@ const MultiRoundControls: React.FC = () => {
         <div className={styles.ecoFilterBar}>
           {ECO_TAGS.map(({ side, cls, label }) => {
             if (teamSession) {
-              const matching = getTeamEcoMatches(teamSession, side, cls);
+              const matching = getTeamEcoMatches(teamSession, side, cls, sideMap);
               if (matching.length === 0) return null;
               const allOn = matching.every((k) => teamKeySet.has(k));
               return (
@@ -230,7 +234,7 @@ const MultiRoundControls: React.FC = () => {
                   key={`${side}-${cls}`}
                   className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
                   style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
-                  onClick={() => setTeamKeys(toggleTeamEcoRounds(teamSession, side, cls, teamKeys))}
+                  onClick={() => setTeamKeys(toggleTeamEcoRounds(teamSession, side, cls, teamKeys, sideMap))}
                   title={`${label} — ${ECO_LABEL[cls]} (${matching.length} round${matching.length === 1 ? '' : 's'})`}
                 >
                   {label}
@@ -238,7 +242,7 @@ const MultiRoundControls: React.FC = () => {
               );
             }
             const matchingNums = getRoundsForEcoClass(
-              nonKnifeRounds, side, cls, selectedPlayerInfos,
+              nonKnifeRounds, side, cls, selectedPlayerInfos, sideMap,
             ).map((r) => r.round_number);
             if (matchingNums.length === 0) return null;
             const allOn = matchingNums.every((n) => selRoundSet.has(n));
@@ -248,7 +252,7 @@ const MultiRoundControls: React.FC = () => {
                 className={`${styles.ecoTag} ${allOn ? styles.ecoTagOn : ''}`}
                 style={{ '--eco-color': ECO_COLOR[cls] } as React.CSSProperties}
                 onClick={() => setRounds(toggleEcoRounds(
-                  nonKnifeRounds, side, cls, selRounds, selectedPlayerInfos,
+                  nonKnifeRounds, side, cls, selRounds, selectedPlayerInfos, sideMap,
                 ))}
                 title={`${label} — ${ECO_LABEL[cls]}`}
               >

@@ -101,29 +101,67 @@ export function sideForRound(initial: 'CT' | 'T', roundIdx: number): 'CT' | 'T' 
   return initial === 'CT' ? 'T' : 'CT';
 }
 
-/** A player's side in a given round, accounting for halftime + overtime swaps.
- *  `roundIdx` is the position of the round in the display list (knife rounds
- *  excluded). */
-function playerSideInRound(player: PlayerInfo, roundIdx: number): 'CT' | 'T' {
+// ---------------------------------------------------------------------------
+// Authoritative per-round sides (from actual team_num, via /round-sides)
+// ---------------------------------------------------------------------------
+
+/** Per-demo: roundNumber → (playerId → side). Keys are strings from the API. */
+export type DemoRoundSides = Record<string, Record<string, 'CT' | 'T'>>;
+/** demoId → DemoRoundSides. */
+export type RoundSideMap = Record<string, DemoRoundSides>;
+
+/** A player's real side in a round: authoritative team_num data if available,
+ *  otherwise the round-number heuristic (halftime + overtime swaps). */
+function playerSideInRound(
+  player: PlayerInfo,
+  round: RoundInfo,
+  roundIdx: number,
+  sideMap?: RoundSideMap,
+): 'CT' | 'T' {
+  const fromData = sideMap?.[round.demo_id]?.[String(round.round_number)]?.[String(player.player_id)];
+  if (fromData) return fromData;
   const initial = player.initial_team === 'CT' ? 'CT' : 'T';
   return sideForRound(initial, roundIdx);
+}
+
+/** The side the majority of a roster was on in a round, from team_num data.
+ *  Returns null when no roster player has data for that round. */
+function teamSideFromData(
+  demoRoundSides: DemoRoundSides | undefined,
+  roundNumber: number,
+  rosterIds: string[],
+): 'CT' | 'T' | null {
+  const sides = demoRoundSides?.[String(roundNumber)];
+  if (!sides) return null;
+  let ct = 0;
+  let t = 0;
+  for (const pid of rosterIds) {
+    const s = sides[pid];
+    if (s === 'CT') ct += 1;
+    else if (s === 'T') t += 1;
+  }
+  if (ct === 0 && t === 0) return null;
+  return ct >= t ? 'CT' : 'T';
 }
 
 /** Filter a round list to those where the given side's economy matches cls.
  *  If `selectedPlayers` is non-empty, additionally require at least one
  *  selected player to have been on `side` that round (so e.g. clicking
- *  "CT Full" with player X selected only matches rounds where X was on CT). */
+ *  "CT Full" with player X selected only matches rounds where X was on CT).
+ *  `sideMap`, when provided, resolves each player's side from real team_num
+ *  data (correct through overtime); otherwise a round-number heuristic is used. */
 export function getRoundsForEcoClass(
   rounds: RoundInfo[],
   side: 'CT' | 'T',
   cls: EcoClass,
   selectedPlayers: PlayerInfo[] = [],
+  sideMap?: RoundSideMap,
 ): RoundInfo[] {
   const pistolRns = getPistolRoundNumbers(rounds);
   return rounds.filter((r, idx) => {
     if (classifyRoundEco(r, side, pistolRns) !== cls) return false;
     if (selectedPlayers.length === 0) return true;
-    return selectedPlayers.some((p) => playerSideInRound(p, idx) === side);
+    return selectedPlayers.some((p) => playerSideInRound(p, r, idx, sideMap) === side);
   });
 }
 
@@ -134,8 +172,9 @@ export function toggleEcoRounds(
   cls: EcoClass,
   current: number[],
   selectedPlayers: PlayerInfo[] = [],
+  sideMap?: RoundSideMap,
 ): number[] {
-  const matching = getRoundsForEcoClass(rounds, side, cls, selectedPlayers).map(
+  const matching = getRoundsForEcoClass(rounds, side, cls, selectedPlayers, sideMap).map(
     (r) => r.round_number,
   );
   if (matching.length === 0) return current;
@@ -173,19 +212,25 @@ export function getTeamRoundsByDemo(
   }));
 }
 
-/** Composite keys for rounds where the team played `side` with eco class `cls`. */
+/** Composite keys for rounds where the team played `side` with eco class `cls`.
+ *  `sideMap` (real team_num data) resolves the team's side per round when
+ *  present — correct through overtime; otherwise a round-number heuristic runs. */
 export function getTeamEcoMatches(
   teamSession: TeamSessionDetail,
   side: 'CT' | 'T',
   cls: EcoClass,
+  sideMap?: RoundSideMap,
 ): string[] {
+  const rosterIds = [...(teamSession.core_roster ?? []), ...(teamSession.extended_roster ?? [])];
   const out: string[] = [];
   for (const group of getTeamRoundsByDemo(teamSession)) {
     const initial = teamSession.team_sides[group.demoId];
     if (!initial) continue;
     const pistolRns = getPistolRoundNumbers(group.rounds);
+    const demoSides = sideMap?.[group.demoId];
     group.rounds.forEach((r, idx) => {
-      const teamSide = sideForRound(initial, idx);
+      const teamSide =
+        teamSideFromData(demoSides, r.round_number, rosterIds) ?? sideForRound(initial, idx);
       if (teamSide !== side) return;
       if (classifyRoundEco(r, teamSide, pistolRns) !== cls) return;
       out.push(teamRoundKey(group.demoId, r.round_number));
@@ -200,8 +245,9 @@ export function toggleTeamEcoRounds(
   side: 'CT' | 'T',
   cls: EcoClass,
   current: string[],
+  sideMap?: RoundSideMap,
 ): string[] {
-  const matching = getTeamEcoMatches(teamSession, side, cls);
+  const matching = getTeamEcoMatches(teamSession, side, cls, sideMap);
   if (matching.length === 0) return current;
   const matchSet = new Set(matching);
   const allSelected = matching.every((k) => current.includes(k));

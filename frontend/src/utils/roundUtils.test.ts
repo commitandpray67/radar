@@ -189,6 +189,32 @@ describe('getTeamEcoMatches — overtime side classification', () => {
   });
 });
 
+describe('getTeamEcoMatches — real team_num overrides the overtime heuristic', () => {
+  it('excludes an OT round the round-number heuristic mislabels as the wrong side', () => {
+    const demoId = 'm1';
+    const rounds: RoundInfo[] = Array.from({ length: 30 }, (_, i) => ({
+      ...round(i + 1, 20000, 20000),
+      demo_id: demoId,
+    }));
+    const session = {
+      demo_ids: [demoId],
+      team_sides: { [demoId]: 'T' }, // team started T
+      rounds,
+      demos: [{ id: demoId, filename: 'm1.dem' }],
+      core_roster: ['100', '101'],
+      extended_roster: ['100', '101'],
+    } as unknown as TeamSessionDetail;
+
+    // Heuristic (no data): round 28 is labelled CT for a T-starting team.
+    expect(getTeamEcoMatches(session, 'CT', 'full')).toContain(`${demoId}:28`);
+
+    // Real team_num data says the roster was actually on T in round 28.
+    const sideMap = { [demoId]: { '28': { '100': 'T', '101': 'T' } } } as const;
+    expect(getTeamEcoMatches(session, 'CT', 'full', sideMap)).not.toContain(`${demoId}:28`);
+    expect(getTeamEcoMatches(session, 'T', 'full', sideMap)).toContain(`${demoId}:28`);
+  });
+});
+
 describe('toggleEcoRounds', () => {
   const rounds = Array.from({ length: 24 }, (_, i) => round(i + 1, 20000, 20000));
   it('adds matching rounds when none are selected', () => {
