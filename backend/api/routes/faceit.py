@@ -756,10 +756,28 @@ async def player_map_stats(payload: PlayerMapStatsPayload) -> PlayerMapStatsResp
 # ---------------------------------------------------------------------------
 
 
-async def _stream_to_file(client: httpx.AsyncClient, url: str, dest: Path) -> None:
-    """Stream one URL to ``dest`` enforcing the size cap. Raises on any failure."""
+async def _stream_to_file(
+    client: httpx.AsyncClient,
+    url: str,
+    dest: Path,
+    *,
+    sni_hostname: str | None = None,
+    host_header: str | None = None,
+) -> None:
+    """Stream one URL to ``dest`` enforcing the size cap. Raises on any failure.
+
+    When ``sni_hostname``/``host_header`` are given the URL host is expected to
+    be an IP literal (DoH fallback): the TCP connection targets the IP while TLS
+    SNI and the Host header preserve the real hostname, so cert verification and
+    CDN routing still work.
+    """
+    kwargs: dict = {}
+    if sni_hostname:
+        kwargs["extensions"] = {"sni_hostname": sni_hostname}
+    if host_header:
+        kwargs["headers"] = {"Host": host_header}
     written = 0
-    async with client.stream("GET", url) as resp:
+    async with client.stream("GET", url, **kwargs) as resp:
         if resp.status_code >= 400:
             raise HTTPException(502, f"Demo download failed (HTTP {resp.status_code}).")
         with dest.open("wb") as out:
@@ -774,11 +792,45 @@ async def _stream_to_file(client: httpx.AsyncClient, url: str, dest: Path) -> No
                 out.write(chunk)
 
 
+# DNS-over-HTTPS resolvers, addressed by IP so they need no DNS themselves.
+# Their TLS certs include these IPs as SANs, so verification still passes.
+_DOH_ENDPOINTS = ("https://1.1.1.1/dns-query", "https://8.8.8.8/resolve")
+
+
+async def _doh_resolve(hostname: str) -> list[str]:
+    """Resolve ``hostname`` to IPv4 addresses via DNS-over-HTTPS.
+
+    Bypasses the local resolver, which is the usual culprit when a CDN domain
+    fails to resolve (ISP DNS or a filter blocking ``*.faceit-cdn.net``) while
+    the rest of the internet works.  Returns [] if every resolver fails.
+    """
+    client = await _get_cdn_client()
+    for endpoint in _DOH_ENDPOINTS:
+        try:
+            resp = await client.get(
+                endpoint,
+                params={"name": hostname, "type": "A"},
+                headers={"Accept": "application/dns-json"},
+                timeout=httpx.Timeout(8.0),
+            )
+            if resp.status_code != 200:
+                continue
+            answers = resp.json().get("Answer") or []
+            ips = [a["data"] for a in answers if a.get("type") == 1 and a.get("data")]
+            if ips:
+                logger.info("DoH resolved %s -> %s via %s", hostname, ips, endpoint)
+                return ips
+        except (httpx.RequestError, ValueError, KeyError) as exc:
+            logger.warning("DoH resolve via %s failed: %s", endpoint, exc)
+    return []
+
+
 async def _download_capped(urls: list[str], dest: Path) -> None:
-    """Download a demo, trying every candidate URL with a short retry each.
+    """Download a demo, trying every candidate URL, with a DoH fallback.
 
     FACEIT can return more than one ``demo_url`` (different CDN hosts); we try
-    them in order and retry transient network/DNS hiccups.  No Authorization
+    them in order.  If a host fails to resolve locally (getaddrinfo/ConnectError)
+    we resolve it via DNS-over-HTTPS and retry against the IP.  No Authorization
     header is sent — FACEIT demo URLs are pre-signed CDN links.
     """
     client = await _get_cdn_client()
@@ -792,20 +844,46 @@ async def _download_capped(urls: list[str], dest: Path) -> None:
 
     last_err = ""
     for url in candidates:
-        host = urlparse(url).hostname or "?"
-        for attempt in range(3):
+        host = urlparse(url).hostname or ""
+
+        # 1) Direct download with a short retry for transient hiccups.
+        dns_failed = False
+        for attempt in range(2):
             try:
                 logger.info("Downloading demo from %s (attempt %d)", host, attempt + 1)
                 await _stream_to_file(client, url, dest)
                 return
             except HTTPException:
                 raise  # size cap / HTTP error — don't retry or mask
+            except httpx.ConnectError as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+                dns_failed = True
+                logger.warning("Demo connect to %s failed: %s", host, last_err)
+                dest.unlink(missing_ok=True)
+                break  # DNS/connect issue won't fix on plain retry — go to DoH
             except httpx.RequestError as exc:
                 last_err = f"{type(exc).__name__}: {exc}"
                 logger.warning("Demo download from %s failed: %s", host, last_err)
                 dest.unlink(missing_ok=True)
-                if attempt < 2:
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                if attempt < 1:
+                    await asyncio.sleep(1.0)
+
+        # 2) DoH fallback: resolve the host ourselves and connect by IP.
+        if dns_failed and host:
+            for ip in await _doh_resolve(host):
+                ip_url = url.replace(f"://{host}", f"://{ip}", 1)
+                try:
+                    logger.info("Retrying demo download via DoH IP %s for %s", ip, host)
+                    await _stream_to_file(
+                        client, ip_url, dest, sni_hostname=host, host_header=host
+                    )
+                    return
+                except HTTPException:
+                    raise
+                except httpx.RequestError as exc:
+                    last_err = f"{type(exc).__name__}: {exc}"
+                    logger.warning("DoH download via %s failed: %s", ip, last_err)
+                    dest.unlink(missing_ok=True)
 
     raise HTTPException(
         502,

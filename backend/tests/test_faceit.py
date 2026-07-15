@@ -181,6 +181,56 @@ def test_prepare_dem_gunzips_and_passthrough(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# DoH resolution + IP-pinned download (CDN DNS-block fallback)
+# ---------------------------------------------------------------------------
+
+
+class _FakeResp:
+    def __init__(self, status: int, payload: dict) -> None:
+        self.status_code = status
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeCDNClient:
+    def __init__(self, payload: dict, status: int = 200) -> None:
+        self._payload = payload
+        self._status = status
+
+    async def get(self, url, params=None, headers=None, timeout=None):
+        return _FakeResp(self._status, self._payload)
+
+
+@pytest.mark.asyncio
+async def test_doh_resolve_filters_a_records(monkeypatch) -> None:
+    payload = {
+        "Answer": [
+            {"type": 5, "data": "cname.example.net"},  # CNAME, ignored
+            {"type": 1, "data": "104.16.0.1"},
+            {"type": 1, "data": "104.16.0.2"},
+        ]
+    }
+
+    async def fake_cdn():
+        return _FakeCDNClient(payload)
+
+    monkeypatch.setattr(faceit, "_get_cdn_client", fake_cdn)
+    ips = await faceit._doh_resolve("demos.faceit-cdn.net")
+    assert ips == ["104.16.0.1", "104.16.0.2"]
+
+
+@pytest.mark.asyncio
+async def test_doh_resolve_returns_empty_on_no_answer(monkeypatch) -> None:
+    async def fake_cdn():
+        return _FakeCDNClient({"Answer": []})
+
+    monkeypatch.setattr(faceit, "_get_cdn_client", fake_cdn)
+    assert await faceit._doh_resolve("nope.example") == []
+
+
+# ---------------------------------------------------------------------------
 # Endpoints (mocked _faceit_get)
 # ---------------------------------------------------------------------------
 
