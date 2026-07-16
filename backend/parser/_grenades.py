@@ -100,46 +100,97 @@ def _map_grenade_type(raw: str) -> str | None:
 
 
 def _build_tracks(bucket_sorted: list[dict]) -> list[list[dict]]:
-    """Greedy nearest-neighbour multi-object tracker.
+    """Tick-batched nearest-neighbour multi-object tracker.
 
-    parse_grenades() returns multiple rows per tick when several grenades of
-    the same type fly simultaneously.  A simple tick-dedup would arbitrarily
-    discard real data.  Instead we maintain active tracks and assign each
-    incoming row to the nearest one within MATCH_DIST units, starting a new
-    track when no match is found.
+    parse_grenades() emits rows per tick for EVERY live projectile of a type —
+    including grenades resting on the ground (a landed smoke keeps emitting at
+    its rest position for its whole ~18 s lifetime) and duplicate rows for the
+    same projectile within one tick.
+
+    The old row-at-a-time tracker caused the long-standing "webbing" artifact:
+    a second grenade flying within the match radius of a resting one had its
+    rows appended to the SAME track, which then alternated rest↔flight point —
+    rendered as a fan of straight lines between the rest spot and the arc.
+
+    Fixed by processing one tick at a time with three constraints:
+      1. near-duplicate rows within a tick collapse to one observation,
+      2. observations are matched to tracks greedily by distance with each
+         observation AND each track used at most once per tick (two same-tick
+         rows are two different projectiles — they can never share a track),
+      3. a row with a known thrower never extends another thrower's track.
     """
     MATCH_DIST_SQ = 500**2  # max squared distance to continue a track
     TRACK_GAP = 16  # retire a track idle for this many ticks
+    DUP_DIST_SQ = 4.0**2  # same-tick rows closer than this are one projectile
 
     active: list[dict] = []
     finished: list[list[dict]] = []
 
-    for row in bucket_sorted:
-        tick = row["tick"]
-        x, y = row["x"], row["y"]
+    i, n = 0, len(bucket_sorted)
+    while i < n:
+        tick = bucket_sorted[i]["tick"]
+        tick_rows: list[dict] = []
+        while i < n and bucket_sorted[i]["tick"] == tick:
+            tick_rows.append(bucket_sorted[i])
+            i += 1
 
         # Retire stale tracks
         live: list[dict] = []
-        stale: list[dict] = []
         for t in active:
-            (live if tick - t["last_tick"] <= TRACK_GAP else stale).append(t)
-        for t in stale:
-            finished.append(t["pts"])
+            if tick - t["last_tick"] <= TRACK_GAP:
+                live.append(t)
+            else:
+                finished.append(t["pts"])
         active = live
 
-        best_i, best_dsq = None, MATCH_DIST_SQ
-        for i, t in enumerate(active):
-            dsq = (x - t["last_x"]) ** 2 + (y - t["last_y"]) ** 2
-            if dsq < best_dsq:
-                best_dsq = dsq
-                best_i = i
+        # 1. Collapse near-duplicate observations of the same projectile.
+        obs: list[dict] = []
+        for row in tick_rows:
+            if not any(
+                (row["x"] - o["x"]) ** 2 + (row["y"] - o["y"]) ** 2 <= DUP_DIST_SQ
+                for o in obs
+            ):
+                obs.append(row)
 
-        if best_i is not None:
-            t = active[best_i]
+        # 2. Greedy min-distance assignment, each obs/track used once per tick.
+        pairs: list[tuple[float, int, int]] = []
+        for oi, row in enumerate(obs):
+            r_thrower = row.get("thrower_id", 0)
+            for ti, t in enumerate(active):
+                # 3. A known thrower never extends another thrower's track.
+                if r_thrower and t["thrower_id"] and r_thrower != t["thrower_id"]:
+                    continue
+                dsq = (row["x"] - t["last_x"]) ** 2 + (row["y"] - t["last_y"]) ** 2
+                if dsq < MATCH_DIST_SQ:
+                    pairs.append((dsq, oi, ti))
+        pairs.sort(key=lambda p: p[0])
+
+        used_obs: set[int] = set()
+        used_trk: set[int] = set()
+        for _dsq, oi, ti in pairs:
+            if oi in used_obs or ti in used_trk:
+                continue
+            used_obs.add(oi)
+            used_trk.add(ti)
+            t = active[ti]
+            row = obs[oi]
             t["pts"].append(row)
-            t["last_x"], t["last_y"], t["last_tick"] = x, y, tick
-        else:
-            active.append({"pts": [row], "last_x": x, "last_y": y, "last_tick": tick})
+            t["last_x"], t["last_y"], t["last_tick"] = row["x"], row["y"], tick
+            if not t["thrower_id"]:
+                t["thrower_id"] = row.get("thrower_id", 0)
+
+        # Unmatched observations start new tracks.
+        for oi, row in enumerate(obs):
+            if oi not in used_obs:
+                active.append(
+                    {
+                        "pts": [row],
+                        "last_x": row["x"],
+                        "last_y": row["y"],
+                        "last_tick": tick,
+                        "thrower_id": row.get("thrower_id", 0),
+                    }
+                )
 
     for t in active:
         finished.append(t["pts"])

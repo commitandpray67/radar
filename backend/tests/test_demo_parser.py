@@ -184,3 +184,80 @@ def test_grenade_fallback_synthesizes_from_trajectories() -> None:
     assert g.x == 480.0 and g.y == 300.0
     # Smoke effect duration (~18 s = 1152 ticks at 64 tick) added past landing.
     assert g.expire_tick == 112 + 1152
+
+
+# ---------------------------------------------------------------------------
+# _build_tracks — the grenade-trajectory tracker (webbing regression tests)
+# ---------------------------------------------------------------------------
+
+from parser._grenades import _build_tracks  # noqa: E402
+
+
+def _row(tick, x, y, thrower=0):
+    return {"tick": tick, "x": float(x), "y": float(y), "z": 0.0, "thrower_id": thrower}
+
+
+def _is_smooth(track, max_step=60.0):
+    """No segment longer than max_step units — a webbed track has huge jumps."""
+    for a, b in zip(track, track[1:], strict=False):
+        if math.hypot(b["x"] - a["x"], b["y"] - a["y"]) > max_step:
+            return False
+    return True
+
+
+def test_tracks_resting_and_flying_grenades_stay_separate() -> None:
+    """The webbing bug: a smoke resting at (0,0) emits every tick while a second
+    smoke flies past within the match radius. The old tracker merged them into
+    one alternating rest/flight track (rendered as a fan of lines)."""
+    rows = []
+    for i in range(30):
+        tick = 1000 + i * 2
+        rows.append(_row(tick, 0, 0))                 # resting smoke
+        rows.append(_row(tick, 100 + i * 15, 50))     # flying smoke, passes nearby
+    rows.sort(key=lambda r: r["tick"])
+
+    tracks = _build_tracks(rows)
+    assert len(tracks) == 2
+    for track in tracks:
+        assert _is_smooth(track), "track alternates between two projectiles (webbing)"
+    # One track is the stationary smoke, the other strictly advances in x.
+    by_len_x = sorted(tracks, key=lambda t: t[-1]["x"] - t[0]["x"])
+    assert by_len_x[0][0]["x"] == 0 and by_len_x[0][-1]["x"] == 0
+    assert by_len_x[1][-1]["x"] > by_len_x[1][0]["x"]
+
+
+def test_tracks_same_tick_duplicates_collapse_to_one() -> None:
+    """parse_grenades() can emit duplicate rows per tick for one projectile."""
+    rows = []
+    for i in range(10):
+        tick = 500 + i
+        rows.append(_row(tick, i * 10, 0))
+        rows.append(_row(tick, i * 10 + 0.5, 0))  # near-identical duplicate
+    tracks = _build_tracks(rows)
+    assert len(tracks) == 1
+    assert len(tracks[0]) == 10  # duplicates collapsed, not forked
+
+
+def test_tracks_known_throwers_never_mix() -> None:
+    """Two grenades from different throwers crossing paths stay separate even
+    when they come within the match radius of each other."""
+    rows = []
+    for i in range(20):
+        tick = 100 + i
+        rows.append(_row(tick, i * 20, 0, thrower=111))        # left → right
+        rows.append(_row(tick, 380 - i * 20, 40, thrower=222))  # right → left
+    rows.sort(key=lambda r: r["tick"])
+
+    tracks = _build_tracks(rows)
+    assert len(tracks) == 2
+    for track in tracks:
+        throwers = {p["thrower_id"] for p in track}
+        assert len(throwers) == 1, "a track mixed two throwers"
+        assert _is_smooth(track, max_step=45.0)
+
+
+def test_tracks_single_grenade_unaffected() -> None:
+    rows = [_row(100 + i, i * 12, i * 5) for i in range(40)]
+    tracks = _build_tracks(rows)
+    assert len(tracks) == 1
+    assert len(tracks[0]) == 40
