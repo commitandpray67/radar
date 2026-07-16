@@ -195,6 +195,9 @@ const TendencyReport: React.FC<Props> = ({ onClose }) => {
 
   const busy = progress !== null && progress.done < progress.total;
 
+  // Radar background under each heatmap (all demos in a session share one map).
+  const mapName = teamSession?.map_name ?? demo?.map_name ?? '';
+
   return (
     <div className={styles.overlay} onClick={onClose}>
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
@@ -250,11 +253,22 @@ const TendencyReport: React.FC<Props> = ({ onClose }) => {
                 return (
                   <div key={b.key} className={styles.cell}>
                     {cell?.image ? (
-                      <img
-                        className={styles.mapImg}
-                        src={cell.image}
-                        alt={`${p.name} — ${b.label} (${side})`}
-                      />
+                      <div className={styles.mapStack}>
+                        {mapName && (
+                          <img
+                            className={styles.mapBg}
+                            src={`/maps/${mapName}.png`}
+                            alt=""
+                            aria-hidden
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        )}
+                        <img
+                          className={styles.heatImg}
+                          src={cell.image}
+                          alt={`${p.name} — ${b.label} (${side})`}
+                        />
+                      </div>
                     ) : (
                       <div className={styles.placeholder}>
                         {n < MIN_ROUNDS ? 'no rounds' : busy ? '…' : 'no data'}

@@ -171,13 +171,33 @@
   gap: 3px;
 }
 
-.mapImg {
+/* Radar map with the heatmap stacked on top (the heatmap PNG has per-pixel
+   alpha, so plain layering blends correctly). */
+.mapStack {
+  position: relative;
   width: 100%;
   max-width: 260px;
   aspect-ratio: 1;
   border-radius: 6px;
   border: 1px solid #202c3c;
   background: #0d1117;
+  overflow: hidden;
+}
+
+.mapBg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Slightly dimmed so the heat signal stays the dominant read. */
+  filter: brightness(0.75);
+}
+
+.heatImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .placeholder {
