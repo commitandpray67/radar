@@ -22,6 +22,7 @@ hidden = [
     *collect_submodules("api.routes"),   # now a package: health, maps, demos, heatmap, voice, teams, _shared
     "db", "db.database",
     "analytics", "analytics.coordinates", "analytics.heatmap", "analytics.team_detection",
+    "analytics.scoreboard",
     "maps", "maps.calibration",
     "parser",
     *collect_submodules("parser"),       # now a package: _types, _utils, _rounds, _positions, _grenades, _events

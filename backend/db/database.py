@@ -272,6 +272,28 @@ def build_positions_query(
     return query, params
 
 
+async def fetch_round_sides(conn, demo_id: str) -> dict[int, dict[int, str]]:
+    """Authoritative CT/T side of each player per round, from actual team_num.
+
+    Returns ``{round_number: {player_id: "CT"|"T"}}`` (player_id as int).
+    team_num is constant for a player within a round, so grouping + MAX
+    collapses each (round, player) to one side cheaply.
+    """
+    cur = await conn.execute(
+        """SELECT round_number, player_id, MAX(team_num) AS team_num
+           FROM player_positions
+           WHERE demo_id = ? AND team_num IN (2, 3)
+           GROUP BY round_number, player_id""",
+        (demo_id,),
+    )
+    out: dict[int, dict[int, str]] = {}
+    for r in await cur.fetchall():
+        out.setdefault(r["round_number"], {})[r["player_id"]] = (
+            "CT" if r["team_num"] == 3 else "T"
+        )
+    return out
+
+
 async def demo_exists(demo_id: str) -> bool:
     async with get_connection() as conn:
         cursor = await conn.execute("SELECT 1 FROM demos WHERE id = ?", (demo_id,))

@@ -13,12 +13,13 @@ import HeatmapControls from '../HeatmapControls/HeatmapControls';
 import MultiRoundControls from '../MultiRoundControls/MultiRoundControls';
 import PlaybackControls from '../Playback/PlaybackControls';
 import PlayerInfoPanel from '../PlayerInfoPanel/PlayerInfoPanel';
+import StatsPanel from '../StatsPanel/StatsPanel';
 import styles from './AppLayout.module.css';
 import { TEAM_COLORS } from '../../types';
 import { getDisplaySideScore, getHalftimeRound } from '../../utils/roundUtils';
 
 type SideTab  = 'rounds' | 'heatmap' | 'multi';
-type RightTab = 'players' | 'info';
+type RightTab = 'players' | 'info' | 'stats';
 
 const AppLayout: React.FC = () => {
   const demo        = useAppStore((s) => s.demo);
@@ -163,6 +164,12 @@ const AppLayout: React.FC = () => {
             >
               Live Info
             </button>
+            <button
+              className={`${styles.rightTab} ${rightTab === 'stats' ? styles.rightTabActive : ''}`}
+              onClick={() => setRightTab('stats')}
+            >
+              Stats
+            </button>
           </div>
 
           {rightTab === 'players' && (
@@ -200,6 +207,7 @@ const AppLayout: React.FC = () => {
           )}
 
           {rightTab === 'info' && <PlayerInfoPanel />}
+          {rightTab === 'stats' && <StatsPanel />}
         </aside>
       </div>
     </div>

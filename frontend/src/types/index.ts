@@ -250,6 +250,42 @@ export interface TeamSessionHeatmapPayload {
 }
 
 // ---------------------------------------------------------------------------
+// Scoreboard (per-demo player stats)
+// ---------------------------------------------------------------------------
+
+export interface ScoreboardRow {
+  player_id: number;
+  name: string;
+  initial_team: 'CT' | 'T' | string;
+  rounds: number;
+  kills: number;
+  deaths: number;
+  kd: number;
+  hs_kills: number;
+  hs_pct: number;            // 0..1
+  kpr: number;
+  opening_kills: number;
+  opening_deaths: number;
+  opening_wins: number;
+  opening_losses: number;
+  trade_kills: number;
+  traded_deaths: number;
+  traded_death_pct: number;  // 0..1
+  multikills: Record<string, number>;
+  rounds_survived: number;
+  kast: number;              // 0..1
+  assists: number | null;
+  adr: number | null;
+  has_damage_data: boolean;
+  kast_includes_assists: boolean;
+}
+
+export interface Scoreboard {
+  players: ScoreboardRow[];
+  tick_rate: number;
+}
+
+// ---------------------------------------------------------------------------
 // Team organizer (multi-map team management)
 // ---------------------------------------------------------------------------
 

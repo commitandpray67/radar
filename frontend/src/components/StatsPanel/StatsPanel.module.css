@@ -1,0 +1,82 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 10px 8px;
+  overflow-y: auto;
+  font-family: 'Inter', sans-serif;
+}
+
+.empty {
+  padding: 24px 12px;
+  color: #5a6a7a;
+  font-size: 13px;
+  font-family: 'Inter', sans-serif;
+  text-align: center;
+}
+
+.sideBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sideHeader {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding-left: 4px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.table th,
+.table td {
+  padding: 4px 3px;
+  text-align: right;
+  color: #c0cfe0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.table thead th {
+  color: #7a8a9a;
+  border-bottom: 1px solid #202c3c;
+  cursor: pointer;
+  user-select: none;
+}
+
+.table thead th:hover {
+  color: #c0cfe0;
+}
+
+.nameCol {
+  text-align: left !important;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.numCol {
+  width: 34px;
+}
+
+.sorted {
+  color: #6aa9e0 !important;
+}
+
+.table tbody tr:hover {
+  background: #131d2c;
+}
+
+.note {
+  font-size: 10px;
+  color: #4a5a6a;
+  line-height: 1.4;
+  margin: 0;
+  padding: 0 4px;
+}

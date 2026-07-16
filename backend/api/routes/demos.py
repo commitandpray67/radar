@@ -30,7 +30,13 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
-from db.database import demo_exists, file_hash, get_connection, store_demo
+from db.database import (
+    demo_exists,
+    fetch_round_sides,
+    file_hash,
+    get_connection,
+    store_demo,
+)
 
 from ._shared import (
     _DEMO_STORE,
@@ -501,22 +507,12 @@ async def get_round_sides(demo_id: str):
     with player_id as a string to preserve SteamID64 precision.
     """
     async with get_connection() as conn:
-        # team_num is constant for a player within a round, so grouping and
-        # taking MAX collapses each (round, player) to its single side cheaply.
-        cur = await conn.execute(
-            """SELECT round_number, player_id, MAX(team_num) AS team_num
-               FROM player_positions
-               WHERE demo_id = ? AND team_num IN (2, 3)
-               GROUP BY round_number, player_id""",
-            (demo_id,),
-        )
-        rows = await cur.fetchall()
-
-    out: dict[str, dict[str, str]] = {}
-    for r in rows:
-        rn = str(r["round_number"])
-        out.setdefault(rn, {})[str(r["player_id"])] = "CT" if r["team_num"] == 3 else "T"
-    return out
+        sides = await fetch_round_sides(conn, demo_id)
+    # Stringify keys for JSON (SteamID64 precision + object keys must be strings).
+    return {
+        str(rn): {str(pid): side for pid, side in players.items()}
+        for rn, players in sides.items()
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import type {
   HeatmapPayload,
   HeatmapResult,
   ParseJobStatus,
+  Scoreboard,
 } from '../types';
 
 const http = axios.create({ baseURL: '/api' });
@@ -172,6 +173,20 @@ export async function getRoundSides(
   signal?: AbortSignal,
 ): Promise<Record<string, Record<string, 'CT' | 'T'>>> {
   const res = await http.get(`/demos/${demoId}/round-sides`, { signal });
+  return res.data;
+}
+
+// Scoreboard is derived purely from immutable stored events, so cache per demo.
+const _scoreboardCache = new Map<string, Scoreboard>();
+
+export async function getScoreboard(
+  demoId: string,
+  signal?: AbortSignal,
+): Promise<Scoreboard> {
+  const cached = _scoreboardCache.get(demoId);
+  if (cached) return cached;
+  const res = await http.get(`/demos/${demoId}/scoreboard`, { signal });
+  _scoreboardCache.set(demoId, res.data);
   return res.data;
 }
 
