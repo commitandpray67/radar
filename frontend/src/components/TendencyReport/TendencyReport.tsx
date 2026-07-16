@@ -53,7 +53,27 @@ const TendencyReport: React.FC<Props> = ({ onClose }) => {
   const [cells, setCells] = useState<Map<string, CellResult>>(new Map());
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState('');
+  const [zoomed, setZoomed] = useState<{
+    image: string;
+    playerName: string;
+    bucketLabel: string;
+    rounds: number;
+  } | null>(null);
   const runIdRef = useRef(0);
+
+  // Esc closes the zoom first, then the report.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setZoomed((z) => {
+        if (z) return null;
+        onClose();
+        return z;
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   // ── Report players ────────────────────────────────────────────────────────
   const reportPlayers = useMemo<ReportPlayer[]>(() => {
@@ -253,7 +273,18 @@ const TendencyReport: React.FC<Props> = ({ onClose }) => {
                 return (
                   <div key={b.key} className={styles.cell}>
                     {cell?.image ? (
-                      <div className={styles.mapStack}>
+                      <button
+                        type="button"
+                        className={styles.mapStack}
+                        onClick={() => setZoomed({
+                          image: cell.image as string,
+                          playerName: p.name,
+                          bucketLabel: b.label,
+                          rounds: n,
+                        })}
+                        title="Click to zoom"
+                        aria-label={`Zoom ${p.name} — ${b.label}`}
+                      >
                         {mapName && (
                           <img
                             className={styles.mapBg}
@@ -268,7 +299,7 @@ const TendencyReport: React.FC<Props> = ({ onClose }) => {
                           src={cell.image}
                           alt={`${p.name} — ${b.label} (${side})`}
                         />
-                      </div>
+                      </button>
                     ) : (
                       <div className={styles.placeholder}>
                         {n < MIN_ROUNDS ? 'no rounds' : busy ? '…' : 'no data'}
@@ -281,6 +312,36 @@ const TendencyReport: React.FC<Props> = ({ onClose }) => {
             </div>
           ))}
         </div>
+
+        {/* ── Zoom lightbox ── */}
+        {zoomed && (
+          <div
+            className={styles.lightbox}
+            onClick={(e) => { e.stopPropagation(); setZoomed(null); }}
+          >
+            <div className={styles.lightboxStack}>
+              {mapName && (
+                <img
+                  className={styles.mapBg}
+                  src={`/maps/${mapName}.png`}
+                  alt=""
+                  aria-hidden
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              )}
+              <img
+                className={styles.heatImg}
+                src={zoomed.image}
+                alt={`${zoomed.playerName} — ${zoomed.bucketLabel} (${side})`}
+              />
+            </div>
+            <div className={styles.lightboxCaption}>
+              <b>{zoomed.playerName}</b> — {zoomed.bucketLabel} · {side} ·{' '}
+              {zoomed.rounds} round{zoomed.rounds === 1 ? '' : 's'}
+              <span className={styles.lightboxHint}> (click or Esc to close)</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
