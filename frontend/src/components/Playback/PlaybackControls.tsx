@@ -244,11 +244,16 @@ const PlaybackControls: React.FC = () => {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // Navigate by position in the rounds array — round_number is not guaranteed
+  // to be a contiguous 1..N (knife rounds, round 0, overtime).
+  const roundIdx = rounds.findIndex((r) => r.round_number === activeRound);
   const goToPrevRound = () => {
-    if (activeRound && activeRound > 1) setActiveRound(activeRound - 1);
+    if (roundIdx > 0) setActiveRound(rounds[roundIdx - 1].round_number);
   };
   const goToNextRound = () => {
-    if (activeRound && activeRound < rounds.length) setActiveRound(activeRound + 1);
+    if (roundIdx >= 0 && roundIdx < rounds.length - 1) {
+      setActiveRound(rounds[roundIdx + 1].round_number);
+    }
   };
 
   const disabled = !demo || (isMultiRoundMode
@@ -296,7 +301,7 @@ const PlaybackControls: React.FC = () => {
           <button
             className={styles.iconBtn}
             onClick={goToPrevRound}
-            disabled={disabled || activeRound === 1}
+            disabled={disabled || roundIdx <= 0}
             title="Previous round"
           >
             ‹
@@ -307,7 +312,7 @@ const PlaybackControls: React.FC = () => {
           <button
             className={styles.iconBtn}
             onClick={goToNextRound}
-            disabled={disabled || activeRound === rounds.length}
+            disabled={disabled || roundIdx === rounds.length - 1}
             title="Next round"
           >
             ›

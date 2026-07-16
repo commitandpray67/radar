@@ -23,6 +23,7 @@ export function useRoundPositions(): void {
   const multiRoundTeamKeys     = useAppStore((s) => s.multiRoundTeamKeys);
   const setPositions           = useAppStore((s) => s.setPositions);
   const setPositionsLoading    = useAppStore((s) => s.setPositionsLoading);
+  const setPositionsError      = useAppStore((s) => s.setPositionsError);
 
   // One staleness token PER effect: the three effects run different request
   // streams and a single shared ref lets one effect discard another's valid
@@ -45,10 +46,12 @@ export function useRoundPositions(): void {
       .then((positions) => {
         if (singleKeyRef.current !== key) return;
         setPositions(positions, [activeRound]);
+        setPositionsError(null);
       })
       .catch((err) => {
         if (err?.name === 'CanceledError' || err?.name === 'AbortError') return;
         console.error('Failed to load positions for round', activeRound, err);
+        if (singleKeyRef.current === key) setPositionsError('Failed to load positions for this round.');
       })
       .finally(() => {
         if (singleKeyRef.current === key) setPositionsLoading(false);
@@ -76,10 +79,12 @@ export function useRoundPositions(): void {
         if (multiKeyRef.current !== key) return;
         const merged = ([] as PlayerPosition[]).concat(...perRound);
         setPositions(merged, multiRoundRounds);
+        setPositionsError(null);
       })
       .catch((err) => {
         if (err?.name === 'CanceledError' || err?.name === 'AbortError') return;
         console.error('Failed to load multi-round positions', err);
+        if (multiKeyRef.current === key) setPositionsError('Failed to load positions.');
       })
       .finally(() => {
         if (multiKeyRef.current === key) setPositionsLoading(false);
@@ -121,10 +126,12 @@ export function useRoundPositions(): void {
         // Pass union of round numbers so tick index still indexes them all.
         const rns = Array.from(new Set(pairs.map((p) => p.rn)));
         setPositions(merged, rns);
+        setPositionsError(null);
       })
       .catch((err) => {
         if (err?.name === 'CanceledError' || err?.name === 'AbortError') return;
         console.error('Failed to load team multi-round positions', err);
+        if (teamKeyRef.current === key) setPositionsError('Failed to load positions.');
       })
       .finally(() => {
         if (teamKeyRef.current === key) setPositionsLoading(false);

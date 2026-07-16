@@ -13,7 +13,10 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import { loadDemoIntoStore } from '../../utils/demoLoading';
-import { classifyRoundEco, getPistolRoundNumbers, ECO_COLOR, ECO_LABEL } from '../../utils/roundUtils';
+import {
+  classifyRoundEco, getPistolRoundNumbers, getDisplaySideScore, getHalftimeRound,
+  getTeamRoundsByDemo, ECO_COLOR, ECO_LABEL,
+} from '../../utils/roundUtils';
 import type { RoundInfo } from '../../types';
 import styles from './RoundPanel.module.css';
 
@@ -48,18 +51,6 @@ const WIN_REASON_SHORT: Record<string, string> = {
 
 function winReasonLabel(reason: string): string {
   return WIN_REASON_SHORT[reason] ?? reason ?? '';
-}
-
-function getDisplaySideScore(
-  roundNumber: number,
-  halftimeRoundNumber: number | null,
-  ctScore: number,
-  tScore: number,
-): { ct: number; t: number } {
-  if (halftimeRoundNumber !== null && roundNumber > halftimeRoundNumber) {
-    return { ct: tScore, t: ctScore };
-  }
-  return { ct: ctScore, t: tScore };
 }
 
 interface RoundRowProps {
@@ -142,8 +133,7 @@ function renderSingleDemoRounds(
   plantSiteByRound: Map<number, string>,
 ): React.ReactNode {
   const displayRounds = rounds.filter((r) => !r.is_knife_round);
-  const halftimeRoundNumber =
-    displayRounds.length >= 12 ? displayRounds[11].round_number : null;
+  const halftimeRoundNumber = getHalftimeRound(displayRounds);
   const pistolRoundNumbers = getPistolRoundNumbers(displayRounds);
 
   return displayRounds.map((r, idx) => {
@@ -255,26 +245,12 @@ const RoundPanel: React.FC = () => {
   // ─── Team-mode render ───────────────────────────────────────────────────
   const teamGroups = useMemo(() => {
     if (!teamSession) return [];
-    const byDemo = new Map<string, RoundInfo[]>();
-    for (const r of teamSession.rounds) {
-      if (r.is_knife_round) continue;
-      if (!byDemo.has(r.demo_id)) byDemo.set(r.demo_id, []);
-      byDemo.get(r.demo_id)!.push(r);
-    }
-    return teamSession.demo_ids.map((demoId, idx) => {
-      const meta = teamSession.demos.find((d) => d.id === demoId);
-      const demoRounds = byDemo.get(demoId) ?? [];
-      const halftimeRn = demoRounds.length >= 12 ? demoRounds[11].round_number : null;
-      return {
-        demoId,
-        matchNum: idx + 1,
-        filename: meta?.filename ?? demoId.slice(0, 8),
-        side: teamSession.team_sides[demoId] ?? 'CT',
-        rounds: demoRounds,
-        halftimeRn,
-        pistolRns: getPistolRoundNumbers(demoRounds),
-      };
-    });
+    return getTeamRoundsByDemo(teamSession).map((g) => ({
+      ...g,
+      side: teamSession.team_sides[g.demoId] ?? 'CT',
+      halftimeRn: getHalftimeRound(g.rounds),
+      pistolRns: getPistolRoundNumbers(g.rounds),
+    }));
   }, [teamSession]);
 
   // ─── Render ─────────────────────────────────────────────────────────────

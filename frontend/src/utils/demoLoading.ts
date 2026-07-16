@@ -18,9 +18,12 @@ import {
   getGrenades,
   getPlayerStateEvents,
   getDemo,
+  getMaps,
+  uploadDemo,
+  watchParseStatus,
 } from './api';
 import { useAppStore } from '../store/demoStore';
-import type { MapMeta } from '../types';
+import type { MapMeta, ParseJobStatus } from '../types';
 
 interface LoadOptions {
   /** Existing maps array; if non-empty, skip refetching maps. */
@@ -88,4 +91,46 @@ export async function loadDemoIntoStore(
   } finally {
     if (_activeController === controller) _activeController = null;
   }
+}
+
+/**
+ * Upload a demo file and wait for it to finish parsing.
+ *
+ * Shared by every loader so the upload→watch dance (and its cancellation) lives
+ * in one place. Resolves once the demo is stored and queryable.
+ */
+export async function uploadAndParse(
+  file: File,
+  opts: {
+    force?: boolean;
+    signal?: AbortSignal;
+    onUploadProgress?: (pct: number) => void;
+    onParseStatus?: (s: ParseJobStatus) => void;
+  } = {},
+): Promise<{ demoId: string; cached: boolean }> {
+  const { job_id, demo_id, cached } = await uploadDemo(
+    file,
+    opts.onUploadProgress,
+    opts.force,
+  );
+  if (!cached) {
+    await watchParseStatus(job_id, (s) => opts.onParseStatus?.(s), {
+      signal: opts.signal,
+    });
+  }
+  return { demoId: demo_id, cached };
+}
+
+/**
+ * Load an already-parsed demo into the store, fetching the maps list first if
+ * the store doesn't have it yet. Convenience wrapper over loadDemoIntoStore.
+ */
+export async function openDemo(demoId: string): Promise<void> {
+  const store = useAppStore.getState();
+  let maps = store.maps;
+  if (maps.length === 0) {
+    maps = await getMaps();
+    store.setMaps(maps);
+  }
+  await loadDemoIntoStore(demoId, { maps });
 }

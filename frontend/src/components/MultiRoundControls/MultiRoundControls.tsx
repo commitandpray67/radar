@@ -15,26 +15,14 @@
 import React, { useCallback, useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import {
-  toRangeString, getHalftimeRound, toggleEcoRounds, getRoundsForEcoClass,
-  getTeamRoundsByDemo, getTeamEcoMatches, toggleTeamEcoRounds,
+  toRangeString, getHalftimeRound, toggleEcoRounds,
+  getTeamRoundsByDemo, toggleTeamEcoRounds,
   filterPlayersToRoster, teamRoundKey,
-  ECO_COLOR, ECO_LABEL, type EcoClass,
+  ECO_COLOR, ECO_LABEL, ECO_TAGS,
 } from '../../utils/roundUtils';
 import { useRoundSides } from '../../hooks/useRoundSides';
+import { useEcoTagMatches } from '../../hooks/useEcoTagMatches';
 import styles from './MultiRoundControls.module.css';
-
-const ECO_TAGS: { side: 'CT' | 'T'; cls: EcoClass; label: string }[] = [
-  { side: 'CT', cls: 'pistol', label: 'CT Pistol' },
-  { side: 'CT', cls: 'full',   label: 'CT Full'   },
-  { side: 'CT', cls: 'force',  label: 'CT Force'  },
-  { side: 'CT', cls: 'half',   label: 'CT Half'   },
-  { side: 'CT', cls: 'eco',    label: 'CT Eco'    },
-  { side: 'T',  cls: 'pistol', label: 'T Pistol'  },
-  { side: 'T',  cls: 'full',   label: 'T Full'    },
-  { side: 'T',  cls: 'force',  label: 'T Force'   },
-  { side: 'T',  cls: 'half',   label: 'T Half'    },
-  { side: 'T',  cls: 'eco',    label: 'T Eco'     },
-];
 
 const MultiRoundControls: React.FC = () => {
   const rounds         = useAppStore((s) => s.rounds);
@@ -74,6 +62,12 @@ const MultiRoundControls: React.FC = () => {
     () => rounds.filter((r) => !r.is_knife_round),
     [rounds],
   );
+
+  // Precompute every eco tag's matching rounds in one pass (instead of scanning
+  // all rounds per tag, per render).
+  const ecoMatches = useEcoTagMatches({
+    teamSession, nonKnifeRounds, selectedPlayers: selectedPlayerInfos, sideMap,
+  });
   const halftimeRound    = useMemo(() => getHalftimeRound(nonKnifeRounds), [nonKnifeRounds]);
   const halftimeBoundary = halftimeRound ?? Infinity;
   const allRoundNums   = useMemo(() => nonKnifeRounds.map((r) => r.round_number), [nonKnifeRounds]);
@@ -225,10 +219,10 @@ const MultiRoundControls: React.FC = () => {
         {/* Eco filter bar */}
         <div className={styles.ecoFilterBar}>
           {ECO_TAGS.map(({ side, cls, label }) => {
+            const matching = ecoMatches.get(`${side}-${cls}`) ?? [];
+            if (matching.length === 0) return null;
             if (teamSession) {
-              const matching = getTeamEcoMatches(teamSession, side, cls, sideMap);
-              if (matching.length === 0) return null;
-              const allOn = matching.every((k) => teamKeySet.has(k));
+              const allOn = (matching as string[]).every((k) => teamKeySet.has(k));
               return (
                 <button
                   key={`${side}-${cls}`}
@@ -241,11 +235,7 @@ const MultiRoundControls: React.FC = () => {
                 </button>
               );
             }
-            const matchingNums = getRoundsForEcoClass(
-              nonKnifeRounds, side, cls, selectedPlayerInfos, sideMap,
-            ).map((r) => r.round_number);
-            if (matchingNums.length === 0) return null;
-            const allOn = matchingNums.every((n) => selRoundSet.has(n));
+            const allOn = (matching as number[]).every((n) => selRoundSet.has(n));
             return (
               <button
                 key={`${side}-${cls}`}

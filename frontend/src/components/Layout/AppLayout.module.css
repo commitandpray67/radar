@@ -165,6 +165,22 @@
   align-items: center;
   justify-content: center;
   background: #0d1117;
+  position: relative;
+}
+
+.positionsError {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #3a1414;
+  border: 1px solid #5a2020;
+  color: #e0a090;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  pointer-events: none;
 }
 
 /* ---- Right panel ---- */

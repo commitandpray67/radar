@@ -50,16 +50,21 @@ interface DemoState {
 
   tickIndex: TickIndex;
   sortedTicks: number[];
+  /** player_id → team_num (3=CT, 2=T) for the loaded rounds, derived once from
+   *  positions so components don't each scan the whole array. */
+  teamByPlayer: Map<number, number>;
 
   parseStatus: ParseJobStatus | null;
 
   positionsLoading: boolean;
+  positionsError: string | null;
 
   setDemo: (demo: DemoMeta) => void;
   setRounds: (rounds: RoundInfo[]) => void;
   setPlayers: (players: PlayerInfo[]) => void;
   setPositions: (positions: PlayerPosition[], roundNumbers?: number[]) => void;
   setPositionsLoading: (loading: boolean) => void;
+  setPositionsError: (error: string | null) => void;
   setEvents: (events: GameEvent[]) => void;
   setGrenades: (grenades: GrenadeEvent[]) => void;
   setPlayerStateEvents: (events: PlayerStateEvent[]) => void;
@@ -208,6 +213,7 @@ export const useAppStore = create<AppStore>()(
       players: [],
       positions: [],
       positionsLoading: false,
+      positionsError: null,
       events: [],
       grenades: [],
       playerStateEvents: [],
@@ -215,6 +221,7 @@ export const useAppStore = create<AppStore>()(
       currentMap: null,
       tickIndex: new Map(),
       sortedTicks: [],
+      teamByPlayer: new Map(),
       parseStatus: null,
 
       setDemo: (demo) => set({ demo }, false, 'setDemo'),
@@ -223,10 +230,20 @@ export const useAppStore = create<AppStore>()(
       setPositions: (positions, roundNumbers) => {
         const tickIndex = buildTickIndex(positions, roundNumbers);
         const sortedTicks = getSortedTicks(tickIndex);
-        set({ positions, tickIndex, sortedTicks }, false, 'setPositions');
+        // Derive player→team once here so consumers (radar labels, mute-by-side,
+        // killfeed) don't each re-scan the whole positions array on every tick.
+        const teamByPlayer = new Map<number, number>();
+        for (const p of positions) {
+          if (!teamByPlayer.has(p.player_id) && (p.team_num === 2 || p.team_num === 3)) {
+            teamByPlayer.set(p.player_id, p.team_num);
+          }
+        }
+        set({ positions, tickIndex, sortedTicks, teamByPlayer }, false, 'setPositions');
       },
       setPositionsLoading: (positionsLoading) =>
         set({ positionsLoading }, false, 'setPositionsLoading'),
+      setPositionsError: (positionsError) =>
+        set({ positionsError }, false, 'setPositionsError'),
       setEvents: (events) => set({ events }, false, 'setEvents'),
       setGrenades: (grenades) => set({ grenades }, false, 'setGrenades'),
       setPlayerStateEvents: (playerStateEvents) =>
@@ -243,12 +260,14 @@ export const useAppStore = create<AppStore>()(
             players: [],
             positions: [],
             positionsLoading: false,
+            positionsError: null,
             events: [],
             grenades: [],
             playerStateEvents: [],
             currentMap: null,
             tickIndex: new Map(),
             sortedTicks: [],
+            teamByPlayer: new Map(),
             parseStatus: null,
             activeRound: null,
             currentTick: 0,

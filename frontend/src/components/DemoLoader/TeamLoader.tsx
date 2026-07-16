@@ -16,8 +16,6 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  uploadDemo,
-  watchParseStatus,
   listDemos,
   getDemo,
   getMaps,
@@ -28,7 +26,7 @@ import {
   createTeamSession,
   getTeamSession,
 } from '../../utils/api';
-import { loadDemoIntoStore } from '../../utils/demoLoading';
+import { loadDemoIntoStore, uploadAndParse } from '../../utils/demoLoading';
 import { DEMO_ACCEPT, isAcceptedDemoFile } from '../../utils/demoFiles';
 import { useAppStore } from '../../store/demoStore';
 import type {
@@ -99,30 +97,24 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
     setDemos((prev) => [...prev, tempEntry]);
 
     try {
-      const { job_id, demo_id, cached } = await uploadDemo(file, (pct) => {
-        setDemos((prev) => prev.map((d) =>
-          d.uid === uid && d.status === 'uploading'
-            ? { ...d, progress: pct * 0.15 }
-            : d,
-        ));
-      });
-
-      setDemos((prev) => prev.map((d) =>
-        d.uid === uid
-          ? { ...d, demo_id, status: cached ? 'ready' : 'parsing', progress: 0.15 }
-          : d,
-      ));
-
-      if (!cached) {
-        if (!parseAbortRef.current) parseAbortRef.current = new AbortController();
-        await watchParseStatus(job_id, (status: ParseJobStatus) => {
+      if (!parseAbortRef.current) parseAbortRef.current = new AbortController();
+      const { demoId: demo_id } = await uploadAndParse(file, {
+        signal: parseAbortRef.current.signal,
+        onUploadProgress: (pct) => {
           setDemos((prev) => prev.map((d) =>
-            d.uid === uid
-              ? { ...d, progress: status.progress, message: status.message }
+            d.uid === uid && d.status === 'uploading'
+              ? { ...d, progress: pct * 0.15 }
               : d,
           ));
-        }, { signal: parseAbortRef.current.signal });
-      }
+        },
+        onParseStatus: (status: ParseJobStatus) => {
+          setDemos((prev) => prev.map((d) =>
+            d.uid === uid
+              ? { ...d, status: 'parsing', progress: status.progress, message: status.message }
+              : d,
+          ));
+        },
+      });
 
       // Fetch the resolved map name so we can group by map.
       let mapName = '';

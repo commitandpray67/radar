@@ -149,16 +149,22 @@ const RadarViewer: React.FC = () => {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!demo) return;
+    // Guard against a slow load from a previous map resolving after a newer one
+    // and clobbering the ref with stale content.
+    let cancelled = false;
     const img = new Image();
     img.src = `/maps/${demo.map_name}.png`;
     img.onload = () => {
+      if (cancelled) return;
       radarImgRef.current = img;
       drawFrame();
     };
     img.onerror = () => {
+      if (cancelled) return;
       radarImgRef.current = null;
       drawFrame();
     };
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demo?.map_name]);
 
@@ -172,12 +178,15 @@ const RadarViewer: React.FC = () => {
       drawFrame();
       return;
     }
+    let cancelled = false;
     const img = new Image();
     img.src = heatmapResult.image;
     img.onload = () => {
+      if (cancelled) return;
       heatmapImgRef.current = img;
       drawFrame();
     };
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heatmapResult]);
 

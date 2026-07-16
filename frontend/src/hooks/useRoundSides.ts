@@ -10,7 +10,12 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/demoStore';
 import { getRoundSides } from '../utils/api';
-import type { RoundSideMap } from '../utils/roundUtils';
+import type { DemoRoundSides, RoundSideMap } from '../utils/roundUtils';
+
+// demo_id is a content hash → its per-round sides are immutable, so cache them
+// module-wide. This stops the two consumers (MultiRoundControls, HeatmapControls)
+// from refetching /round-sides for every demo on each tab switch.
+const _sideCache = new Map<string, DemoRoundSides>();
 
 export function useRoundSides(): RoundSideMap {
   const demo        = useAppStore((s) => s.demo);
@@ -29,17 +34,30 @@ export function useRoundSides(): RoundSideMap {
     let alive = true;
     const controller = new AbortController();
 
+    const buildFromCache = (): RoundSideMap => {
+      const map: RoundSideMap = {};
+      for (const id of demoIds) {
+        const cached = _sideCache.get(id);
+        if (cached) map[id] = cached;
+      }
+      return map;
+    };
+
+    // Show whatever is already cached immediately; fetch only what's missing.
+    setSideMap(buildFromCache());
+    const missing = demoIds.filter((id) => !_sideCache.has(id));
+    if (missing.length === 0) return () => { alive = false; controller.abort(); };
+
     Promise.all(
-      demoIds.map((id) =>
+      missing.map((id) =>
         getRoundSides(id, controller.signal)
           .then((sides) => [id, sides] as const)
-          .catch(() => [id, {}] as const),
+          .catch(() => [id, {} as DemoRoundSides] as const),
       ),
     ).then((entries) => {
       if (!alive) return;
-      const map: RoundSideMap = {};
-      for (const [id, sides] of entries) map[id] = sides;
-      setSideMap(map);
+      for (const [id, sides] of entries) _sideCache.set(id, sides);
+      setSideMap(buildFromCache());
     });
 
     return () => {

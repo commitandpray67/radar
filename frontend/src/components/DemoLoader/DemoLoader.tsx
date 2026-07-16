@@ -15,17 +15,8 @@ import React, {
   useState,
 } from 'react';
 import { useAppStore } from '../../store/demoStore';
-import {
-  uploadDemo,
-  watchParseStatus,
-  getRounds,
-  getPlayers,
-  getEvents,
-  getGrenades,
-  getPlayerStateEvents,
-  getMaps,
-  getDemo,
-} from '../../utils/api';
+import { getMaps } from '../../utils/api';
+import { loadDemoIntoStore, uploadAndParse } from '../../utils/demoLoading';
 import type { ParseJobStatus } from '../../types';
 import { DEMO_ACCEPT, isAcceptedDemoFile } from '../../utils/demoFiles';
 import DemoLibrary from '../DemoLibrary/DemoLibrary';
@@ -60,16 +51,8 @@ const DemoLoader: React.FC = () => {
   const parseAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => parseAbortRef.current?.abort(), []);
 
-  const setDemo              = useAppStore((s) => s.setDemo);
-  const setRounds            = useAppStore((s) => s.setRounds);
-  const setPlayers           = useAppStore((s) => s.setPlayers);
-  const setEvents            = useAppStore((s) => s.setEvents);
-  const setGrenades          = useAppStore((s) => s.setGrenades);
-  const setPlayerStateEvents = useAppStore((s) => s.setPlayerStateEvents);
   const setMaps              = useAppStore((s) => s.setMaps);
-  const setCurrentMap        = useAppStore((s) => s.setCurrentMap);
   const setParseStatusStore  = useAppStore((s) => s.setParseStatus);
-  const setActiveRound       = useAppStore((s) => s.setActiveRound);
   const maps                 = useAppStore((s) => s.maps);
 
   // Preload maps on mount
@@ -91,57 +74,29 @@ const DemoLoader: React.FC = () => {
       setPhase('uploading');
       setErrorMsg('');
       setParseStatus(null);
+      parseAbortRef.current?.abort();
+      const controller = new AbortController();
+      parseAbortRef.current = controller;
 
       try {
-        // 1. Upload
-        const { job_id, demo_id, cached } = await uploadDemo(file, (pct) => {
-          setUploadProgress(pct);
-        }, force);
-
-        // 2. Watch parse status via SSE (skipped when loaded from valid cache)
-        if (!cached) {
-          setPhase('parsing');
-          parseAbortRef.current?.abort();
-          parseAbortRef.current = new AbortController();
-          await watchParseStatus(job_id, (status) => {
+        // 1-2. Upload + watch parse (skipped when loaded from valid cache).
+        const { demoId, cached } = await uploadAndParse(file, {
+          force,
+          signal: controller.signal,
+          onUploadProgress: setUploadProgress,
+          onParseStatus: (status) => {
+            setPhase('parsing');
             setParseStatus(status);
             setParseStatusStore(status);
-          }, { signal: parseAbortRef.current.signal });
-        }
+          },
+        });
 
-        // 3. Fetch all data (positions are loaded per-round by useRoundPositions)
+        // 3. Load everything into the store (guarded by loadDemoIntoStore's
+        //    monotonic token + AbortController).
         setPhase('fetching');
-        const [rounds, players, events, grenades, playerStateEvts, freshMaps] =
-          await Promise.all([
-            getRounds(demo_id),
-            getPlayers(demo_id),
-            getEvents(demo_id),
-            getGrenades(demo_id),
-            getPlayerStateEvents(demo_id),
-            cached ? Promise.resolve(maps) : getMaps(),
-          ]);
-
-        setRounds(rounds);
-        setPlayers(players);
-        setEvents(events);
-        setGrenades(grenades);
-        setPlayerStateEvents(playerStateEvts);
+        const freshMaps = cached && maps.length ? maps : await getMaps();
         if (!cached) setMaps(freshMaps);
-
-        // Set current map calibration
-        // Fetch accurate demo metadata from the server
-        const freshDemo = await getDemo(demo_id);
-        setDemo(freshDemo);
-
-        const mapMeta = (cached ? maps : freshMaps).find(
-          (m) => m.name === freshDemo.map_name,
-        );
-        setCurrentMap(mapMeta ?? null);
-
-        // Jump to round 1
-        if (rounds.length > 0) {
-          setActiveRound(rounds[0].round_number);
-        }
+        await loadDemoIntoStore(demoId, { maps: freshMaps });
 
         setPhase('done');
       } catch (err) {
@@ -160,28 +115,9 @@ const DemoLoader: React.FC = () => {
     setPhase('fetching');
     setErrorMsg('');
     try {
-      const [rounds, players, events, grenades, playerStateEvts, freshMaps] =
-        await Promise.all([
-          getRounds(demoId),
-          getPlayers(demoId),
-          getEvents(demoId),
-          getGrenades(demoId),
-          getPlayerStateEvents(demoId),
-          getMaps(),
-        ]);
-
-      setRounds(rounds);
-      setPlayers(players);
-      setEvents(events);
-      setGrenades(grenades);
-      setPlayerStateEvents(playerStateEvts);
+      const freshMaps = await getMaps();
       setMaps(freshMaps);
-
-      const freshDemo = await getDemo(demoId);
-      setDemo(freshDemo);
-      const mapMeta = freshMaps.find((m) => m.name === freshDemo.map_name);
-      setCurrentMap(mapMeta ?? null);
-      if (rounds.length > 0) setActiveRound(rounds[0].round_number);
+      await loadDemoIntoStore(demoId, { maps: freshMaps });
       setPhase('done');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to load demo');

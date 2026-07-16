@@ -12,27 +12,15 @@ import React, { useCallback, useMemo } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import { generateHeatmap, generateTeamHeatmap } from '../../utils/api';
 import {
-  toRangeString, getHalftimeRound, toggleEcoRounds, getRoundsForEcoClass,
-  getTeamEcoMatches, toggleTeamEcoRounds, filterPlayersToRoster,
+  toRangeString, getHalftimeRound, toggleEcoRounds,
+  toggleTeamEcoRounds, filterPlayersToRoster,
   getTeamRoundsByDemo, teamRoundKey,
-  ECO_COLOR, ECO_LABEL, type EcoClass,
+  ECO_COLOR, ECO_LABEL, ECO_TAGS,
 } from '../../utils/roundUtils';
 import { useRoundSides } from '../../hooks/useRoundSides';
+import { useEcoTagMatches } from '../../hooks/useEcoTagMatches';
 import type { PlayerInfo } from '../../types';
 import styles from './HeatmapControls.module.css';
-
-const ECO_TAGS: { side: 'CT' | 'T'; cls: EcoClass; label: string }[] = [
-  { side: 'CT', cls: 'pistol', label: 'CT Pistol' },
-  { side: 'CT', cls: 'full',   label: 'CT Full'   },
-  { side: 'CT', cls: 'force',  label: 'CT Force'  },
-  { side: 'CT', cls: 'half',   label: 'CT Half'   },
-  { side: 'CT', cls: 'eco',    label: 'CT Eco'    },
-  { side: 'T',  cls: 'pistol', label: 'T Pistol'  },
-  { side: 'T',  cls: 'full',   label: 'T Full'    },
-  { side: 'T',  cls: 'force',  label: 'T Force'   },
-  { side: 'T',  cls: 'half',   label: 'T Half'    },
-  { side: 'T',  cls: 'eco',    label: 'T Eco'     },
-];
 
 const HeatmapControls: React.FC = () => {
   const demo             = useAppStore((s) => s.demo);
@@ -85,6 +73,11 @@ const HeatmapControls: React.FC = () => {
     () => rounds.filter((r) => !r.is_knife_round),
     [rounds],
   );
+
+  // Precompute every eco tag's matching rounds once (see useEcoTagMatches).
+  const ecoMatches = useEcoTagMatches({
+    teamSession, nonKnifeRounds, selectedPlayers: selectedPlayerInfos, sideMap,
+  });
 
   const teamKeySet = useMemo(() => new Set(teamHeatmapKeys), [teamHeatmapKeys]);
 
@@ -348,7 +341,7 @@ const HeatmapControls: React.FC = () => {
                 </div>
                 <div className={styles.ecoFilterBar}>
                   {ECO_TAGS.map(({ side, cls, label }) => {
-                    const matching = getTeamEcoMatches(teamSession, side, cls, sideMap);
+                    const matching = (ecoMatches.get(`${side}-${cls}`) ?? []) as string[];
                     if (matching.length === 0) return null;
                     const allOn = matching.every((k) => teamKeySet.has(k));
                     return (
@@ -440,9 +433,7 @@ const HeatmapControls: React.FC = () => {
                 </div>
                 <div className={styles.ecoFilterBar}>
                   {ECO_TAGS.map(({ side, cls, label }) => {
-                    const matchingNums = getRoundsForEcoClass(
-                      nonKnifeRounds, side, cls, selectedPlayerInfos, sideMap,
-                    ).map((r) => r.round_number);
+                    const matchingNums = (ecoMatches.get(`${side}-${cls}`) ?? []) as number[];
                     if (matchingNums.length === 0) return null;
                     const allOn = matchingNums.every((n) => heatmapRounds.includes(n));
                     return (

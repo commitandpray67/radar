@@ -15,31 +15,21 @@ import PlaybackControls from '../Playback/PlaybackControls';
 import PlayerInfoPanel from '../PlayerInfoPanel/PlayerInfoPanel';
 import styles from './AppLayout.module.css';
 import { TEAM_COLORS } from '../../types';
+import { getDisplaySideScore, getHalftimeRound } from '../../utils/roundUtils';
 
 type SideTab  = 'rounds' | 'heatmap' | 'multi';
 type RightTab = 'players' | 'info';
-
-function getDisplaySideScore(
-  roundNumber: number,
-  halftimeRoundNumber: number | null,
-  ctScore: number,
-  tScore: number,
-): { ct: number; t: number } {
-  if (halftimeRoundNumber !== null && roundNumber > halftimeRoundNumber) {
-    return { ct: tScore, t: ctScore };
-  }
-  return { ct: ctScore, t: tScore };
-}
 
 const AppLayout: React.FC = () => {
   const demo        = useAppStore((s) => s.demo);
   const players     = useAppStore((s) => s.players);
   const rounds      = useAppStore((s) => s.rounds);
-  const positions   = useAppStore((s) => s.positions);
   const activeRound = useAppStore((s) => s.activeRound);
   const reset       = useAppStore((s) => s.reset);
   const teamSession = useAppStore((s) => s.teamSession);
   const activeDemoId = useAppStore((s) => s.activeDemoId);
+  const teamByPlayer = useAppStore((s) => s.teamByPlayer);
+  const positionsError = useAppStore((s) => s.positionsError);
 
   const displayRounds = useMemo(
     () => rounds.filter((r) => !r.is_knife_round),
@@ -48,25 +38,13 @@ const AppLayout: React.FC = () => {
   const selectedIds  = useAppStore((s) => s.selectedPlayerIds);
   const clearSelected = useAppStore((s) => s.clearSelectedPlayers);
 
-  const playerTeamMap = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const pos of positions) {
-      if (pos.round_number === activeRound && !map.has(pos.player_id)) {
-        map.set(pos.player_id, pos.team_num);
-      }
-    }
-    return map;
-  }, [positions, activeRound]);
-
   const [sideTab, setSideTab]   = useState<SideTab>('rounds');
   const [rightTab, setRightTab] = useState<RightTab>('players');
 
   const roundInfo = rounds.find((r) => r.round_number === activeRound);
   const displayRoundNumber =
     displayRounds.findIndex((r) => r.round_number === activeRound) + 1 || null;
-  const halftimeRoundNumber = displayRounds.length > 12
-    ? displayRounds[11]?.round_number ?? null
-    : null;
+  const halftimeRoundNumber = getHalftimeRound(displayRounds);
   const score = roundInfo
     ? getDisplaySideScore(
       roundInfo.round_number,
@@ -163,6 +141,9 @@ const AppLayout: React.FC = () => {
         <main className={styles.main}>
           <div className={styles.radarWrapper}>
             <RadarViewer />
+            {positionsError && (
+              <div className={styles.positionsError}>{positionsError}</div>
+            )}
           </div>
           <PlaybackControls />
         </main>
@@ -195,7 +176,7 @@ const AppLayout: React.FC = () => {
               </div>
               <div className={styles.playerList}>
                 {players.map((p, idx) => {
-                  const teamNum = playerTeamMap.get(p.player_id)
+                  const teamNum = teamByPlayer.get(p.player_id)
                     ?? (p.initial_team === 'CT' ? 3 : 2);
                   const teamColor = teamNum === 3 ? TEAM_COLORS.CT : TEAM_COLORS.T;
                   const teamLabel = teamNum === 3 ? 'CT' : 'T';

@@ -23,6 +23,20 @@ export function getHalftimeRound(displayRounds: RoundInfo[]): number | null {
   return displayRounds.length > 12 ? displayRounds[11].round_number : null;
 }
 
+/** Map a round's stored ct/t scores to the CT/T columns as displayed, undoing
+ *  the second-half swap so "CT" always means the team currently on CT. */
+export function getDisplaySideScore(
+  roundNumber: number,
+  halftimeRoundNumber: number | null,
+  ctScore: number,
+  tScore: number,
+): { ct: number; t: number } {
+  if (halftimeRoundNumber !== null && roundNumber > halftimeRoundNumber) {
+    return { ct: tScore, t: ctScore };
+  }
+  return { ct: ctScore, t: tScore };
+}
+
 // ---------------------------------------------------------------------------
 // Economy classification
 // ---------------------------------------------------------------------------
@@ -66,6 +80,20 @@ export const ECO_LABEL: Record<EcoClass, string> = {
   half:   'Half buy',
   eco:    'Eco',
 };
+
+/** The eco-filter tags shown in the multi-round + heatmap control bars. */
+export const ECO_TAGS: { side: 'CT' | 'T'; cls: EcoClass; label: string }[] = [
+  { side: 'CT', cls: 'pistol', label: 'CT Pistol' },
+  { side: 'CT', cls: 'full',   label: 'CT Full'   },
+  { side: 'CT', cls: 'force',  label: 'CT Force'  },
+  { side: 'CT', cls: 'half',   label: 'CT Half'   },
+  { side: 'CT', cls: 'eco',    label: 'CT Eco'    },
+  { side: 'T',  cls: 'pistol', label: 'T Pistol'  },
+  { side: 'T',  cls: 'full',   label: 'T Full'    },
+  { side: 'T',  cls: 'force',  label: 'T Force'   },
+  { side: 'T',  cls: 'half',   label: 'T Half'    },
+  { side: 'T',  cls: 'eco',    label: 'T Eco'     },
+];
 
 /** CSS colour for each eco class. */
 export const ECO_COLOR: Record<EcoClass, string> = {
