@@ -99,6 +99,8 @@
   position: absolute;
   width: 3px;
   height: 10px;
+  padding: 0;
+  border: none;
   border-radius: 1px;
   transform: translateX(-50%);
   cursor: pointer;
@@ -106,16 +108,24 @@
   pointer-events: auto;
   transition: opacity 0.1s, height 0.1s;
   z-index: 1;
+  appearance: none;
+  bottom: 0;
 }
-.eventMarker:hover {
+.eventMarker:hover,
+.eventMarker:focus-visible {
   opacity: 1;
   height: 14px;
+  outline: none;
 }
 
 .marker_player_death  { background: #5a6a7a; }
 .marker_bomb_planted  { background: #d04040; }
 .marker_bomb_defused  { background: #4080d0; }
 .marker_bomb_exploded { background: #e07b39; }
+
+/* Kill markers tinted by the victim's side (override the neutral death color). */
+.markerCT { background: #5b9bd5; }
+.markerT  { background: #e0a04a; }
 
 .speedGroup {
   display: flex;

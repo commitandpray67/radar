@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import { tickToTime, ticksPerInterval } from '../../utils/playback';
+import TimelineMarkers from './TimelineMarkers';
 import styles from './PlaybackControls.module.css';
 
 const PLAYBACK_INTERVAL_MS = 100;
@@ -28,6 +29,8 @@ const PlaybackControls: React.FC = () => {
   const extendedPlayback   = useAppStore((s) => s.extendedPlayback);
   const continuousPlayback = useAppStore((s) => s.continuousPlayback);
   const events        = useAppStore((s) => s.events);
+  const players       = useAppStore((s) => s.players);
+  const teamByPlayer  = useAppStore((s) => s.teamByPlayer);
 
   // Multi-round mode
   const isMultiRoundMode       = useAppStore((s) => s.isMultiRoundMode);
@@ -136,6 +139,11 @@ const PlaybackControls: React.FC = () => {
       .map((e) => ({ ...e, pct: ((e.tick - roundStart) / span) * 100 }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events, activeRound, roundStart, effectiveEnd, isMultiRoundMode, roundInfo]);
+
+  const playersById = useMemo(
+    () => new Map(players.map((p) => [p.player_id, p.name])),
+    [players],
+  );
 
   // ---- Playback tick function ----
   const tick = useCallback(() => {
@@ -348,18 +356,12 @@ const PlaybackControls: React.FC = () => {
             disabled={disabled}
             onChange={(e) => handleSliderChange(Number(e.target.value))}
           />
-          {activeRoundEvents.map((ev, i) => {
-            const markerClass = (styles as Record<string, string>)[`marker_${ev.event_type}`] ?? '';
-            return (
-              <div
-                key={i}
-                className={`${styles.eventMarker} ${markerClass}`}
-                style={{ left: `${ev.pct}%` }}
-                onClick={() => setCurrentTick(ev.tick)}
-                title={ev.event_type.replace(/_/g, ' ')}
-              />
-            );
-          })}
+          <TimelineMarkers
+            events={activeRoundEvents}
+            playersById={playersById}
+            teamByPlayer={teamByPlayer}
+            onSeek={setCurrentTick}
+          />
         </div>
         <span className={styles.timeLabel}>{endTime}</span>
       </div>
