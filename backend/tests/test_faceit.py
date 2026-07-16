@@ -12,6 +12,18 @@ from httpx import ASGITransport, AsyncClient
 from api.routes import faceit
 from main import app
 
+
+@pytest.fixture(autouse=True)
+def _reset_faceit_caches():
+    """FACEIT response caches persist across calls — clear them per test so
+    the monkeypatched _faceit_get is always exercised."""
+    faceit._history_cache.clear()
+    faceit._round_stats_cache.clear()
+    yield
+    faceit._history_cache.clear()
+    faceit._round_stats_cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # Helpers to build fake FACEIT history / stats payloads
 # ---------------------------------------------------------------------------
@@ -419,3 +431,29 @@ async def test_common_matches_endpoint(monkeypatch) -> None:
     assert body["analyzed"] == 2
     # Map name should be populated from the stats call.
     assert body["matches"][0]["map"] == "de_mirage"
+
+
+@pytest.mark.asyncio
+async def test_history_cache_dedupes_across_calls(monkeypatch) -> None:
+    monkeypatch.setenv("FACEIT_API_KEY", "test-key")
+    calls = {"history": 0}
+
+    async def fake_get(path, params=None, *, allow_404=False):
+        if "/history" in path:
+            if (params or {}).get("offset", 0) == 0:
+                calls["history"] += 1
+                return {"items": [_history_item("m1", ["A", "B"], ["C", "D"], 300)]}
+            return {"items": []}
+        if "/stats" in path:
+            return {"rounds": [_round("de_mirage", "t1", {"t1": ["A", "B"], "t2": ["C", "D"]})]}
+        return None
+
+    monkeypatch.setattr(faceit, "_faceit_get", fake_get)
+
+    async with await _client() as c:
+        payload = {"player_ids": ["A", "B"], "same_team": True, "window": 50}
+        await c.post("/api/faceit/common-matches", json=payload)
+        await c.post("/api/faceit/common-matches", json=payload)  # cache hit
+
+    # The anchor player's history is fetched once, not twice.
+    assert calls["history"] == 1

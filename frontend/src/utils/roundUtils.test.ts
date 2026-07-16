@@ -9,6 +9,8 @@ import {
   sideForRound,
   sideSwapsBeforeRound,
   getTeamEcoMatches,
+  getHalftimeRound,
+  getDisplaySideScore,
 } from './roundUtils';
 import type { RoundInfo, PlayerInfo, TeamSessionDetail } from '../types';
 
@@ -226,5 +228,27 @@ describe('toggleEcoRounds', () => {
     const all = getRoundsForEcoClass(rounds, 'CT', 'full').map((r) => r.round_number);
     const next = toggleEcoRounds(rounds, 'CT', 'full', all);
     expect(next).toEqual([]);
+  });
+});
+
+describe('getHalftimeRound', () => {
+  const mk = (n: number) => Array.from({ length: n }, (_, i) => round(i + 1, 0, 0));
+  it('returns null at exactly 12 rounds (no round past the boundary)', () => {
+    expect(getHalftimeRound(mk(12))).toBeNull();
+  });
+  it('returns the 12th round number once a 13th exists', () => {
+    expect(getHalftimeRound(mk(13))).toBe(12);
+  });
+});
+
+describe('getDisplaySideScore', () => {
+  it('passes scores through in the first half', () => {
+    expect(getDisplaySideScore(5, 12, 8, 3)).toEqual({ ct: 8, t: 3 });
+  });
+  it('swaps scores after halftime', () => {
+    expect(getDisplaySideScore(13, 12, 8, 3)).toEqual({ ct: 3, t: 8 });
+  });
+  it('never swaps when there is no halftime', () => {
+    expect(getDisplaySideScore(20, null, 8, 3)).toEqual({ ct: 8, t: 3 });
   });
 });

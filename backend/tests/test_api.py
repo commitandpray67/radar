@@ -86,3 +86,34 @@ async def test_upload_non_dem_file_returns_400() -> None:
             files={"file": ("test.txt", b"hello", "text/plain")},
         )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# /api/demos/{id}/positions — requires a scoping filter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_positions_without_filter_returns_400() -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/demos/anything/positions")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_positions_with_round_is_allowed() -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/demos/anything/positions?round_number=1")
+    assert resp.status_code == 200  # empty list for an unknown demo, but not a 400
+
+
+# ---------------------------------------------------------------------------
+# /api/demos/{id}/scoreboard — 404 for a missing demo
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scoreboard_missing_demo_returns_404() -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/demos/nonexistent/scoreboard")
+    assert resp.status_code == 404
