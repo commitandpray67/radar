@@ -494,7 +494,15 @@ async def get_players(demo_id: str):
     async with get_connection() as conn:
         cur = await conn.execute("SELECT * FROM players WHERE demo_id = ?", (demo_id,))
         rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    # player_id is a SteamID64, which exceeds JS Number.MAX_SAFE_INTEGER — the
+    # numeric field can round in the browser. Ship an exact string alongside so
+    # clients can key lookups (e.g. against /round-sides) precisely.
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["player_id_str"] = str(d["player_id"])
+        out.append(d)
+    return out
 
 
 @router.get("/demos/{demo_id}/round-sides")

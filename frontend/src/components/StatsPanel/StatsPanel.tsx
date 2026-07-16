@@ -15,6 +15,7 @@ import {
   buildRoundInsights, summarizeSites, winRateByBuy,
 } from '../../utils/roundInsights';
 import { ECO_COLOR, ECO_LABEL, type EcoClass } from '../../utils/roundUtils';
+import TendencyReport from '../TendencyReport/TendencyReport';
 import styles from './StatsPanel.module.css';
 
 const BUY_ORDER: EcoClass[] = ['pistol', 'full', 'force', 'half', 'eco'];
@@ -41,6 +42,7 @@ const StatsPanel: React.FC = () => {
   const [error, setError] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('kills');
   const [asc, setAsc] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   useEffect(() => {
     if (!demo) return;
@@ -158,6 +160,11 @@ const StatsPanel: React.FC = () => {
 
   return (
     <div className={styles.root}>
+      <button className={styles.analyseBtn} onClick={() => setShowReport(true)}>
+        Analyse player tendencies
+      </button>
+      {showReport && <TendencyReport onClose={() => setShowReport(false)} />}
+
       {renderSide('CT', sides.CT)}
       {renderSide('T', sides.T)}
 

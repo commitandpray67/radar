@@ -15,6 +15,25 @@
   text-align: center;
 }
 
+.analyseBtn {
+  margin: 0 4px;
+  background: #1a3a5c;
+  border: 1px solid #2a6abf;
+  color: #9bc4e8;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.analyseBtn:hover {
+  background: #234a70;
+  color: #d0e4f8;
+}
+
 .sideBlock {
   display: flex;
   flex-direction: column;

@@ -34,7 +34,9 @@ export interface RoundInfo {
 export interface PlayerInfo {
   id: number;
   demo_id: string;
-  player_id: number;    // SteamID64
+  player_id: number;    // SteamID64 — may round above 2^53; prefer player_id_str for keying
+  /** Exact SteamID64 as a string (matches /round-sides keys precisely). */
+  player_id_str?: string;
   name: string;
   initial_team: 'CT' | 'T' | 'Spectator' | string;
 }

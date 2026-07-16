@@ -1,0 +1,201 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 10, 16, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modal {
+  background: #131a24;
+  border: 1px solid #2a3a52;
+  border-radius: 10px;
+  width: min(1080px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  font-family: 'Inter', sans-serif;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 700;
+  color: #c0cfe0;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sideToggle {
+  display: flex;
+  gap: 4px;
+}
+
+.sideBtn {
+  background: #0d1117;
+  border: 1px solid #2a3a52;
+  color: #7a8a9a;
+  border-radius: 5px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sideBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sideBtnOn {
+  background: #1a3a5c;
+  border-color: #2a6abf;
+  color: #d0e4f8;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: #6a7a8a;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.closeBtn:hover {
+  color: #e07b39;
+}
+
+.status {
+  font-size: 12px;
+  color: #8a9aac;
+  margin: 0;
+}
+
+.error {
+  font-size: 12px;
+  color: #e0a090;
+  background: #3a1414;
+  border: 1px solid #5a2020;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0;
+}
+
+.progressWrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progressTrack {
+  flex: 1;
+  height: 6px;
+  background: #1a2432;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #1e4d8c, #2a8abf);
+  transition: width 0.2s;
+}
+
+/* ── Grid ── */
+.grid {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.gridHeader {
+  display: grid;
+  grid-template-columns: 140px repeat(3, 1fr);
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7a8a9a;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  position: sticky;
+  top: 0;
+  background: #131a24;
+  padding: 4px 0;
+  z-index: 1;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 140px repeat(3, 1fr);
+  gap: 10px;
+  align-items: start;
+  border-top: 1px solid #1c2635;
+  padding-top: 8px;
+}
+
+.playerCol {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c0cfe0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-top: 4px;
+}
+
+.bucketCol {
+  text-align: center;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.mapImg {
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  border: 1px solid #202c3c;
+  background: #0d1117;
+}
+
+.placeholder {
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  border: 1px dashed #202c3c;
+  background: #0d1117;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #4a5a6a;
+  font-size: 11px;
+}
+
+.count {
+  font-size: 10px;
+  color: #6a7a8a;
+  font-variant-numeric: tabular-nums;
+}
