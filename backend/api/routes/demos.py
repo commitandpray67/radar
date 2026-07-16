@@ -36,14 +36,18 @@ from ._shared import (
     _MAX_UPLOAD_BYTES,
     _UPLOAD_DIR,
     DecompressionError,
+    _bg_tasks,
     _demo_file_path,
     _get_parse_lock,
     _load_job_demo_id,
+    _mark_job_finished,
     _parse_jobs,
     _parse_locks,
     _parse_locks_mu,
     _persist_job_mapping,
+    _public_job,
     _sanitize_nan,
+    _sweep_finished_jobs,
     compression_kind,
     decompress_demo,
 )
@@ -147,7 +151,11 @@ async def start_parse_job(dem_path: Path, filename: str, *, force: bool = False)
     otherwise ownership passes to the background ``_parse_task`` which deletes
     it when finished.  Returns ``{job_id, demo_id, cached}``.
     """
-    demo_id = file_hash(dem_path)
+    _sweep_finished_jobs()
+
+    # Hashing reads up to 8 MB of the file — keep it off the event loop.
+    loop = asyncio.get_event_loop()
+    demo_id = await loop.run_in_executor(None, file_hash, dem_path)
     job_id = str(uuid.uuid4())
 
     _parse_jobs[job_id] = {
@@ -189,6 +197,7 @@ async def start_parse_job(dem_path: Path, filename: str, *, force: bool = False)
                 "demo_id": demo_id,
                 "filename": filename,
             }
+            _mark_job_finished(_parse_jobs[job_id])
             dem_path.unlink(missing_ok=True)
             return {"job_id": job_id, "demo_id": demo_id, "cached": True}
 
@@ -203,7 +212,10 @@ async def start_parse_job(dem_path: Path, filename: str, *, force: bool = False)
 
     file_size = dem_path.stat().st_size
     lock = await _get_parse_lock(demo_id)
-    asyncio.create_task(_parse_task(job_id, demo_id, dem_path, filename, file_size, lock))
+    task = asyncio.create_task(_parse_task(job_id, demo_id, dem_path, filename, file_size, lock))
+    # Hold a strong reference: bare create_task() results can be GC'd mid-run.
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
     return {"job_id": job_id, "demo_id": demo_id, "cached": False}
 
@@ -240,10 +252,11 @@ async def _parse_task(
             await store_demo(parsed, demo_id, filename, file_size=file_size)
 
             # Keep the demo file on disk for on-demand voice extraction.
+            # The copy can be hundreds of MB — run it off the event loop.
             _DEMO_STORE.mkdir(parents=True, exist_ok=True)
             dest = _demo_file_path(demo_id)
             if not dest.exists():
-                shutil.copy2(tmp_path, dest)
+                await loop.run_in_executor(None, shutil.copy2, tmp_path, dest)
                 logger.info("Demo file stored at %s for voice extraction", dest)
 
             _parse_jobs[job_id] = {
@@ -290,6 +303,9 @@ async def _parse_task(
             }
         finally:
             tmp_path.unlink(missing_ok=True)
+            job = _parse_jobs.get(job_id)
+            if job is not None and job.get("status") in ("complete", "error"):
+                _mark_job_finished(job)
 
     if lock is not None:
         async with lock:
@@ -362,7 +378,8 @@ async def parse_status_stream(job_id: str):
 
         while True:
             job = _parse_jobs.get(job_id, job)
-            yield f"data: {json.dumps(_sanitize_nan(job))}\n\n"
+            payload = _public_job(job) if job is not None else job
+            yield f"data: {json.dumps(_sanitize_nan(payload))}\n\n"
             if job is None or job["status"] in ("complete", "error"):
                 return
             await asyncio.sleep(0.5)
@@ -499,10 +516,16 @@ async def get_positions(
     tick_max: int | None = Query(None),
 ):
     """
-    Return player positions, optionally filtered by round, player, and tick range.
+    Return player positions filtered by round, player, and/or tick range.
 
-    For large demos use round_number to keep the response size manageable.
+    A full-demo dump (no round and no tick bounds) can exceed 500k rows in a
+    single JSON response, so at least one scoping filter is required.
     """
+    if round_number is None and tick_min is None and tick_max is None:
+        raise HTTPException(
+            400, "Provide round_number or a tick range (tick_min/tick_max)."
+        )
+
     clauses: list[str] = ["demo_id = ?"]
     params: list = [demo_id]
 

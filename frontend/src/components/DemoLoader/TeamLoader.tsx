@@ -40,6 +40,7 @@ import styles from './DemoLoader.module.css';
 import teamStyles from './TeamLoader.module.css';
 
 interface UploadedDemo {
+  uid: string;           // stable client id assigned at enqueue time
   demo_id: string;
   filename: string;
   map_name?: string;
@@ -69,11 +70,15 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
   const setTeamSession = useAppStore((s) => s.setTeamSession);
   const setActiveDemoId = useAppStore((s) => s.setActiveDemoId);
 
+  // Cancels in-flight parse watches if the loader unmounts mid-upload.
+  const parseAbortRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
     getMaps().then(setMaps).catch(() => {});
     listDemos().then((d) =>
       setLibraryDemos(d.sort((a, b) => b.parsed_at.localeCompare(a.parsed_at))),
     ).catch(() => setLibraryDemos([]));
+    return () => parseAbortRef.current?.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -82,7 +87,10 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
       setErrorMsg(`'${file.name}' is not a .dem / .dem.zst / .dem.gz file`);
       return;
     }
+    // Stable id so same-named files never clobber each other's progress rows.
+    const uid = crypto.randomUUID();
     const tempEntry: UploadedDemo = {
+      uid,
       demo_id: '',
       filename: file.name,
       status: 'uploading',
@@ -93,26 +101,27 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
     try {
       const { job_id, demo_id, cached } = await uploadDemo(file, (pct) => {
         setDemos((prev) => prev.map((d) =>
-          d.filename === file.name && d.status === 'uploading'
+          d.uid === uid && d.status === 'uploading'
             ? { ...d, progress: pct * 0.15 }
             : d,
         ));
       });
 
       setDemos((prev) => prev.map((d) =>
-        d.filename === file.name
+        d.uid === uid
           ? { ...d, demo_id, status: cached ? 'ready' : 'parsing', progress: 0.15 }
           : d,
       ));
 
       if (!cached) {
+        if (!parseAbortRef.current) parseAbortRef.current = new AbortController();
         await watchParseStatus(job_id, (status: ParseJobStatus) => {
           setDemos((prev) => prev.map((d) =>
-            d.demo_id === demo_id
+            d.uid === uid
               ? { ...d, progress: status.progress, message: status.message }
               : d,
           ));
-        });
+        }, { signal: parseAbortRef.current.signal });
       }
 
       // Fetch the resolved map name so we can group by map.
@@ -122,14 +131,15 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
       } catch { /* leave blank; grouped under "unknown" */ }
 
       setDemos((prev) => prev.map((d) =>
-        d.demo_id === demo_id
+        d.uid === uid
           ? { ...d, status: 'ready', progress: 1, map_name: mapName }
           : d,
       ));
     } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
       const msg = err instanceof Error ? err.message : String(err);
       setDemos((prev) => prev.map((d) =>
-        d.filename === file.name ? { ...d, status: 'error', error: msg } : d,
+        d.uid === uid ? { ...d, status: 'error', error: msg } : d,
       ));
     }
   }, []);
@@ -143,8 +153,8 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
     }
   };
 
-  const removeUploadedDemo = (demoId: string) => {
-    setDemos((prev) => prev.filter((d) => d.demo_id !== demoId));
+  const removeUploadedDemo = (uid: string) => {
+    setDemos((prev) => prev.filter((d) => d.uid !== uid));
     setTeamDetail(null);
   };
 
@@ -287,7 +297,7 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
       {demos.length > 0 && (
         <div className={teamStyles.demoList}>
           {demos.map((d) => (
-            <div key={d.filename + d.demo_id} className={teamStyles.demoRow}>
+            <div key={d.uid} className={teamStyles.demoRow}>
               <span className={teamStyles.demoName}>{d.filename}</span>
               <span className={teamStyles.demoStatus}>
                 {d.status === 'uploading' && `Uploading ${Math.round((d.progress ?? 0) * 100)}%`}
@@ -298,7 +308,7 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
               {(d.status === 'ready' || d.status === 'error') && (
                 <button
                   className={teamStyles.removeBtn}
-                  onClick={() => removeUploadedDemo(d.demo_id)}
+                  onClick={() => removeUploadedDemo(d.uid)}
                   title="Remove"
                 >
                   ✕

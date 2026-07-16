@@ -7,7 +7,7 @@
  * which takes precedence) and stored server-side in the app's data folder.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import {
   getFaceitConfig,
@@ -215,21 +215,28 @@ const FaceitLoader: React.FC<Props> = ({ onComplete, onExpand }) => {
     }
   }, [nicks, loadMapStats, loadPlayerMapStats]);
 
+  const parseAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => parseAbortRef.current?.abort(), []);
+
   const loadInRadar = useCallback(
     async (matchId: string) => {
       setLoadError('');
       setLoadStatus(null);
       setLoadingMatchId(matchId);
+      parseAbortRef.current?.abort();
+      const controller = new AbortController();
+      parseAbortRef.current = controller;
       try {
         const { job_id, demo_id, cached } = await loadFaceitMatch(matchId);
         if (!cached) {
-          await watchParseStatus(job_id, setLoadStatus);
+          await watchParseStatus(job_id, setLoadStatus, { signal: controller.signal });
         }
         const maps = await getMaps();
         setMaps(maps);
         await loadDemoIntoStore(demo_id, { maps });
         onComplete();
       } catch (e) {
+        if ((e as { name?: string })?.name === 'AbortError') return;
         setLoadError(errMsg(e));
         if (isUnconfigured(e)) getFaceitConfig().then(setConfig).catch(() => null);
       } finally {

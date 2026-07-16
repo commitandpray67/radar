@@ -58,49 +58,77 @@ export async function deleteDemo(demoId: string): Promise<void> {
 // Parse-status SSE
 // ---------------------------------------------------------------------------
 
+/** Reconnect back-off: 500ms, 1s, 2s, 4s … capped at 8s. Pure for testing. */
+export function backoffDelay(retry: number): number {
+  return Math.min(500 * Math.pow(2, retry - 1), 8000);
+}
+
 /**
  * Open an SSE stream for parse-job progress.
  * Automatically reconnects up to `maxRetries` times if the connection drops
  * (e.g. because uvicorn reloaded during development).
  * Resolves when status === 'complete', rejects on status === 'error' or
- * when all retries are exhausted.
+ * when all retries are exhausted. Pass `opts.signal` to cancel: aborting
+ * closes the EventSource, clears any pending reconnect timer, and rejects
+ * with an AbortError so callers can unmount cleanly without leaks.
  */
 export function watchParseStatus(
   jobId: string,
   onStatus: (s: ParseJobStatus) => void,
-  maxRetries = 10,
+  opts: { maxRetries?: number; signal?: AbortSignal } = {},
 ): Promise<ParseJobStatus> {
+  const { maxRetries = 10, signal } = opts;
   return new Promise((resolve, reject) => {
     let retries = 0;
     let lastStatus: ParseJobStatus | null = null;
-    let es: EventSource;
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    function cleanup() {
+      settled = true;
+      es?.close();
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+
+    function onAbort() {
+      if (settled) return;
+      cleanup();
+      reject(new DOMException('Aborted', 'AbortError'));
+    }
+
+    if (signal?.aborted) { onAbort(); return; }
+    signal?.addEventListener('abort', onAbort);
 
     function connect() {
+      if (settled) return;
       es = new EventSource(`/api/parse-status/${jobId}`);
 
       es.onmessage = (event) => {
-        // Reset retry counter on any successful message
-        retries = 0;
+        retries = 0; // reset on any successful message
         const status: ParseJobStatus = JSON.parse(event.data);
         lastStatus = status;
         onStatus(status);
         if (status.status === 'complete') {
-          es.close();
+          cleanup();
           resolve(status);
         } else if (status.status === 'error') {
-          es.close();
+          cleanup();
           reject(new Error(status.message));
         }
       };
 
       es.onerror = () => {
-        es.close();
-        // If already complete/error from a previous message, ignore the disconnect
+        es?.close();
+        if (settled) return;
+        // If already terminal from a previous message, ignore the disconnect.
         if (lastStatus?.status === 'complete') return;
         if (lastStatus?.status === 'error') return;
 
         retries += 1;
         if (retries > maxRetries) {
+          cleanup();
           reject(new Error(
             `Lost connection to server after ${maxRetries} retries. ` +
             `Is the backend still running?`
@@ -108,7 +136,6 @@ export function watchParseStatus(
           return;
         }
 
-        // Notify the UI that we're reconnecting
         if (lastStatus) {
           onStatus({
             ...lastStatus,
@@ -116,9 +143,7 @@ export function watchParseStatus(
           });
         }
 
-        // Exponential back-off: 500ms, 1s, 2s, 4s … capped at 8s
-        const delay = Math.min(500 * Math.pow(2, retries - 1), 8000);
-        setTimeout(connect, delay);
+        reconnectTimer = setTimeout(connect, backoffDelay(retries));
       };
     }
 

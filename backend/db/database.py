@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC
@@ -204,13 +205,23 @@ async def init_db() -> None:
     logger.info("Database initialised at %s", await get_db_path())
 
 
-def file_hash(path: Path, chunk: int = 1 << 20) -> str:
-    """Return SHA-256 hex digest of the first few MB of a file (fast fingerprint)."""
+def file_hash(path: Path, chunk: int = 4 << 20) -> str:
+    """Fast content fingerprint: SHA-256 of head + tail + size.
+
+    Hashing only the head risks collisions between demos that share an
+    identical prefix (same server/warmup header — common on FACEIT), so the
+    last chunk and the file size are folded in while staying O(8 MB) on
+    multi-hundred-MB files.  Blocking IO — call via an executor from async
+    code.
+    """
     h = hashlib.sha256()
+    size = path.stat().st_size
     with open(path, "rb") as f:
-        # Only hash first 4 MB for speed on large demo files
-        data = f.read(chunk * 4)
-        h.update(data)
+        h.update(f.read(chunk))
+        if size > 2 * chunk:
+            f.seek(-chunk, os.SEEK_END)
+            h.update(f.read(chunk))
+    h.update(str(size).encode())
     return h.hexdigest()
 
 

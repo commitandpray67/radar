@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -478,9 +479,62 @@ def _filter_common_matches(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Response caching
+#
+# The three analysis endpoints (common-matches, stack-map-stats,
+# player-map-stats) all funnel through _fetch_history and _fetch_match_round,
+# and a typical UI flow calls all three back-to-back — without a cache the
+# same paginated history and the same match stats get re-downloaded 2-3x.
+# Single event loop → no locking needed; a rare duplicate fetch on a race is
+# harmless (last write wins).
+# ---------------------------------------------------------------------------
+
+
+class _TTLCache:
+    """Tiny LRU cache with per-entry TTL (monotonic clock)."""
+
+    def __init__(self, maxsize: int, ttl: float) -> None:
+        self._maxsize = maxsize
+        self._ttl = ttl
+        self._data: dict = {}  # key -> (expires_at, value); insertion-ordered
+
+    def get(self, key):
+        entry = self._data.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if time.monotonic() >= expires_at:
+            del self._data[key]
+            return None
+        # LRU: refresh recency on hit.
+        del self._data[key]
+        self._data[key] = entry
+        return value
+
+    def set(self, key, value) -> None:
+        self._data.pop(key, None)
+        self._data[key] = (time.monotonic() + self._ttl, value)
+        while len(self._data) > self._maxsize:
+            self._data.pop(next(iter(self._data)))
+
+    def clear(self) -> None:
+        self._data.clear()
+
+
+# History changes as players queue new games — keep it short-lived.
+_history_cache = _TTLCache(maxsize=64, ttl=120.0)
+# Stats of a finished match are immutable — cache long.
+_round_stats_cache = _TTLCache(maxsize=2048, ttl=21600.0)
+
+
 async def _fetch_history(player_id: str, window: int) -> list[dict]:
     """Fetch up to ``window`` recent CS2 matches from a player's history."""
     window = max(1, min(window, _HISTORY_OFFSET_CAP + _HISTORY_PAGE))
+    cache_key = (player_id, window)
+    cached = _history_cache.get(cache_key)
+    if cached is not None:
+        return cached
     items: list[dict] = []
     offset = 0
     while len(items) < window and offset <= _HISTORY_OFFSET_CAP:
@@ -497,7 +551,9 @@ async def _fetch_history(player_id: str, window: int) -> list[dict]:
         if len(page) < limit:
             break
         offset += limit
-    return items[:window]
+    result = items[:window]
+    _history_cache.set(cache_key, result)
+    return result
 
 
 @router.post("/faceit/common-matches", response_model=CommonMatchesResponse)
@@ -536,13 +592,19 @@ async def common_matches(payload: CommonMatchesPayload) -> CommonMatchesResponse
 
 async def _fetch_match_round(match_id: str) -> dict | None:
     """Return the first round-stats object for a match, or None if unavailable."""
+    cached = _round_stats_cache.get(match_id)
+    if cached is not None:
+        return cached
     try:
         data = await _faceit_get(f"/matches/{match_id}/stats", allow_404=True)
     except HTTPException:
         # A single match's stats failing must not abort the whole aggregation.
         return None
     rounds = (data or {}).get("rounds") or []
-    return rounds[0] if rounds else None
+    result = rounds[0] if rounds else None
+    if result is not None:  # don't cache misses — they may become available
+        _round_stats_cache.set(match_id, result)
+    return result
 
 
 def _aggregate_map_stats(round_objs: list[dict], stack_ids: list[str]) -> list[MapStat]:

@@ -57,6 +57,8 @@ const DemoLoader: React.FC = () => {
   const [tab, setTab] = useState<LoaderTab>('single');
   const [showTeamLibrary, setShowTeamLibrary] = useState(false);
   const [faceitWide, setFaceitWide] = useState(false);
+  const parseAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => parseAbortRef.current?.abort(), []);
 
   const setDemo              = useAppStore((s) => s.setDemo);
   const setRounds            = useAppStore((s) => s.setRounds);
@@ -99,10 +101,12 @@ const DemoLoader: React.FC = () => {
         // 2. Watch parse status via SSE (skipped when loaded from valid cache)
         if (!cached) {
           setPhase('parsing');
+          parseAbortRef.current?.abort();
+          parseAbortRef.current = new AbortController();
           await watchParseStatus(job_id, (status) => {
             setParseStatus(status);
             setParseStatusStore(status);
-          });
+          }, { signal: parseAbortRef.current.signal });
         }
 
         // 3. Fetch all data (positions are loaded per-round by useRoundPositions)
@@ -141,6 +145,7 @@ const DemoLoader: React.FC = () => {
 
         setPhase('done');
       } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
         setErrorMsg(err instanceof Error ? err.message : 'Unknown error');
         setPhase('error');
       }

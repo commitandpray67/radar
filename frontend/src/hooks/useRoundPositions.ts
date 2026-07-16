@@ -24,22 +24,26 @@ export function useRoundPositions(): void {
   const setPositions           = useAppStore((s) => s.setPositions);
   const setPositionsLoading    = useAppStore((s) => s.setPositionsLoading);
 
-  // Used to discard stale responses when the selection changes mid-flight.
-  const fetchKeyRef = useRef<string>('');
+  // One staleness token PER effect: the three effects run different request
+  // streams and a single shared ref lets one effect discard another's valid
+  // response (or accept a stale one) during mode transitions.
+  const singleKeyRef = useRef<string>('');
+  const multiKeyRef = useRef<string>('');
+  const teamKeyRef = useRef<string>('');
 
   // ── Single-round mode ────────────────────────────────────────────────────
   useEffect(() => {
     if (!demo || isMultiRoundMode || activeRound === null) return;
 
     const key = `single:${demo.id}:${activeRound}`;
-    fetchKeyRef.current = key;
+    singleKeyRef.current = key;
     setPositionsLoading(true);
 
     const controller = new AbortController();
 
     getPositions(demo.id, { round_number: activeRound }, controller.signal)
       .then((positions) => {
-        if (fetchKeyRef.current !== key) return;
+        if (singleKeyRef.current !== key) return;
         setPositions(positions, [activeRound]);
       })
       .catch((err) => {
@@ -47,7 +51,7 @@ export function useRoundPositions(): void {
         console.error('Failed to load positions for round', activeRound, err);
       })
       .finally(() => {
-        if (fetchKeyRef.current === key) setPositionsLoading(false);
+        if (singleKeyRef.current === key) setPositionsLoading(false);
       });
 
     return () => { controller.abort(); };
@@ -58,7 +62,7 @@ export function useRoundPositions(): void {
     if (!demo || !isMultiRoundMode || teamSession || multiRoundRounds.length === 0) return;
 
     const key = `multi:${demo.id}:${multiRoundRounds.slice().sort().join(',')}`;
-    fetchKeyRef.current = key;
+    multiKeyRef.current = key;
     setPositionsLoading(true);
 
     const controller = new AbortController();
@@ -69,7 +73,7 @@ export function useRoundPositions(): void {
       )
     )
       .then((perRound: PlayerPosition[][]) => {
-        if (fetchKeyRef.current !== key) return;
+        if (multiKeyRef.current !== key) return;
         const merged = ([] as PlayerPosition[]).concat(...perRound);
         setPositions(merged, multiRoundRounds);
       })
@@ -78,7 +82,7 @@ export function useRoundPositions(): void {
         console.error('Failed to load multi-round positions', err);
       })
       .finally(() => {
-        if (fetchKeyRef.current === key) setPositionsLoading(false);
+        if (multiKeyRef.current === key) setPositionsLoading(false);
       });
 
     return () => { controller.abort(); };
@@ -90,7 +94,7 @@ export function useRoundPositions(): void {
 
     const sortedKeys = multiRoundTeamKeys.slice().sort();
     const key = `multi-team:${teamSession.id}:${sortedKeys.join(',')}`;
-    fetchKeyRef.current = key;
+    teamKeyRef.current = key;
     setPositionsLoading(true);
 
     const controller = new AbortController();
@@ -107,7 +111,7 @@ export function useRoundPositions(): void {
       )
     )
       .then((perRound: PlayerPosition[][]) => {
-        if (fetchKeyRef.current !== key) return;
+        if (teamKeyRef.current !== key) return;
         // Tag each position with its demo_id (the API may not include it).
         const merged: PlayerPosition[] = [];
         perRound.forEach((rows, i) => {
@@ -123,7 +127,7 @@ export function useRoundPositions(): void {
         console.error('Failed to load team multi-round positions', err);
       })
       .finally(() => {
-        if (fetchKeyRef.current === key) setPositionsLoading(false);
+        if (teamKeyRef.current === key) setPositionsLoading(false);
       });
 
     return () => { controller.abort(); };

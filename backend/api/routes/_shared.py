@@ -15,6 +15,7 @@ import math
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import BinaryIO
 
@@ -51,6 +52,10 @@ def _voice_dir(demo_id: str, round_number: int, extended: bool = False) -> Path:
 # ---------------------------------------------------------------------------
 
 
+# Keep only the newest N job→demo mappings so the file can't grow forever.
+_JOB_MAP_CAP = 500
+
+
 def _persist_job_mapping(job_id: str, demo_id: str) -> None:
     """Write job_id→demo_id to disk so parse-status can recover after restart."""
     try:
@@ -61,6 +66,9 @@ def _persist_job_mapping(job_id: str, demo_id: str) -> None:
             except Exception:
                 data = {}
         data[job_id] = demo_id
+        if len(data) > _JOB_MAP_CAP:
+            # dicts preserve insertion order — keep the most recent entries.
+            data = dict(list(data.items())[-_JOB_MAP_CAP:])
         _JOB_MAP_FILE.parent.mkdir(parents=True, exist_ok=True)
         # Atomic write: a crash mid-write must not corrupt the whole map.
         fd, tmp = tempfile.mkstemp(dir=str(_JOB_MAP_FILE.parent), suffix=".tmp")
@@ -116,7 +124,35 @@ def _sanitize_nan(obj):
 # job_id → status dict written by the upload handler and read by the SSE stream.
 # All mutations happen in the same asyncio event loop, so no extra locking is
 # needed for the dict itself; only the per-demo parse locks use asyncio.Lock.
+# Finished entries carry a "_finished_at" timestamp and are swept after
+# _JOB_TTL_SECONDS so the dict cannot grow without bound.
 _parse_jobs: dict[str, dict] = {}
+_JOB_TTL_SECONDS = 3600.0
+
+# Strong references to in-flight parse tasks: a bare create_task() result can
+# be garbage-collected mid-run if nothing holds it.
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _mark_job_finished(job: dict) -> None:
+    """Stamp a terminal job entry for TTL-based sweeping."""
+    job["_finished_at"] = time.time()
+
+
+def _sweep_finished_jobs() -> None:
+    """Drop terminal job entries older than the TTL."""
+    cutoff = time.time() - _JOB_TTL_SECONDS
+    stale = [
+        k for k, v in _parse_jobs.items()
+        if v.get("_finished_at") is not None and v["_finished_at"] < cutoff
+    ]
+    for k in stale:
+        _parse_jobs.pop(k, None)
+
+
+def _public_job(job: dict) -> dict:
+    """Job entry without internal (underscore-prefixed) bookkeeping keys."""
+    return {k: v for k, v in job.items() if not k.startswith("_")}
 
 # Prevents concurrent parses of the same demo (identified by content hash).
 _parse_locks: dict[str, asyncio.Lock] = {}
