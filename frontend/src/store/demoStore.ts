@@ -145,6 +145,18 @@ interface MultiRoundState {
   multiRoundRelativeTick: number;
   multiRoundIsPlaying: boolean;
 
+  // Utility explorer: static overlay of all grenades matching the filters.
+  isUtilityMode: boolean;
+  utilityTypes: Set<string>;          // grenade_type values to show (empty = all)
+  utilityPlayerIds: Set<number>;      // throwers to show (empty = all)
+  utilitySides: Set<'CT' | 'T'>;      // thrower side (empty = both)
+  utilityRoundRange: [number, number] | null;  // inclusive round range (null = all)
+  setUtilityMode: (on: boolean) => void;
+  setUtilityTypes: (t: Set<string>) => void;
+  setUtilityPlayerIds: (p: Set<number>) => void;
+  setUtilitySides: (s: Set<'CT' | 'T'>) => void;
+  setUtilityRoundRange: (r: [number, number] | null) => void;
+
   setMultiRoundMode: (on: boolean) => void;
   toggleMultiRoundRound: (rn: number) => void;
   setMultiRoundRounds: (rounds: number[]) => void;
@@ -268,6 +280,11 @@ export const useAppStore = create<AppStore>()(
             tickIndex: new Map(),
             sortedTicks: [],
             teamByPlayer: new Map(),
+            isUtilityMode: false,
+            utilityTypes: new Set<string>(),
+            utilityPlayerIds: new Set<number>(),
+            utilitySides: new Set<'CT' | 'T'>(),
+            utilityRoundRange: null,
             parseStatus: null,
             activeRound: null,
             currentTick: 0,
@@ -379,12 +396,37 @@ export const useAppStore = create<AppStore>()(
           }
           return {
             isHeatmapMode: true,
-            // Heatmap and multi-round are mutually exclusive.
+            // Heatmap, multi-round and utility modes are mutually exclusive.
             isMultiRoundMode: false,
             multiRoundIsPlaying: false,
             multiRoundRelativeTick: 0,
+            isUtilityMode: false,
           };
         }, false, 'setHeatmapMode'),
+
+      // ----- Utility explorer state -----
+      isUtilityMode: false,
+      utilityTypes: new Set<string>(),
+      utilityPlayerIds: new Set<number>(),
+      utilitySides: new Set<'CT' | 'T'>(),
+      utilityRoundRange: null,
+      setUtilityMode: (isUtilityMode) =>
+        set(() => (
+          isUtilityMode
+            ? {
+                isUtilityMode: true,
+                isHeatmapMode: false,
+                isMultiRoundMode: false,
+                multiRoundIsPlaying: false,
+                multiRoundRelativeTick: 0,
+              }
+            : { isUtilityMode: false }
+        ), false, 'setUtilityMode'),
+      setUtilityTypes: (utilityTypes) => set({ utilityTypes }, false, 'setUtilityTypes'),
+      setUtilityPlayerIds: (utilityPlayerIds) => set({ utilityPlayerIds }, false, 'setUtilityPlayerIds'),
+      setUtilitySides: (utilitySides) => set({ utilitySides }, false, 'setUtilitySides'),
+      setUtilityRoundRange: (utilityRoundRange) =>
+        set({ utilityRoundRange }, false, 'setUtilityRoundRange'),
       setHeatmapRounds: (rounds) =>
         set({ selectedRoundsForHeatmap: rounds }, false, 'setHeatmapRounds'),
       toggleHeatmapRound: (round) =>
@@ -426,12 +468,13 @@ export const useAppStore = create<AppStore>()(
             isMultiRoundMode: true,
             multiRoundRelativeTick: 0,
             multiRoundIsPlaying: false,
-            // Heatmap and multi-round are mutually exclusive.
+            // Heatmap, multi-round and utility modes are mutually exclusive.
             isHeatmapMode: false,
             heatmapResult: null,
             heatmapError: null,
             heatmapLoading: false,
             selectedRoundsForHeatmap: [],
+            isUtilityMode: false,
           };
         },
         false,

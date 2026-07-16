@@ -43,8 +43,10 @@ import {
   drawGrenade,
   drawPlayerMarker,
   drawTrail,
+  grenadeLineColor,
 } from './drawing';
 import { useZoomPan } from './useZoomPan';
+import { useRoundSides } from '../../hooks/useRoundSides';
 import styles from './RadarViewer.module.css';
 
 // ---------------------------------------------------------------------------
@@ -99,6 +101,11 @@ const RadarViewer: React.FC = () => {
   const heatmapResult     = useAppStore((s) => s.heatmapResult);
   const heatmapLoading    = useAppStore((s) => s.heatmapLoading);
   const grenades          = useAppStore((s) => s.grenades);
+  const isUtilityMode     = useAppStore((s) => s.isUtilityMode);
+  const utilityTypes      = useAppStore((s) => s.utilityTypes);
+  const utilityPlayerIds  = useAppStore((s) => s.utilityPlayerIds);
+  const utilitySides      = useAppStore((s) => s.utilitySides);
+  const utilityRoundRange = useAppStore((s) => s.utilityRoundRange);
   const activeRound       = useAppStore((s) => s.activeRound);
   const positions         = useAppStore((s) => s.positions);
   const showBomb          = useAppStore((s) => s.showBomb);
@@ -313,6 +320,28 @@ const RadarViewer: React.FC = () => {
   }, [showGrenades, grenades, activeRound, currentTick, demo]);
 
   // ---------------------------------------------------------------------------
+  // Utility explorer: all grenades matching the filters, drawn statically.
+  // ---------------------------------------------------------------------------
+  const sideMap = useRoundSides();
+  const utilityGrenades = useMemo<GrenadeEvent[]>(() => {
+    if (!isUtilityMode) return [];
+    const demoSides = demo ? sideMap[demo.id] : undefined;
+    return grenades.filter((g) => {
+      if (utilityTypes.size > 0 && !utilityTypes.has(g.grenade_type)) return false;
+      if (utilityPlayerIds.size > 0 && !utilityPlayerIds.has(g.thrower_id)) return false;
+      if (utilityRoundRange) {
+        const [lo, hi] = utilityRoundRange;
+        if (g.round_number < lo || g.round_number > hi) return false;
+      }
+      if (utilitySides.size > 0) {
+        const side = demoSides?.[String(g.round_number)]?.[String(g.thrower_id)];
+        if (!side || !utilitySides.has(side)) return false;
+      }
+      return true;
+    });
+  }, [isUtilityMode, grenades, utilityTypes, utilityPlayerIds, utilitySides, utilityRoundRange, demo, sideMap]);
+
+  // ---------------------------------------------------------------------------
   // C4 equip events for the active round, sorted by tick. Precomputed so the
   // draw loop doesn't linear-scan ALL player-state events every frame to find
   // the current bomb carrier.
@@ -410,6 +439,36 @@ const RadarViewer: React.FC = () => {
     if (isHeatmapMode && heatmapImgRef.current) {
       ctx.globalAlpha = 0.75;
       ctx.drawImage(heatmapImgRef.current, 0, 0, canvasSize, canvasSize);
+      ctx.restore();
+      return;
+    }
+
+    // ---- Utility explorer mode ----
+    if (isUtilityMode) {
+      for (const g of utilityGrenades) {
+        const color = grenadeLineColor(g.grenade_type);
+        const traj = g.trajectory ?? [];
+        // Trajectory polyline (semi-transparent).
+        if (traj.length > 1) {
+          ctx.globalAlpha = 0.4;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5 / zoom;
+          ctx.beginPath();
+          traj.forEach((pt, i) => {
+            const { cx, cy } = worldToCanvas(pt.x, pt.y, calibration, canvasSize);
+            if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+          });
+          ctx.stroke();
+        }
+        // Landing / detonation dot.
+        const { cx, cy } = worldToCanvas(g.x, g.y, calibration, canvasSize);
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(cx, cy, (MARKER_RADIUS * 0.7) / zoom, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
       ctx.restore();
       return;
     }
@@ -617,6 +676,8 @@ const RadarViewer: React.FC = () => {
     selectedPlayerIds,
     playerLabel,
     isHeatmapMode,
+    isUtilityMode,
+    utilityGrenades,
     demo,
     showGrenades,
     showYaw,
@@ -651,11 +712,32 @@ const RadarViewer: React.FC = () => {
   // ---------------------------------------------------------------------------
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!snapshot || !calibration || isMultiRoundMode) return;
+      if (!calibration || isMultiRoundMode) return;
       if (isDragging.current) return; // suppress click after pan
       const rect = canvasRef.current!.getBoundingClientRect();
       const clickX = (e.clientX - rect.left - panX) / zoom;
       const clickY = (e.clientY - rect.top - panY) / zoom;
+
+      // Utility mode: click a landing point to jump to that grenade's throw.
+      if (isUtilityMode) {
+        const store = useAppStore.getState();
+        const hitR = 12 / zoom;
+        let best: GrenadeEvent | null = null;
+        let bestD = hitR;
+        for (const g of utilityGrenades) {
+          const { cx, cy } = worldToCanvas(g.x, g.y, calibration, canvasSize);
+          const d = Math.hypot(clickX - cx, clickY - cy);
+          if (d < bestD) { bestD = d; best = g; }
+        }
+        if (best) {
+          store.setUtilityMode(false);
+          store.setActiveRound(best.round_number);   // resets currentTick
+          store.setCurrentTick(best.throw_tick);
+        }
+        return;
+      }
+
+      if (!snapshot) return;
       const togglePlayer = useAppStore.getState().togglePlayerSelection;
       const hitRadius = (MARKER_RADIUS + 4) / zoom;
       for (const [pid, pos] of snapshot.entries()) {
@@ -666,7 +748,7 @@ const RadarViewer: React.FC = () => {
         }
       }
     },
-    [snapshot, calibration, canvasSize, isMultiRoundMode, zoom, panX, panY, isDragging],
+    [snapshot, calibration, canvasSize, isMultiRoundMode, isUtilityMode, utilityGrenades, zoom, panX, panY, isDragging],
   );
 
   // ---------------------------------------------------------------------------

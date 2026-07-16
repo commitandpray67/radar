@@ -11,6 +11,7 @@ import RadarViewer from '../RadarViewer/RadarViewer';
 import RoundPanel from '../RoundPanel/RoundPanel';
 import HeatmapControls from '../HeatmapControls/HeatmapControls';
 import MultiRoundControls from '../MultiRoundControls/MultiRoundControls';
+import UtilityExplorer from '../UtilityExplorer/UtilityExplorer';
 import PlaybackControls from '../Playback/PlaybackControls';
 import PlayerInfoPanel from '../PlayerInfoPanel/PlayerInfoPanel';
 import StatsPanel from '../StatsPanel/StatsPanel';
@@ -18,7 +19,7 @@ import styles from './AppLayout.module.css';
 import { TEAM_COLORS } from '../../types';
 import { getDisplaySideScore, getHalftimeRound } from '../../utils/roundUtils';
 
-type SideTab  = 'rounds' | 'heatmap' | 'multi';
+type SideTab  = 'rounds' | 'heatmap' | 'multi' | 'utility';
 type RightTab = 'players' | 'info' | 'stats';
 
 const AppLayout: React.FC = () => {
@@ -130,11 +131,18 @@ const AppLayout: React.FC = () => {
             >
               Multi
             </button>
+            <button
+              className={`${styles.tab} ${sideTab === 'utility' ? styles.activeTab : ''}`}
+              onClick={() => setSideTab('utility')}
+            >
+              Utility
+            </button>
           </div>
           <div className={styles.sideContent}>
             {sideTab === 'rounds' && <RoundPanel />}
             {sideTab === 'heatmap' && <HeatmapControls />}
             {sideTab === 'multi' && <MultiRoundControls />}
+            {sideTab === 'utility' && <UtilityExplorer />}
           </div>
         </aside>
 
