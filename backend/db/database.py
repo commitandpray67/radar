@@ -31,12 +31,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_PATH = Path(__file__).parent.parent / "data" / "demos.db"
 
 
-async def get_db_path() -> Path:
-    import os
+# Resolve the DB path (and ensure its directory exists) exactly once — this
+# runs on every get_connection(), so repeating the mkdir per request is waste.
+_db_path: Path | None = None
 
-    p = Path(os.environ.get("DB_PATH", str(DEFAULT_DB_PATH)))
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+
+async def get_db_path() -> Path:
+    global _db_path
+    if _db_path is None:
+        p = Path(os.environ.get("DB_PATH", str(DEFAULT_DB_PATH)))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _db_path = p
+    return _db_path
 
 
 @asynccontextmanager
@@ -44,17 +50,20 @@ async def get_connection() -> AsyncIterator[aiosqlite.Connection]:
     db_path = await get_db_path()
     async with aiosqlite.connect(str(db_path), timeout=30) as conn:
         conn.row_factory = aiosqlite.Row
-        await conn.execute("PRAGMA journal_mode=WAL")
+        # journal_mode (WAL) and auto_vacuum persist in the DB file — set once in
+        # init_db, not per connection. These three are per-connection settings.
         await conn.execute("PRAGMA foreign_keys=ON")
         await conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, faster
         await conn.execute("PRAGMA busy_timeout=10000")  # 10 s retry on lock
-        await conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         yield conn
 
 
 async def init_db() -> None:
     """Create tables if they don't exist."""
     async with get_connection() as conn:
+        # Persistent DB-file settings — applied once at startup.
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         await conn.executescript("""
             CREATE TABLE IF NOT EXISTS demos (
                 id          TEXT PRIMARY KEY,   -- SHA-256 of file
@@ -225,6 +234,44 @@ def file_hash(path: Path, chunk: int = 4 << 20) -> str:
     return h.hexdigest()
 
 
+def build_positions_query(
+    demo_id: str,
+    round_numbers: list[int],
+    *,
+    team_num: int | None = None,
+    steam_ids: list[int] | None = None,
+    exclude_freeze: bool = True,
+) -> tuple[str, list]:
+    """Build the (SQL, params) for a player_positions fetch.
+
+    Shared by the single-demo and team-session heatmap routes so the two stay
+    in lock-step.  SteamID64s are filtered in SQL (never through float64/NumPy,
+    which would lose precision).  ``exclude_freeze`` joins rounds to drop
+    pre-freeze-end samples.
+    """
+    round_ph = ",".join("?" * len(round_numbers))
+    conds = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
+    params: list = [demo_id, *round_numbers]
+    if team_num is not None:
+        conds.append("pp.team_num = ?")
+        params.append(team_num)
+    if steam_ids:
+        sid_ph = ",".join("?" * len(steam_ids))
+        conds.append(f"pp.player_id IN ({sid_ph})")
+        params.extend(steam_ids)
+
+    cols = "pp.tick, pp.round_number, pp.player_id, pp.x, pp.y, pp.z, pp.team_num"
+    if exclude_freeze:
+        query = (
+            f"SELECT {cols} FROM player_positions pp "
+            "JOIN rounds r ON r.demo_id = pp.demo_id AND r.round_number = pp.round_number "
+            f"WHERE {' AND '.join(conds)} AND pp.tick >= r.freeze_end_tick"
+        )
+    else:
+        query = f"SELECT {cols} FROM player_positions pp WHERE {' AND '.join(conds)}"
+    return query, params
+
+
 async def demo_exists(demo_id: str) -> bool:
     async with get_connection() as conn:
         cursor = await conn.execute("SELECT 1 FROM demos WHERE id = ?", (demo_id,))
@@ -240,160 +287,178 @@ async def store_demo(parsed, demo_id: str, filename: str, file_size: int = 0) ->
     from parser.demo_parser import PARSER_VERSION
 
     async with get_connection() as conn:
-        # demos — store parser_version in meta_json so stale caches are detected
-        await conn.execute(
-            """INSERT OR REPLACE INTO demos
-               (id, filename, map_name, tick_rate, total_ticks, parsed_at, meta_json, file_size)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (
-                demo_id,
-                filename,
-                parsed.match_info.map_name,
-                parsed.match_info.tick_rate,
-                parsed.match_info.total_ticks,
-                datetime.now(UTC).isoformat(),
-                _json.dumps({"parser_version": PARSER_VERSION}),
-                file_size,
-            ),
-        )
+        # One explicit transaction so the parent upsert and all child
+        # replacements commit atomically (or roll back together on error).
+        # Using ON CONFLICT DO UPDATE (not INSERT OR REPLACE) keeps the parent
+        # row's identity stable so FK-on child rows are never orphaned.
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
 
-        # rounds
-        await conn.execute("DELETE FROM rounds WHERE demo_id = ?", (demo_id,))
-        await conn.executemany(
-            """INSERT INTO rounds
-               (demo_id, round_number, start_tick, end_tick, freeze_end_tick,
-                winner_team, win_reason, ct_score, t_score,
-                bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick,
-                is_knife_round, ct_equip_value, t_equip_value)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            [
+            # demos — store parser_version in meta_json so stale caches detected
+            await conn.execute(
+                """INSERT INTO demos
+                   (id, filename, map_name, tick_rate, total_ticks, parsed_at, meta_json, file_size)
+                   VALUES (?,?,?,?,?,?,?,?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       filename=excluded.filename,
+                       map_name=excluded.map_name,
+                       tick_rate=excluded.tick_rate,
+                       total_ticks=excluded.total_ticks,
+                       parsed_at=excluded.parsed_at,
+                       meta_json=excluded.meta_json,
+                       file_size=excluded.file_size""",
                 (
                     demo_id,
-                    r.round_number,
-                    r.start_tick,
-                    r.end_tick,
-                    r.freeze_end_tick,
-                    r.winner_team,
-                    r.win_reason,
-                    r.ct_score,
-                    r.t_score,
-                    r.bomb_planted_tick,
-                    r.bomb_defused_tick,
-                    r.bomb_exploded_tick,
-                    int(r.is_knife_round),
-                    r.ct_equip_value,
-                    r.t_equip_value,
-                )
-                for r in parsed.rounds
-            ],
-        )
+                    filename,
+                    parsed.match_info.map_name,
+                    parsed.match_info.tick_rate,
+                    parsed.match_info.total_ticks,
+                    datetime.now(UTC).isoformat(),
+                    _json.dumps({"parser_version": PARSER_VERSION}),
+                    file_size,
+                ),
+            )
 
-        # players
-        await conn.execute("DELETE FROM players WHERE demo_id = ?", (demo_id,))
-        await conn.executemany(
-            """INSERT INTO players (demo_id, player_id, name, initial_team)
-               VALUES (?,?,?,?)""",
-            [(demo_id, p.player_id, p.name, p.initial_team) for p in parsed.players],
-        )
-
-        # positions (batch insert for performance)
-        await conn.execute("DELETE FROM player_positions WHERE demo_id = ?", (demo_id,))
-        BATCH = 5000
-        # Build each batch in-place to avoid holding the full list in memory
-        # before the first insert (large demos = 500k+ rows ≈ 40 MB peak).
-        for i in range(0, len(parsed.positions), BATCH):
+            # rounds
+            await conn.execute("DELETE FROM rounds WHERE demo_id = ?", (demo_id,))
             await conn.executemany(
-                """INSERT INTO player_positions
-                   (demo_id, tick, round_number, player_id, x, y, z, team_num, is_alive, yaw)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO rounds
+                   (demo_id, round_number, start_tick, end_tick, freeze_end_tick,
+                    winner_team, win_reason, ct_score, t_score,
+                    bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick,
+                    is_knife_round, ct_equip_value, t_equip_value)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     (
                         demo_id,
-                        pos.tick,
-                        pos.round_number,
-                        pos.player_id,
-                        pos.x,
-                        pos.y,
-                        pos.z,
-                        pos.team_num,
-                        int(pos.is_alive),
-                        getattr(pos, "yaw", 0.0),
+                        r.round_number,
+                        r.start_tick,
+                        r.end_tick,
+                        r.freeze_end_tick,
+                        r.winner_team,
+                        r.win_reason,
+                        r.ct_score,
+                        r.t_score,
+                        r.bomb_planted_tick,
+                        r.bomb_defused_tick,
+                        r.bomb_exploded_tick,
+                        int(r.is_knife_round),
+                        r.ct_equip_value,
+                        r.t_equip_value,
                     )
-                    for pos in parsed.positions[i : i + BATCH]
+                    for r in parsed.rounds
                 ],
             )
 
-        # events
-        await conn.execute("DELETE FROM events WHERE demo_id = ?", (demo_id,))
-        await conn.executemany(
-            """INSERT INTO events
-               (demo_id, tick, round_number, event_type, attacker_id, victim_id,
-                weapon, headshot)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            [
-                (
-                    demo_id,
-                    e.tick,
-                    e.round_number,
-                    e.event_type,
-                    e.attacker_id,
-                    e.victim_id,
-                    e.weapon,
-                    int(e.headshot),
+            # players
+            await conn.execute("DELETE FROM players WHERE demo_id = ?", (demo_id,))
+            await conn.executemany(
+                """INSERT INTO players (demo_id, player_id, name, initial_team)
+                   VALUES (?,?,?,?)""",
+                [(demo_id, p.player_id, p.name, p.initial_team) for p in parsed.players],
+            )
+
+            # positions (batch insert for performance)
+            await conn.execute("DELETE FROM player_positions WHERE demo_id = ?", (demo_id,))
+            BATCH = 5000
+            # Build each batch in-place to avoid holding the full list in memory
+            # before the first insert (large demos = 500k+ rows ≈ 40 MB peak).
+            for i in range(0, len(parsed.positions), BATCH):
+                await conn.executemany(
+                    """INSERT INTO player_positions
+                       (demo_id, tick, round_number, player_id, x, y, z, team_num, is_alive, yaw)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    [
+                        (
+                            demo_id,
+                            pos.tick,
+                            pos.round_number,
+                            pos.player_id,
+                            pos.x,
+                            pos.y,
+                            pos.z,
+                            pos.team_num,
+                            int(pos.is_alive),
+                            getattr(pos, "yaw", 0.0),
+                        )
+                        for pos in parsed.positions[i : i + BATCH]
+                    ],
                 )
-                for e in parsed.events
-            ],
-        )
 
-        # grenades
-        await conn.execute("DELETE FROM grenades WHERE demo_id = ?", (demo_id,))
-        if parsed.grenades:
+            # events
+            await conn.execute("DELETE FROM events WHERE demo_id = ?", (demo_id,))
             await conn.executemany(
-                """INSERT INTO grenades
-                   (demo_id, round_number, thrower_id, grenade_type, throw_tick,
-                    detonate_tick, x, y, z, expire_tick, trajectory)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                [
-                    (
-                        demo_id,
-                        g.round_number,
-                        g.thrower_id,
-                        g.grenade_type,
-                        g.throw_tick,
-                        g.detonate_tick,
-                        g.x,
-                        g.y,
-                        g.z,
-                        g.expire_tick,
-                        json.dumps(g.trajectory) if g.trajectory else None,
-                    )
-                    for g in parsed.grenades
-                ],
-            )
-
-        # player_state_events
-        await conn.execute("DELETE FROM player_state_events WHERE demo_id = ?", (demo_id,))
-        if parsed.player_state_events:
-            await conn.executemany(
-                """INSERT INTO player_state_events
-                   (demo_id, tick, round_number, player_id, event_type, hp, armor, weapon)
+                """INSERT INTO events
+                   (demo_id, tick, round_number, event_type, attacker_id, victim_id,
+                    weapon, headshot)
                    VALUES (?,?,?,?,?,?,?,?)""",
                 [
                     (
                         demo_id,
                         e.tick,
                         e.round_number,
-                        e.player_id,
                         e.event_type,
-                        e.hp,
-                        e.armor,
+                        e.attacker_id,
+                        e.victim_id,
                         e.weapon,
+                        int(e.headshot),
                     )
-                    for e in parsed.player_state_events
+                    for e in parsed.events
                 ],
             )
 
-        await conn.commit()
+            # grenades
+            await conn.execute("DELETE FROM grenades WHERE demo_id = ?", (demo_id,))
+            if parsed.grenades:
+                await conn.executemany(
+                    """INSERT INTO grenades
+                       (demo_id, round_number, thrower_id, grenade_type, throw_tick,
+                        detonate_tick, x, y, z, expire_tick, trajectory)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    [
+                        (
+                            demo_id,
+                            g.round_number,
+                            g.thrower_id,
+                            g.grenade_type,
+                            g.throw_tick,
+                            g.detonate_tick,
+                            g.x,
+                            g.y,
+                            g.z,
+                            g.expire_tick,
+                            json.dumps(g.trajectory) if g.trajectory else None,
+                        )
+                        for g in parsed.grenades
+                    ],
+                )
+
+            # player_state_events
+            await conn.execute("DELETE FROM player_state_events WHERE demo_id = ?", (demo_id,))
+            if parsed.player_state_events:
+                await conn.executemany(
+                    """INSERT INTO player_state_events
+                       (demo_id, tick, round_number, player_id, event_type, hp, armor, weapon)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    [
+                        (
+                            demo_id,
+                            e.tick,
+                            e.round_number,
+                            e.player_id,
+                            e.event_type,
+                            e.hp,
+                            e.armor,
+                            e.weapon,
+                        )
+                        for e in parsed.player_state_events
+                    ],
+                )
+
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
     logger.info(
         "Stored demo %s (%d positions, %d events, %d grenades, %d state events)",
         demo_id,

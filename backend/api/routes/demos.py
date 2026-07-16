@@ -22,6 +22,7 @@ import concurrent.futures
 import json
 import logging
 import shutil
+import time
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -54,6 +55,12 @@ from ._shared import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Shared executor for the CPU/IO-heavy demo parse. Bounded so concurrent
+# uploads queue instead of each spawning its own pool (and blowing memory).
+_PARSE_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="demo-parse"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -240,13 +247,12 @@ async def _parse_task(
             _progress(0.0, "Starting parse")
 
             loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                from parser.demo_parser import parse_demo
+            from parser.demo_parser import parse_demo
 
-                parsed = await loop.run_in_executor(
-                    pool,
-                    lambda: parse_demo(str(tmp_path), progress_callback=_progress),
-                )
+            parsed = await loop.run_in_executor(
+                _PARSE_POOL,
+                lambda: parse_demo(str(tmp_path), progress_callback=_progress),
+            )
 
             _progress(0.95, "Storing to database")
             await store_demo(parsed, demo_id, filename, file_size=file_size)
@@ -376,11 +382,22 @@ async def parse_status_stream(job_id: str):
                 yield f"data: {err}\n\n"
             return
 
+        # Hard ceiling so a job wedged in a non-terminal state can't hold the
+        # connection open forever.
+        deadline = time.monotonic() + 2 * 3600
         while True:
             job = _parse_jobs.get(job_id, job)
             payload = _public_job(job) if job is not None else job
             yield f"data: {json.dumps(_sanitize_nan(payload))}\n\n"
             if job is None or job["status"] in ("complete", "error"):
+                return
+            if time.monotonic() > deadline:
+                stalled = json.dumps({
+                    "status": "error", "progress": 0,
+                    "message": "Parse timed out — please try again.",
+                    "demo_id": job.get("demo_id", ""), "filename": job.get("filename", ""),
+                })
+                yield f"data: {stalled}\n\n"
                 return
             await asyncio.sleep(0.5)
 

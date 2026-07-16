@@ -5,7 +5,6 @@ CS2 Demo Radar — FastAPI application entry point.
 import json
 import logging
 import logging.handlers
-import math
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -15,6 +14,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from api.routes._shared import _sanitize_nan
 
 
 def _project_root() -> Path:
@@ -27,19 +28,13 @@ def _project_root() -> Path:
 _ROOT = _project_root()
 
 
-def _sanitize_nan(obj):
-    """Recursively replace NaN/Inf floats with 0 to make JSON-safe."""
-    if isinstance(obj, float):
-        return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
-    if isinstance(obj, dict):
-        return {k: _sanitize_nan(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_nan(v) for v in obj]
-    return obj
-
-
 class NaNSafeJSONResponse(JSONResponse):
-    """JSONResponse that converts NaN/Inf floats to 0 before serialising."""
+    """JSONResponse that converts NaN/Inf floats to null before serialising.
+
+    Uses the shared `_sanitize_nan` (maps NaN/Inf → None) so responses agree
+    with the SSE handlers — a missing/infinite coordinate becomes JSON null
+    rather than a bogus (0, 0) that would plot at the map origin.
+    """
 
     def render(self, content) -> bytes:  # type: ignore[override]
         return json.dumps(

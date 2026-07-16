@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from analytics.coordinates import get_calibration_or_raise
 from analytics.heatmap import HeatmapRequest, compute_heatmap, heatmap_to_base64_png
 from analytics.team_detection import DemoRoster, detect_team
-from db.database import get_connection
+from db.database import build_positions_query, get_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -220,7 +220,7 @@ async def create_team_session(payload: TeamSessionCreatePayload) -> dict:
         raise HTTPException(422, detection.error or "Team detection failed")
 
     session_id = uuid.uuid4().hex
-    created_at = datetime.datetime.utcnow().isoformat() + "Z"
+    created_at = datetime.datetime.now(datetime.UTC).isoformat()
 
     async with get_connection() as conn:
         await conn.execute(
@@ -408,36 +408,13 @@ async def team_session_heatmap(session_id: str, payload: TeamSessionHeatmapPaylo
     all_rows: list = []
     async with get_connection() as conn:
         for demo_id, rounds in by_demo.items():
-            round_ph = ",".join("?" * len(rounds))
-            conds = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
-            qp: list = [demo_id, *rounds]
-
-            tn = per_demo_team_filter.get(demo_id)
-            if tn is not None:
-                conds.append("pp.team_num = ?")
-                qp.append(tn)
-
-            if steam_ids:
-                sid_ph = ",".join("?" * len(steam_ids))
-                conds.append(f"pp.player_id IN ({sid_ph})")
-                qp.extend(steam_ids)
-
-            if payload.exclude_freeze_time:
-                query = (
-                    "SELECT pp.tick, pp.round_number, pp.player_id, "
-                    "       pp.x, pp.y, pp.z, pp.team_num "
-                    "FROM player_positions pp "
-                    "JOIN rounds r ON r.demo_id = pp.demo_id "
-                    "             AND r.round_number = pp.round_number "
-                    f"WHERE {' AND '.join(conds)} AND pp.tick >= r.freeze_end_tick"
-                )
-            else:
-                query = (
-                    "SELECT pp.tick, pp.round_number, pp.player_id, "
-                    "       pp.x, pp.y, pp.z, pp.team_num "
-                    f"FROM player_positions pp WHERE {' AND '.join(conds)}"
-                )
-
+            query, qp = build_positions_query(
+                demo_id,
+                rounds,
+                team_num=per_demo_team_filter.get(demo_id),
+                steam_ids=steam_ids,
+                exclude_freeze=payload.exclude_freeze_time,
+            )
             cur = await conn.execute(query, qp)
             for r in await cur.fetchall():
                 all_rows.append(
@@ -514,7 +491,7 @@ async def create_team_org(payload: TeamCreatePayload) -> dict:
         raise HTTPException(422, "Team name cannot be empty")
 
     team_id = str(uuid.uuid4())
-    created_at = datetime.datetime.utcnow().isoformat() + "Z"
+    created_at = datetime.datetime.now(datetime.UTC).isoformat()
     async with get_connection() as conn:
         await conn.execute(
             "INSERT INTO teams (id, name, created_at) VALUES (?,?,?)",
@@ -577,7 +554,7 @@ async def delete_team_org(team_id: str):
 @router.post("/teams/{team_id}/demos")
 async def add_demos_to_team(team_id: str, payload: TeamAddDemosPayload) -> dict:
     """Add one or more demos to a team."""
-    added_at = datetime.datetime.utcnow().isoformat() + "Z"
+    added_at = datetime.datetime.now(datetime.UTC).isoformat()
     async with get_connection() as conn:
         cur = await conn.execute("SELECT id FROM teams WHERE id = ?", (team_id,))
         if not await cur.fetchone():

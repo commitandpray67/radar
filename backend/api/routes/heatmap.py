@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from analytics.coordinates import get_calibration_or_raise
 from analytics.heatmap import HeatmapRequest, compute_heatmap, heatmap_to_base64_png
-from db.database import get_connection
+from db.database import build_positions_query, get_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -70,32 +70,12 @@ async def generate_heatmap(demo_id: str, payload: HeatmapPayload):
             )
             steam_ids = [row["player_id"] for row in await cur.fetchall()]
 
-    round_ph = ",".join("?" * len(payload.round_numbers))
-
-    if payload.exclude_freeze_time:
-        conds = ["pp.demo_id = ?", f"pp.round_number IN ({round_ph})"]
-        qparams: list = [demo_id, *payload.round_numbers]
-        if steam_ids:
-            player_ph = ",".join("?" * len(steam_ids))
-            conds.append(f"pp.player_id IN ({player_ph})")
-            qparams.extend(steam_ids)
-        query = (
-            "SELECT pp.tick, pp.round_number, pp.player_id, pp.x, pp.y, pp.z, pp.team_num "
-            "FROM player_positions pp "
-            "JOIN rounds r ON r.demo_id = pp.demo_id AND r.round_number = pp.round_number "
-            f"WHERE {' AND '.join(conds)} AND pp.tick >= r.freeze_end_tick"
-        )
-    else:
-        conds = ["demo_id = ?", f"round_number IN ({round_ph})"]
-        qparams = [demo_id, *payload.round_numbers]
-        if steam_ids:
-            player_ph = ",".join("?" * len(steam_ids))
-            conds.append(f"player_id IN ({player_ph})")
-            qparams.extend(steam_ids)
-        query = (
-            f"SELECT tick, round_number, player_id, x, y, z, team_num "
-            f"FROM player_positions WHERE {' AND '.join(conds)}"
-        )
+    query, qparams = build_positions_query(
+        demo_id,
+        payload.round_numbers,
+        steam_ids=steam_ids,
+        exclude_freeze=payload.exclude_freeze_time,
+    )
 
     async with get_connection() as conn:
         cur = await conn.execute(query, qparams)
