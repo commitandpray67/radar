@@ -17,6 +17,8 @@ import type {
   HeatmapResult,
   ParseJobStatus,
   Scoreboard,
+  HighlightSearchPayload,
+  HighlightSearchResult,
 } from '../types';
 
 const http = axios.create({ baseURL: '/api' });
@@ -474,5 +476,21 @@ export async function getFaceitPlayerMapStats(
 
 export async function loadFaceitMatch(matchId: string): Promise<FaceitLoadResult> {
   const res = await http.post('/faceit/load-match', { match_id: matchId });
+  return res.data;
+}
+
+// ---------------------------------------------------------------------------
+// Player highlights
+// ---------------------------------------------------------------------------
+
+export async function searchHighlights(
+  payload: HighlightSearchPayload,
+): Promise<HighlightSearchResult> {
+  const res = await http.post('/highlights', payload);
+  return res.data;
+}
+
+export async function getHighlightPlayerNames(): Promise<{ name: string; demos: number }[]> {
+  const res = await http.get('/highlights/player-names');
   return res.data;
 }

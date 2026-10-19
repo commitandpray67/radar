@@ -25,6 +25,7 @@ import type {
   HeatmapResult,
   ParseJobStatus,
   TeamSessionDetail,
+  HighlightSearchResult,
 } from '../types';
 import {
   buildTickIndex,
@@ -208,8 +209,19 @@ interface TeamSessionState {
   toggleTeamHeatmapRoundKey: (key: string) => void;
 }
 
+// ---------------------------------------------------------------------------
+// Highlight search — the latest cross-demo multi-kill search. Deliberately NOT
+// cleared by reset(): it spans demos, so it must survive switching between
+// them and returning to the loader.
+// ---------------------------------------------------------------------------
+
+interface HighlightState {
+  highlightSearch: HighlightSearchResult | null;
+  setHighlightSearch: (result: HighlightSearchResult | null) => void;
+}
+
 type AppStore = DemoState & PlaybackState & HeatmapState & MultiRoundState
-  & UIState & VoiceState & TeamSessionState;
+  & UIState & VoiceState & TeamSessionState & HighlightState;
 
 // ---------------------------------------------------------------------------
 // Store implementation
@@ -534,6 +546,11 @@ export const useAppStore = create<AppStore>()(
             : [...s.teamHeatmapRoundKeys, key];
           return { teamHeatmapRoundKeys: next };
         }, false, 'toggleTeamHeatmapRoundKey'),
+
+      // ----- Highlight search -----
+      highlightSearch: null,
+      setHighlightSearch: (highlightSearch) =>
+        set({ highlightSearch }, false, 'setHighlightSearch'),
 
       // ----- UI state -----
       sidebarOpen: true,

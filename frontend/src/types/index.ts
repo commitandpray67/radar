@@ -390,3 +390,52 @@ export interface FaceitPlayerMapStats {
 export interface FaceitPlayerMapStatsResponse {
   players: FaceitPlayerMapStats[];
 }
+
+// ---------------------------------------------------------------------------
+// Player highlights (multi-kill rounds across demos)
+// ---------------------------------------------------------------------------
+
+export interface HighlightKill {
+  tick: number;
+  victim_id: string;          // SteamID64 string
+  victim_name: string;
+  weapon: string;             // bare token, e.g. "deagle"
+  headshot: boolean;
+}
+
+export interface Highlight {
+  round_number: number;
+  kills: number;              // kills counted (weapon-filtered when a filter is set)
+  round_kills: number;        // all of the player's kills that round
+  side: 'CT' | 'T' | null;
+  round_won: boolean | null;
+  first_kill_tick: number;
+  last_kill_tick: number;
+  duration_s: number;
+  kill_list: HighlightKill[];
+}
+
+export interface HighlightDemoResult {
+  demo_id: string;
+  filename?: string;
+  map_name?: string;
+  tick_rate?: number;
+  matched_players?: { player_id: string; name: string }[];
+  error?: string;
+  highlights: Highlight[];
+}
+
+export interface HighlightSearchResult {
+  player: string;
+  weapons: string[];
+  min_kills: number;
+  total: number;
+  demos: HighlightDemoResult[];
+}
+
+export interface HighlightSearchPayload {
+  demo_ids: string[];
+  player: string;
+  weapons: string[];
+  min_kills: number;
+}

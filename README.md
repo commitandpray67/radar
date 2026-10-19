@@ -28,6 +28,8 @@ From this data, the frontend provides:
 - **Team analysis:** aggregate multiple demos of the same team on the same map for
   bigger heatmap / round samples
 - **Teams organizer:** named teams that auto-group demos by map across uploads
+- **Player highlights:** pick a player, drop a batch of demos, and get every
+  3K / 4K / ACE round they had (optionally with one weapon, e.g. Desert Eagle)
 
 ---
 
@@ -128,7 +130,7 @@ Frontend URL: `http://localhost:5173`
 
 ## How to use
 
-The loader has **three tabs**:
+The loader's main tabs:
 
 ### Single demo
 
@@ -164,6 +166,20 @@ auto-groups them by map. Each map group shows a list of matches and an
 **Open** button that creates and loads a team analysis session for those
 demos. Individual matches can be removed from a team without deleting them
 from the cache.
+
+### Highlights
+
+1. Type the player's nickname (case-insensitive, autocompleted from names
+   already in the library) or SteamID64. The demos don't need to be parsed yet.
+2. Pick a weapon (or *Any weapon*) and the minimum kills: **3K+**, **4K+** or
+   **ACE**. A "Desert Eagle 3K" means 3+ deagle kills in one round. Kills with
+   other weapons in that round don't count, and team kills never do.
+3. Drop any number of demos and/or tick cached ones under *Pick from library*.
+   Uploads parse two at a time; the search runs by itself when they finish.
+   Change the filters and hit **Find highlights** to re-run without re-parsing.
+4. Click a highlight to open its demo at that round, a few seconds before the
+   first kill, with the player selected. The list stays in the **★** tab of
+   the left sidebar so you can jump between highlights across demos.
 
 ---
 
@@ -269,6 +285,11 @@ automatically re-parsed on next upload. If something still looks outdated
 - `DELETE /api/teams/{id}`
 - `POST /api/teams/{id}/demos` — add demo(s)
 - `DELETE /api/teams/{id}/demos/{demo_id}` — remove one demo
+
+### Highlights
+- `POST /api/highlights` — `{demo_ids, player, weapons, min_kills}` → the
+  player's multi-kill rounds per demo (player = name or SteamID64)
+- `GET /api/highlights/player-names` — distinct roster names for autocomplete
 
 ---
 

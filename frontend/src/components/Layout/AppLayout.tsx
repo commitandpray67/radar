@@ -5,7 +5,7 @@
  *   Right sidebar : Players list / Live Info tabs
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import RadarViewer from '../RadarViewer/RadarViewer';
 import RoundPanel from '../RoundPanel/RoundPanel';
@@ -15,11 +15,13 @@ import UtilityExplorer from '../UtilityExplorer/UtilityExplorer';
 import PlaybackControls from '../Playback/PlaybackControls';
 import PlayerInfoPanel from '../PlayerInfoPanel/PlayerInfoPanel';
 import StatsPanel from '../StatsPanel/StatsPanel';
+import HighlightResults from '../Highlights/HighlightResults';
+import highlightStyles from '../Highlights/Highlights.module.css';
 import styles from './AppLayout.module.css';
 import { TEAM_COLORS } from '../../types';
 import { getDisplaySideScore, getHalftimeRound } from '../../utils/roundUtils';
 
-type SideTab  = 'rounds' | 'heatmap' | 'multi' | 'utility';
+type SideTab  = 'rounds' | 'heatmap' | 'multi' | 'utility' | 'highlights';
 type RightTab = 'players' | 'info' | 'stats';
 
 const AppLayout: React.FC = () => {
@@ -42,6 +44,12 @@ const AppLayout: React.FC = () => {
 
   const [sideTab, setSideTab]   = useState<SideTab>('rounds');
   const [rightTab, setRightTab] = useState<RightTab>('players');
+
+  // A fresh highlight search brings its list into view.
+  const highlightSearch = useAppStore((s) => s.highlightSearch);
+  useEffect(() => {
+    setSideTab(highlightSearch ? 'highlights' : 'rounds');
+  }, [highlightSearch]);
 
   const roundInfo = rounds.find((r) => r.round_number === activeRound);
   const displayRoundNumber =
@@ -137,12 +145,26 @@ const AppLayout: React.FC = () => {
             >
               Utility
             </button>
+            {highlightSearch && (
+              <button
+                className={`${styles.tab} ${sideTab === 'highlights' ? styles.activeTab : ''}`}
+                onClick={() => setSideTab('highlights')}
+                title={`${highlightSearch.player}'s highlights`}
+              >
+                ★ {highlightSearch.total}
+              </button>
+            )}
           </div>
           <div className={styles.sideContent}>
             {sideTab === 'rounds' && <RoundPanel />}
             {sideTab === 'heatmap' && <HeatmapControls />}
             {sideTab === 'multi' && <MultiRoundControls />}
             {sideTab === 'utility' && <UtilityExplorer />}
+            {sideTab === 'highlights' && highlightSearch && (
+              <div className={highlightStyles.sidebar}>
+                <HighlightResults result={highlightSearch} compact />
+              </div>
+            )}
           </div>
         </aside>
 
