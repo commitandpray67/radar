@@ -401,12 +401,17 @@ export interface HighlightKill {
   victim_name: string;
   weapon: string;             // bare token, e.g. "deagle"
   headshot: boolean;
+  matches: boolean;           // made with one of the searched weapons
+  after_round_end: boolean;   // exit frag: counted, but past the replay's round end
 }
 
 export interface Highlight {
-  round_number: number;
-  kills: number;              // kills counted (weapon-filtered when a filter is set)
-  round_kills: number;        // all of the player's kills that round
+  round_number: number;       // parser round number (store / playback key)
+  display_round: number;      // "Round N" as the app labels it (knife rounds skipped)
+  player_id: string;          // SteamID64 string of the player who made it
+  player_name: string;
+  kills: number;              // the player's kills that round, any weapon
+  weapon_kills: number;       // of which with a searched weapon (= kills when unfiltered)
   side: 'CT' | 'T' | null;
   round_won: boolean | null;
   first_kill_tick: number;
@@ -429,6 +434,7 @@ export interface HighlightSearchResult {
   player: string;
   weapons: string[];
   min_kills: number;
+  min_weapon_kills: number;   // 0 when no weapon filter
   total: number;
   demos: HighlightDemoResult[];
 }
@@ -438,4 +444,5 @@ export interface HighlightSearchPayload {
   player: string;
   weapons: string[];
   min_kills: number;
+  min_weapon_kills: number;
 }

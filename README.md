@@ -29,7 +29,7 @@ From this data, the frontend provides:
   bigger heatmap / round samples
 - **Teams organizer:** named teams that auto-group demos by map across uploads
 - **Player highlights:** pick a player, drop a batch of demos, and get every
-  3K / 4K / ACE round they had (optionally with one weapon, e.g. Desert Eagle)
+  3K / 4K / ACE round they had (optionally using chosen weapons, e.g. Desert Eagle)
 
 ---
 
@@ -171,12 +171,19 @@ from the cache.
 
 1. Type the player's nickname (case-insensitive, autocompleted from names
    already in the library) or SteamID64. The demos don't need to be parsed yet.
-2. Pick a weapon (or *Any weapon*) and the minimum kills: **3K+**, **4K+** or
-   **ACE**. A "Desert Eagle 3K" means 3+ deagle kills in one round. Kills with
-   other weapons in that round don't count, and team kills never do.
-3. Drop any number of demos and/or tick cached ones under *Pick from library*.
-   Uploads parse two at a time; the search runs by itself when they finish.
-   Change the filters and hit **Find highlights** to re-run without re-parsing.
+2. Pick the minimum kills in a round — **3K+**, **4K+** or **ACE**, counting
+   kills with any gun — then optionally tick one or more weapons and how many
+   of those kills must use them (at least 1 by default). With Desert Eagle and
+   3K+, a round of 2 deagle kills + 1 AK kill counts; raise the number to ask
+   for more deagle kills. Team kills, suicides and knife-round kills never
+   count; kills made just after the round ended (exit frags) do, as in CS2's
+   own count, and are marked "after round end" since the replay stops at the
+   round's end.
+3. Drop any number of demos (anywhere on the tab) and/or tick cached ones
+   under *Pick from library*. Uploads parse two at a time, keep going if you
+   switch tabs or open a highlight, and the search runs by itself when the
+   batch finishes. Change the filters and hit **Find highlights** to re-run
+   without re-parsing; **Clear** starts a fresh batch.
 4. Click a highlight to open its demo at that round, a few seconds before the
    first kill, with the player selected. The list stays in the **★** tab of
    the left sidebar so you can jump between highlights across demos.
@@ -287,8 +294,10 @@ automatically re-parsed on next upload. If something still looks outdated
 - `DELETE /api/teams/{id}/demos/{demo_id}` — remove one demo
 
 ### Highlights
-- `POST /api/highlights` — `{demo_ids, player, weapons, min_kills}` → the
-  player's multi-kill rounds per demo (player = name or SteamID64)
+- `POST /api/highlights` — `{demo_ids, player, weapons, min_kills,
+  min_weapon_kills}` → the player's multi-kill rounds per demo (player = name
+  or SteamID64; `min_kills` counts any weapon, `min_weapon_kills` of them must
+  use one of `weapons`)
 - `GET /api/highlights/player-names` — distinct roster names for autocomplete
 
 ---

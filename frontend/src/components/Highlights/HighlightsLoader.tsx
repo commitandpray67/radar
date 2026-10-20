@@ -3,38 +3,34 @@
  *
  * Workflow:
  *   1. Choose the player (name or SteamID64 — before any demo is parsed), the
- *      weapon (e.g. Desert Eagle) and the minimum kills (3K+ / 4K+ / ACE).
+ *      minimum kills in a round (3K+ / 4K+ / ACE, any guns) and optionally one
+ *      or more weapons plus how many of those kills must use them (e.g. Desert
+ *      Eagle, at least 1 → 2 deagle + 1 AK counts as a deagle 3K).
  *   2. Drop any number of demos and/or pick cached ones from the library.
- *      Uploads parse two at a time (the backend's parse-pool size).
- *   3. When every demo is ready the search runs automatically; change the
- *      filters and hit "Find highlights" to re-run without re-parsing.
+ *      All drops share one queue that parses two at a time (the backend's
+ *      parse-pool size); re-dropped files are skipped.
+ *   3. When a batch finishes the search runs automatically; change the filters
+ *      and hit "Find highlights" to re-run without re-parsing.
  *   4. Click a highlight to open that demo at that round, just before the
  *      first kill. The results stay available in the in-app sidebar.
+ *
+ * The form and the batch live in useHighlightSession, so they (and uploads in
+ * flight) survive this component unmounting — switching loader tabs, opening a
+ * highlight, or coming back via "Load demo".
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { getHighlightPlayerNames, listDemos, searchHighlights } from '../../utils/api';
-import { uploadAndParse } from '../../utils/demoLoading';
+import { getHighlightPlayerNames, listDemos } from '../../utils/api';
 import { DEMO_ACCEPT, isAcceptedDemoFile } from '../../utils/demoFiles';
-import { HIGHLIGHT_WEAPONS, runWithConcurrency } from '../../utils/highlights';
+import { apiErrorMessage, searchInChunks } from '../../utils/highlights';
 import { useAppStore } from '../../store/demoStore';
-import type { DemoMeta, ParseJobStatus } from '../../types';
+import type { DemoMeta } from '../../types';
 import HighlightResults from './HighlightResults';
+import WeaponPicker from './WeaponPicker';
+import { PARSE_CONCURRENCY, sessionDemoIds, useHighlightSession } from './highlightSession';
 import loaderStyles from '../DemoLoader/DemoLoader.module.css';
 import teamStyles from '../DemoLoader/TeamLoader.module.css';
 import styles from './Highlights.module.css';
-
-interface QueuedDemo {
-  uid: string;
-  file: File;
-  demo_id: string;
-  status: 'queued' | 'uploading' | 'parsing' | 'ready' | 'error';
-  progress: number;    // 0..1
-  error?: string;
-}
-
-/** Demos parsed at once — matches the backend's parse pool. */
-const PARSE_CONCURRENCY = 2;
 
 const MIN_KILL_OPTIONS: ReadonlyArray<readonly [number, string]> = [
   [3, '3K+'],
@@ -48,87 +44,45 @@ interface Props {
 
 const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
   const inputRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const [player, setPlayer] = useState('');
-  const [weapon, setWeapon] = useState('deagle');
-  const [minKills, setMinKills] = useState(3);
-  const [queue, setQueue] = useState<QueuedDemo[]>([]);
   const [libraryDemos, setLibraryDemos] = useState<DemoMeta[]>([]);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [showLibrary, setShowLibrary] = useState(false);
   const [knownNames, setKnownNames] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
 
+  const session = useHighlightSession();
+  const {
+    player, weapons, minKills, minWeaponKills, picked, queue, notice, autoSearchPending,
+    setPlayer, setWeapons, setMinKills, setMinWeaponKills, setPicked, removeRow, clearBatch,
+    clearAutoSearch,
+  } = session;
+
   const result = useAppStore((s) => s.highlightSearch);
   const setResult = useAppStore((s) => s.setHighlightSearch);
 
   useEffect(() => {
     listDemos()
-      .then((d) => setLibraryDemos(d.sort((a, b) => b.parsed_at.localeCompare(a.parsed_at))))
+      .then((d) => {
+        setLibraryDemos(d.sort((a, b) => b.parsed_at.localeCompare(a.parsed_at)));
+        // Picks persist across mounts; drop any demo deleted from the library since.
+        const ids = new Set(d.map((x) => x.id));
+        const { picked: current, setPicked: setCurrent } = useHighlightSession.getState();
+        if ([...current].some((id) => !ids.has(id))) {
+          setCurrent(new Set([...current].filter((id) => ids.has(id))));
+        }
+      })
       .catch(() => setLibraryDemos([]));
     getHighlightPlayerNames()
       .then((n) => setKnownNames(n.map((x) => x.name)))
       .catch(() => {});
-    // Restore the previous search's filters when coming back to the loader.
-    const prev = useAppStore.getState().highlightSearch;
-    if (prev) {
-      setPlayer(prev.player);
-      setWeapon(prev.weapons[0] ?? '');
-      setMinKills(prev.min_kills);
-    }
-    return () => abortRef.current?.abort();
   }, []);
 
-  const patch = (uid: string, p: Partial<QueuedDemo>) =>
-    setQueue((prev) => prev.map((d) => (d.uid === uid ? { ...d, ...p } : d)));
-
-  const parseOne = useCallback(async (item: QueuedDemo) => {
-    if (!abortRef.current) abortRef.current = new AbortController();
-    patch(item.uid, { status: 'uploading' });
-    try {
-      const { demoId } = await uploadAndParse(item.file, {
-        signal: abortRef.current.signal,
-        onUploadProgress: (pct) => patch(item.uid, { progress: pct * 0.15 }),
-        onParseStatus: (s: ParseJobStatus) =>
-          patch(item.uid, { status: 'parsing', progress: s.progress }),
-      });
-      patch(item.uid, { status: 'ready', progress: 1, demo_id: demoId });
-    } catch (err) {
-      if ((err as { name?: string })?.name === 'AbortError') return;
-      patch(item.uid, {
-        status: 'error',
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }, []);
-
-  const addFiles = async (files: FileList | File[] | null) => {
-    if (!files) return;
-    const list = Array.from(files);
-    const bad = list.filter((f) => !isAcceptedDemoFile(f.name));
-    setErrorMsg(bad.length
-      ? `Skipped ${bad.length} non-demo file(s): ${bad.map((f) => f.name).join(', ')}`
-      : '');
-    const items: QueuedDemo[] = list
-      .filter((f) => isAcceptedDemoFile(f.name))
-      .map((file) => ({
-        uid: crypto.randomUUID(),
-        file,
-        demo_id: '',
-        status: 'queued',
-        progress: 0,
-      }));
-    if (items.length === 0) return;
-    setQueue((prev) => [...prev, ...items]);
-    await runWithConcurrency(items, PARSE_CONCURRENCY, parseOne);
+  const addFiles = (files: FileList | File[] | null) => {
+    if (files && files.length) session.addFiles(Array.from(files), isAcceptedDemoFile);
   };
 
-  const demoIds = Array.from(new Set([
-    ...queue.filter((d) => d.status === 'ready').map((d) => d.demo_id),
-    ...picked,
-  ]));
+  const demoIds = sessionDemoIds(session);
   const busy = queue.some((d) => d.status === 'queued' || d.status === 'uploading' || d.status === 'parsing');
   const readyCount = queue.filter((d) => d.status === 'ready').length;
   const canSearch = !busy && !searching && demoIds.length > 0 && player.trim() !== '';
@@ -137,40 +91,44 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
     setSearching(true);
     setErrorMsg('');
     try {
-      const res = await searchHighlights({
+      const res = await searchInChunks({
         demo_ids: demoIds,
         player: player.trim(),
-        weapons: weapon ? [weapon] : [],
+        weapons,
         min_kills: minKills,
+        min_weapon_kills: Math.min(minWeaponKills, minKills),
       });
       setResult(res);
     } catch (err) {
-      const msg = (err as { response?: { data?: { detail?: unknown } } })
-        ?.response?.data?.detail ?? (err as Error)?.message ?? 'Search failed';
-      setErrorMsg(typeof msg === 'string' ? msg : 'Search failed — check the inputs');
+      setErrorMsg(apiErrorMessage(err, 'Search failed'));
     } finally {
       setSearching(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoIds.join(','), player, weapon, minKills, setResult]);
+  }, [demoIds.join(','), player, weapons.join(','), minKills, minWeaponKills, setResult]);
 
-  // Search automatically when a batch of uploads finishes parsing (busy → idle),
-  // so a 20-demo drop needs no further clicks.
-  const wasBusy = useRef(false);
+  // A finished batch is searched automatically, once — as soon as nothing is
+  // parsing or searching (also after this component remounts). The flag is
+  // read live from the store so StrictMode's double-run of the mount effect
+  // sees it already cleared. If the batch was cleared meanwhile, disarm it.
   useEffect(() => {
-    if (wasBusy.current && !busy && canSearch) runSearch();
-    wasBusy.current = busy;
-  }, [busy, canSearch, runSearch]);
+    if (!useHighlightSession.getState().autoSearchPending) return;
+    if (canSearch) {
+      clearAutoSearch();
+      runSearch();
+    } else if (!busy && !searching && demoIds.length === 0) {
+      clearAutoSearch();
+    }
+  }, [autoSearchPending, canSearch, busy, searching, demoIds.length, runSearch, clearAutoSearch]);
 
-  const togglePicked = (id: string) =>
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  const togglePicked = (id: string) => {
+    const next = new Set(picked);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setPicked(next);
+  };
 
   const onDrop = (e: React.DragEvent) => {
-    // Keep the outer loader's single-demo drop handler from firing too.
+    // Keep the outer loader's drop handler from also receiving these files.
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
@@ -181,7 +139,7 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
     <div className={teamStyles.root}>
       <p className={teamStyles.intro}>
         Pick a player, then drop a batch of demos — every round where they hit a
-        multi-kill with the chosen weapon is listed, ready to replay.
+        multi-kill (optionally using the chosen weapons) is listed, ready to replay.
       </p>
 
       <div className={styles.form}>
@@ -200,34 +158,42 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
             {knownNames.map((n) => <option key={n} value={n} />)}
           </datalist>
         </label>
-        <div className={styles.row}>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Weapon</span>
-            <select
-              className={styles.select}
-              value={weapon}
-              onChange={(e) => setWeapon(e.target.value)}
-            >
-              {HIGHLIGHT_WEAPONS.map(([token, label]) => (
-                <option key={token || 'any'} value={token}>{label}</option>
-              ))}
-            </select>
-          </label>
+        <div className={styles.field}>
+          <span className={styles.fieldLabel}>Kills in a round (any guns)</span>
+          <div className={styles.chips}>
+            {MIN_KILL_OPTIONS.map(([n, label]) => (
+              <button
+                key={n}
+                className={`${styles.chip} ${minKills === n ? styles.chipActive : ''}`}
+                onClick={() => setMinKills(n)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className={styles.field}>
+          <span className={styles.fieldLabel}>Weapons</span>
+          <WeaponPicker selected={weapons} onChange={setWeapons} />
+        </div>
+        {weapons.length > 0 && (
           <div className={styles.field}>
-            <span className={styles.fieldLabel}>Kills in a round</span>
+            <span className={styles.fieldLabel}>
+              At least this many of the kills with {weapons.length > 1 ? 'these weapons' : 'this weapon'}
+            </span>
             <div className={styles.chips}>
-              {MIN_KILL_OPTIONS.map(([n, label]) => (
+              {Array.from({ length: minKills }, (_, i) => i + 1).map((n) => (
                 <button
                   key={n}
-                  className={`${styles.chip} ${minKills === n ? styles.chipActive : ''}`}
-                  onClick={() => setMinKills(n)}
+                  className={`${styles.chip} ${Math.min(minWeaponKills, minKills) === n ? styles.chipActive : ''}`}
+                  onClick={() => setMinWeaponKills(n)}
                 >
-                  {label}
+                  {n}
                 </button>
               ))}
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div
@@ -271,7 +237,7 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
                 {(d.status === 'ready' || d.status === 'error') && (
                   <button
                     className={teamStyles.removeBtn}
-                    onClick={() => setQueue((prev) => prev.filter((x) => x.uid !== d.uid))}
+                    onClick={() => removeRow(d.uid)}
                     title="Remove"
                   >
                     ✕
@@ -320,6 +286,17 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
         </div>
       )}
 
+      {demoIds.length > 0 && (
+        <p className={styles.queueSummary}>
+          {demoIds.length} demo{demoIds.length !== 1 ? 's' : ''} selected
+          {' '}({readyCount} uploaded, {picked.size} from library)
+          {' · '}
+          <button type="button" className={styles.linkBtn} onClick={clearBatch}>
+            Clear
+          </button>
+        </p>
+      )}
+
       <button
         className={teamStyles.createBtn}
         onClick={runSearch}
@@ -332,7 +309,7 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
           : `Find highlights (${demoIds.length} demo${demoIds.length !== 1 ? 's' : ''})`}
       </button>
 
-      {errorMsg && <p className={teamStyles.validErr}>{errorMsg}</p>}
+      {(errorMsg || notice) && <p className={teamStyles.validErr}>{[notice, errorMsg].filter(Boolean).join(' ')}</p>}
 
       {result && <HighlightResults result={result} onOpened={onComplete} />}
     </div>

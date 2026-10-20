@@ -1,8 +1,9 @@
 """
 Cross-demo player highlight search.
 
-  POST /highlights              – one player's multi-kill rounds (optionally
-                                  weapon-filtered) across a set of parsed demos
+  POST /highlights              – one player's multi-kill rounds across a set
+                                  of parsed demos, optionally requiring some
+                                  of the kills to be with chosen weapons
   GET  /highlights/player-names – distinct player names in the library, for
                                   autocomplete before demos are uploaded
 
@@ -18,7 +19,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from analytics.highlights import find_highlights, normalize_weapon
+from analytics.highlights import candidate_rounds, find_highlights, normalize_weapon
 from db.database import fetch_round_sides, get_connection
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,9 @@ router = APIRouter()
 class HighlightsPayload(BaseModel):
     demo_ids: list[str] = Field(min_length=1, max_length=200)
     player: str = Field(min_length=1, max_length=64)
-    weapons: list[str] = []  # empty → any weapon
-    min_kills: int = Field(default=3, ge=1, le=5)
+    weapons: list[str] = Field(default=[], max_length=64)  # empty → any weapon
+    min_kills: int = Field(default=3, ge=1, le=5)  # round kills, any weapon
+    min_weapon_kills: int = Field(default=1, ge=1, le=5)  # of which with `weapons`
 
 
 def _is_steamid(s: str) -> bool:
@@ -81,8 +83,8 @@ async def search_highlights(payload: HighlightsPayload):
                 continue
 
             cur = await conn.execute(
-                "SELECT round_number, is_knife_round, winner_team FROM rounds "
-                "WHERE demo_id = ? ORDER BY round_number",
+                "SELECT round_number, is_knife_round, winner_team, start_tick, end_tick "
+                "FROM rounds WHERE demo_id = ? ORDER BY round_number",
                 (demo_id,),
             )
             rounds = [dict(r) for r in await cur.fetchall()]
@@ -93,23 +95,38 @@ async def search_highlights(payload: HighlightsPayload):
                 (demo_id,),
             )
             deaths = [dict(r) for r in await cur.fetchall()]
-            sides = await fetch_round_sides(conn, demo_id)
+            # Sides are only needed for rounds that can qualify; skipping the
+            # rest avoids scanning every position row of every demo.
+            all_ids = {p["player_id"] for p in matched}
+            cands = candidate_rounds(rounds, deaths, all_ids, payload.min_kills, entry["tick_rate"])
+            sides = await fetch_round_sides(conn, demo_id, rounds=cands) if cands else {}
 
-            entry["highlights"] = find_highlights(
-                rounds,
-                deaths,
-                sides,
-                {p["player_id"] for p in matched},
-                names,
-                entry["tick_rate"],
-                weapons=wanted,
-                min_kills=payload.min_kills,
-            )
+            # Evaluate each matched SteamID on its own: two players who share a
+            # name must never have their kills pooled into a fake multi-kill.
+            highlights: list[dict] = []
+            for p in matched:
+                for h in find_highlights(
+                    rounds,
+                    deaths,
+                    sides,
+                    {p["player_id"]},
+                    names,
+                    entry["tick_rate"],
+                    weapons=wanted,
+                    min_kills=payload.min_kills,
+                    min_weapon_kills=payload.min_weapon_kills,
+                ):
+                    h["player_id"] = str(p["player_id"])
+                    h["player_name"] = p["name"]
+                    highlights.append(h)
+            highlights.sort(key=lambda h: (h["round_number"], h["first_kill_tick"]))
+            entry["highlights"] = highlights
 
     return {
         "player": query,
         "weapons": sorted(wanted) if wanted else [],
         "min_kills": payload.min_kills,
+        "min_weapon_kills": payload.min_weapon_kills if wanted else 0,
         "total": sum(len(r["highlights"]) for r in results),
         "demos": results,
     }

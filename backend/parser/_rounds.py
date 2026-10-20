@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ._types import RoundInfo
-from ._utils import _build_round_lookup, _rows, _to_int
+from ._utils import _build_round_lookup, _rows, _to_int, leading_knife_rounds
 
 if TYPE_CHECKING:
     from ._types import PlayerPosition
@@ -205,20 +205,14 @@ def _extract_rounds(parser, tick_rate: float = 64.0) -> list[RoundInfo]:
         logger.warning("Could not parse player_death for knife detection: %s", exc)
         death_rows = []
 
-    deaths_by_round: dict[int, list] = {}
+    weapons_by_round: dict[int, list] = {}
     for d in death_rows:
         rn = _rn_lookup(_to_int(d.get("tick", 0)))
         if rn:
-            deaths_by_round.setdefault(rn, []).append(d)
-
+            weapons_by_round.setdefault(rn, []).append(d.get("weapon", ""))
+    knife_rounds = leading_knife_rounds([r.round_number for r in rounds], weapons_by_round)
     for r in rounds:
-        kills = deaths_by_round.get(r.round_number, [])
-        if kills and all(
-            (lambda w: w.startswith("knife") or w == "knifegg")(
-                str(d.get("weapon", "")).lower().removeprefix("weapon_")
-            )
-            for d in kills
-        ):
+        if r.round_number in knife_rounds:
             r.is_knife_round = True
 
     # ---- Cumulative scores (accounts for halftime side swap) ---------------

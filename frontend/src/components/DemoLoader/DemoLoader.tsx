@@ -25,6 +25,7 @@ import TeamSessionLibrary from './TeamSessionLibrary';
 import TeamOrganizer from './TeamOrganizer';
 import FaceitLoader from './FaceitLoader';
 import HighlightsLoader from '../Highlights/HighlightsLoader';
+import { useHighlightSession } from '../Highlights/highlightSession';
 import styles from './DemoLoader.module.css';
 
 type LoadPhase =
@@ -136,6 +137,12 @@ const DemoLoader: React.FC = () => {
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
+    // Files dropped anywhere on the loader while the Highlights tab is open are
+    // a batch for it, not a single demo to open.
+    if (tab === 'highlights' && phase === 'idle') {
+      useHighlightSession.getState().addFiles(Array.from(e.dataTransfer.files), isAcceptedDemoFile);
+      return;
+    }
     const file = e.dataTransfer.files[0];
     if (file) processFile(file);
   };

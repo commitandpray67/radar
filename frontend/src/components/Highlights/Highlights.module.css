@@ -249,3 +249,113 @@
   gap: 8px;
   padding: 8px;
 }
+
+/* ---- Weapon picker ---- */
+
+.weaponPicker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.weaponToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 8px;
+  background: #131d2c;
+  border: 1px solid #2a3a52;
+  border-radius: 4px;
+  color: #c0cfe0;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.weaponToggle:hover { border-color: #2a6abf; }
+
+.weaponSummary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weaponPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #0f1722;
+  border: 1px solid #1e2d3f;
+  border-radius: 4px;
+}
+
+.weaponPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weaponGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.weaponGroupName {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6a7a8a;
+  font-family: 'Inter', sans-serif;
+}
+
+.weaponChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.weaponChip {
+  padding: 4px 7px;
+  background: #131d2c;
+  border: 1px solid #2a3a52;
+  border-radius: 4px;
+  color: #8090a0;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.weaponChip:hover { color: #c0cfe0; }
+
+.fieldHint {
+  font-size: 11px;
+  color: #6a7a8a;
+  font-family: 'Inter', sans-serif;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #5b9bd5;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+}
+
+.linkBtn:hover { text-decoration: underline; }
+
+.matchKill { color: #e0b84a; }
+
+.weaponChip.chipActive {
+  background: #1a3d5c;
+  border-color: #2a6abf;
+  color: #5b9bd5;
+}
