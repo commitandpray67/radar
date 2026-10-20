@@ -64,9 +64,7 @@ router = APIRouter()
 
 # Shared executor for the CPU/IO-heavy demo parse. Bounded so concurrent
 # uploads queue instead of each spawning its own pool (and blowing memory).
-_PARSE_POOL = concurrent.futures.ThreadPoolExecutor(
-    max_workers=2, thread_name_prefix="demo-parse"
-)
+_PARSE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="demo-parse")
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +150,7 @@ async def upload_demo(
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    return await start_parse_job(dem_path, _clean_demo_name(file.filename), force=force)
+    return await start_parse_job(dem_path, _clean_demo_name(file.filename or ""), force=force)
 
 
 async def start_parse_job(dem_path: Path, filename: str, *, force: bool = False) -> dict:
@@ -398,11 +396,15 @@ async def parse_status_stream(job_id: str):
             if job is None or job["status"] in ("complete", "error"):
                 return
             if time.monotonic() > deadline:
-                stalled = json.dumps({
-                    "status": "error", "progress": 0,
-                    "message": "Parse timed out — please try again.",
-                    "demo_id": job.get("demo_id", ""), "filename": job.get("filename", ""),
-                })
+                stalled = json.dumps(
+                    {
+                        "status": "error",
+                        "progress": 0,
+                        "message": "Parse timed out — please try again.",
+                        "demo_id": job.get("demo_id", ""),
+                        "filename": job.get("filename", ""),
+                    }
+                )
                 yield f"data: {stalled}\n\n"
                 return
             await asyncio.sleep(0.5)
@@ -518,8 +520,7 @@ async def get_round_sides(demo_id: str):
         sides = await fetch_round_sides(conn, demo_id)
     # Stringify keys for JSON (SteamID64 precision + object keys must be strings).
     return {
-        str(rn): {str(pid): side for pid, side in players.items()}
-        for rn, players in sides.items()
+        str(rn): {str(pid): side for pid, side in players.items()} for rn, players in sides.items()
     }
 
 
@@ -543,9 +544,7 @@ async def get_positions(
     single JSON response, so at least one scoping filter is required.
     """
     if round_number is None and tick_min is None and tick_max is None:
-        raise HTTPException(
-            400, "Provide round_number or a tick range (tick_min/tick_max)."
-        )
+        raise HTTPException(400, "Provide round_number or a tick range (tick_min/tick_max).")
 
     clauses: list[str] = ["demo_id = ?"]
     params: list = [demo_id]

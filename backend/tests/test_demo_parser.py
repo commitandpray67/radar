@@ -212,8 +212,8 @@ def test_tracks_resting_and_flying_grenades_stay_separate() -> None:
     rows = []
     for i in range(30):
         tick = 1000 + i * 2
-        rows.append(_row(tick, 0, 0))                 # resting smoke
-        rows.append(_row(tick, 100 + i * 15, 50))     # flying smoke, passes nearby
+        rows.append(_row(tick, 0, 0))  # resting smoke
+        rows.append(_row(tick, 100 + i * 15, 50))  # flying smoke, passes nearby
     rows.sort(key=lambda r: r["tick"])
 
     tracks = _build_tracks(rows)
@@ -244,7 +244,7 @@ def test_tracks_known_throwers_never_mix() -> None:
     rows = []
     for i in range(20):
         tick = 100 + i
-        rows.append(_row(tick, i * 20, 0, thrower=111))        # left → right
+        rows.append(_row(tick, i * 20, 0, thrower=111))  # left → right
         rows.append(_row(tick, 380 - i * 20, 40, thrower=222))  # right → left
     rows.sort(key=lambda r: r["tick"])
 

@@ -17,7 +17,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Protocol
 
 # ---------------------------------------------------------------------------
 # Configurable data paths
@@ -143,7 +143,8 @@ def _sweep_finished_jobs() -> None:
     """Drop terminal job entries older than the TTL."""
     cutoff = time.time() - _JOB_TTL_SECONDS
     stale = [
-        k for k, v in _parse_jobs.items()
+        k
+        for k, v in _parse_jobs.items()
         if v.get("_finished_at") is not None and v["_finished_at"] < cutoff
     ]
     for k in stale:
@@ -153,6 +154,7 @@ def _sweep_finished_jobs() -> None:
 def _public_job(job: dict) -> dict:
     """Job entry without internal (underscore-prefixed) bookkeeping keys."""
     return {k: v for k, v in job.items() if not k.startswith("_")}
+
 
 # Prevents concurrent parses of the same demo (identified by content hash).
 _parse_locks: dict[str, asyncio.Lock] = {}
@@ -179,7 +181,11 @@ class DecompressionError(Exception):
     """Raised when a compressed demo cannot be decompressed."""
 
 
-def _copy_capped(reader: BinaryIO, out: BinaryIO, cap: int) -> None:
+class _ByteReader(Protocol):
+    def read(self, size: int = ..., /) -> bytes: ...
+
+
+def _copy_capped(reader: _ByteReader, out: BinaryIO, cap: int) -> None:
     """Stream ``reader`` into ``out`` in chunks, raising past ``cap`` bytes."""
     written = 0
     while True:
@@ -188,9 +194,7 @@ def _copy_capped(reader: BinaryIO, out: BinaryIO, cap: int) -> None:
             break
         written += len(chunk)
         if written > cap:
-            raise DecompressionError(
-                f"Decompressed demo too large (> {cap // 1_000_000} MB)."
-            )
+            raise DecompressionError(f"Decompressed demo too large (> {cap // 1_000_000} MB).")
         out.write(chunk)
 
 

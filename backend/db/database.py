@@ -298,9 +298,7 @@ async def fetch_round_sides(
     )
     out: dict[int, dict[int, str]] = {}
     for r in await cur.fetchall():
-        out.setdefault(r["round_number"], {})[r["player_id"]] = (
-            "CT" if r["team_num"] == 3 else "T"
-        )
+        out.setdefault(r["round_number"], {})[r["player_id"]] = "CT" if r["team_num"] == 3 else "T"
     return out
 
 

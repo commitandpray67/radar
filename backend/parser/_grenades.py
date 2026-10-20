@@ -147,8 +147,7 @@ def _build_tracks(bucket_sorted: list[dict]) -> list[list[dict]]:
         obs: list[dict] = []
         for row in tick_rows:
             if not any(
-                (row["x"] - o["x"]) ** 2 + (row["y"] - o["y"]) ** 2 <= DUP_DIST_SQ
-                for o in obs
+                (row["x"] - o["x"]) ** 2 + (row["y"] - o["y"]) ** 2 <= DUP_DIST_SQ for o in obs
             ):
                 obs.append(row)
 

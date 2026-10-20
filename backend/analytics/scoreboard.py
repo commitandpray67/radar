@@ -81,7 +81,7 @@ def compute_scoreboard(
     # Group deaths by round, ordered by tick.
     by_round: dict[int, list[dict]] = {}
     for d in deaths:
-        rn = d.get("round_number")
+        rn = d.get("round_number") or 0
         if rn in valid_rounds:
             by_round.setdefault(rn, []).append(d)
     for lst in by_round.values():
@@ -134,7 +134,7 @@ def compute_scoreboard(
                         and (d.get("tick") or 0) - (prior.get("tick") or 0) <= trade_ticks
                     ):
                         pv = prior.get("victim_id")
-                        if a_side and rsides.get(pv) == a_side:
+                        if a_side and pv is not None and rsides.get(pv) == a_side:
                             stats[atk]["trade_kills"] += 1
                             if pv in stats:
                                 stats[pv]["traded_deaths"] += 1

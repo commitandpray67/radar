@@ -578,8 +578,7 @@ async def common_matches(payload: CommonMatchesPayload) -> CommonMatchesResponse
 
         map_names = await asyncio.gather(*(_get_map(m.match_id) for m in matches))
         matches = [
-            m.model_copy(update={"map": mn})
-            for m, mn in zip(matches, map_names, strict=False)
+            m.model_copy(update={"map": mn}) for m, mn in zip(matches, map_names, strict=False)
         ]
 
     return CommonMatchesResponse(matches=matches, analyzed=len(history))
@@ -718,8 +717,8 @@ def _extract_player_map_segments(stats_json: dict) -> list[PlayerMapSegment]:
     return out
 
 
-_PLAYER_STATS_WINDOW = 300      # history items fetched per player
-_PLAYER_STATS_CAP = 40          # max match-stats fetches per player (bounds API calls)
+_PLAYER_STATS_WINDOW = 300  # history items fetched per player
+_PLAYER_STATS_CAP = 40  # max match-stats fetches per player (bounds API calls)
 
 
 @router.post("/faceit/player-map-stats", response_model=PlayerMapStatsResponse)
@@ -760,9 +759,7 @@ async def player_map_stats(payload: PlayerMapStatsPayload) -> PlayerMapStatsResp
         return mid, rnd
 
     results = await asyncio.gather(*(_one_match(mid) for mid in all_match_ids))
-    stats_by_match: dict[str, dict] = {
-        mid: rnd for mid, rnd in results if rnd is not None
-    }
+    stats_by_match: dict[str, dict] = {mid: rnd for mid, rnd in results if rnd is not None}
 
     # Aggregate per player, per map — sorted alphabetically.
     players_out: list[PlayerMapStats] = []
@@ -894,9 +891,7 @@ async def _doh_resolve(hostname: str) -> list[str]:
                 logger.info("DoH resolved %s -> %s via %s", hostname, ips, endpoint)
                 return ips
         except (httpx.RequestError, ValueError, KeyError) as exc:
-            logger.warning(
-                "DoH resolve via %s failed: %s: %s", endpoint, type(exc).__name__, exc
-            )
+            logger.warning("DoH resolve via %s failed: %s: %s", endpoint, type(exc).__name__, exc)
     return []
 
 
@@ -949,9 +944,7 @@ async def _download_capped(urls: list[str], dest: Path) -> None:
                 ip_url = url.replace(f"://{host}", f"://{ip}", 1)
                 try:
                     logger.info("Retrying demo download via DoH IP %s for %s", ip, host)
-                    await _stream_to_file(
-                        client, ip_url, dest, sni_hostname=host, host_header=host
-                    )
+                    await _stream_to_file(client, ip_url, dest, sni_hostname=host, host_header=host)
                     return
                 except HTTPException:
                     raise
