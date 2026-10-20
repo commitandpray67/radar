@@ -87,7 +87,12 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
   const readyCount = queue.filter((d) => d.status === 'ready').length;
   const canSearch = !busy && !searching && demoIds.length > 0 && player.trim() !== '';
 
+  // Bumped by every search and by Clear: a search whose result arrives after
+  // either is stale and is dropped.
+  const searchSeq = useRef(0);
+
   const runSearch = useCallback(async () => {
+    const mySeq = ++searchSeq.current;
     setSearching(true);
     setErrorMsg('');
     try {
@@ -98,9 +103,9 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
         min_kills: minKills,
         min_weapon_kills: Math.min(minWeaponKills, minKills),
       });
-      setResult(res);
+      if (mySeq === searchSeq.current) setResult(res);
     } catch (err) {
-      setErrorMsg(apiErrorMessage(err, 'Search failed'));
+      if (mySeq === searchSeq.current) setErrorMsg(apiErrorMessage(err, 'Search failed'));
     } finally {
       setSearching(false);
     }
@@ -291,7 +296,12 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
           {demoIds.length} demo{demoIds.length !== 1 ? 's' : ''} selected
           {' '}({readyCount} uploaded, {picked.size} from library)
           {' · '}
-          <button type="button" className={styles.linkBtn} onClick={clearBatch}>
+          <button
+            type="button"
+            className={styles.linkBtn}
+            // A fresh batch: also drop the previous search's results.
+            onClick={() => { searchSeq.current += 1; clearBatch(); setResult(null); }}
+          >
             Clear
           </button>
         </p>
