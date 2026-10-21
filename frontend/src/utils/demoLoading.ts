@@ -19,6 +19,7 @@ import {
   getPlayerStateEvents,
   getDemo,
   getMaps,
+  reparseDemo,
   uploadDemo,
   watchParseStatus,
 } from './api';
@@ -123,6 +124,19 @@ export async function uploadAndParse(
     });
   }
   return { demoId: demo_id, cached };
+}
+
+/**
+ * Re-parse a cached demo from the file the server kept (to bring a demo parsed
+ * by an older parser version up to date) and wait for it to finish.
+ */
+export async function reparseAndWait(
+  demoId: string,
+  opts: { signal?: AbortSignal; onParseStatus?: (s: ParseJobStatus) => void } = {},
+): Promise<{ demoId: string }> {
+  const { job_id, demo_id } = await reparseDemo(demoId);
+  await watchParseStatus(job_id, (s) => opts.onParseStatus?.(s), { signal: opts.signal });
+  return { demoId: demo_id };
 }
 
 /**

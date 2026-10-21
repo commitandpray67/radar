@@ -52,6 +52,8 @@ interface Props {
   onComplete: () => void;       // called after a map's session is loaded
 }
 
+let uidSeq = 0;
+
 const TeamLoader: React.FC<Props> = ({ onComplete }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [demos, setDemos] = useState<UploadedDemo[]>([]);
@@ -86,7 +88,9 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
       return;
     }
     // Stable id so same-named files never clobber each other's progress rows.
-    const uid = crypto.randomUUID();
+    // (A counter, not crypto.randomUUID: that only exists on secure origins,
+    // so it throws when the app is opened over plain http from another host.)
+    const uid = `t${++uidSeq}`;
     const tempEntry: UploadedDemo = {
       uid,
       demo_id: '',
@@ -103,7 +107,7 @@ const TeamLoader: React.FC<Props> = ({ onComplete }) => {
         onUploadProgress: (pct) => {
           setDemos((prev) => prev.map((d) =>
             d.uid === uid && d.status === 'uploading'
-              ? { ...d, progress: pct * 0.15 }
+              ? { ...d, progress: pct }
               : d,
           ));
         },

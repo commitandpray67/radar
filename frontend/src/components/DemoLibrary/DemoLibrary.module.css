@@ -134,3 +134,35 @@
   background: #1a2030 !important;
   border-color: #2a4a7a !important;
 }
+
+.updateBtn {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  background: #4a3a1a;
+  border: 1px solid #7a5f22;
+  border-radius: 3px;
+  color: #e0b84a;
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.updateBtn:hover:not(:disabled) { background: #5c4920; }
+.updateBtn:disabled { cursor: progress; opacity: 0.8; }
+
+.outdatedTag {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #4a3a1a;
+  color: #e0b84a;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.updateError {
+  font-size: 10px;
+  color: #e05a5a;
+}

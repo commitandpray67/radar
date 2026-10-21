@@ -10,6 +10,10 @@ export interface DemoMeta {
   total_ticks: number;
   parsed_at: string;     // ISO timestamp
   file_size?: number;    // bytes
+  /** Parsed by an older parser version — re-parse to pick up later fixes. */
+  outdated?: boolean;
+  /** The original file is stored on the server, so it can be re-parsed in place. */
+  reparsable?: boolean;
 }
 
 export interface RoundInfo {

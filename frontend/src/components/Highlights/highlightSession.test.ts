@@ -11,6 +11,10 @@ vi.mock('../../utils/demoLoading', () => ({
         reject,
       });
     }),
+  reparseAndWait: (demoId: string) =>
+    new Promise<{ demoId: string }>((resolve, reject) => {
+      calls.push({ name: `reparse:${demoId}`, resolve: () => resolve({ demoId }), reject });
+    }),
 }));
 
 import { PARSE_CONCURRENCY, sessionDemoIds, useHighlightSession } from './highlightSession';
@@ -18,7 +22,7 @@ import { PARSE_CONCURRENCY, sessionDemoIds, useHighlightSession } from './highli
 const file = (name: string) => new File(['x'], name, { lastModified: 1 });
 const accept = (n: string) => n.endsWith('.dem');
 const flush = () => new Promise((r) => setTimeout(r, 0));
-const status = () => useHighlightSession.getState().queue.map((d) => `${d.file.name}:${d.status}`);
+const status = () => useHighlightSession.getState().queue.map((d) => `${d.name}:${d.status}`);
 
 beforeEach(async () => {
   // Drain anything still in flight from a previous test, then reset.
@@ -109,5 +113,36 @@ describe('highlight upload session — auto-search disarm', () => {
     expect(useHighlightSession.getState().autoSearchPending).toBe(true);
     s.clearBatch();
     expect(useHighlightSession.getState().autoSearchPending).toBe(false);
+  });
+});
+
+describe('highlight upload session — re-parsing outdated demos', () => {
+  it('re-parses cached demos through the same queue and dedupes them', async () => {
+    const s = useHighlightSession.getState();
+    s.setPlayer('Qiyarah');
+    s.setPicked(new Set(['old1', 'old2']));
+    s.reparseDemos([{ id: 'old1', filename: 'm1.dem' }, { id: 'old2', filename: 'm2.dem' }]);
+    s.reparseDemos([{ id: 'old1', filename: 'm1.dem' }]); // already queued
+    await flush();
+    expect(calls.map((c) => c.name)).toEqual(['reparse:old1', 'reparse:old2']);
+    expect(status()).toEqual(['m1.dem:parsing', 'm2.dem:parsing']);
+    calls.shift()!.resolve();
+    calls.shift()!.resolve();
+    await flush();
+    expect(status()).toEqual(['m1.dem:ready', 'm2.dem:ready']);
+    // The demo ids are unchanged, so the selection is not duplicated, and the
+    // finished batch arms the auto-search.
+    expect(sessionDemoIds(useHighlightSession.getState())).toEqual(['old1', 'old2']);
+    expect(useHighlightSession.getState().autoSearchPending).toBe(true);
+  });
+
+  it('reports a failed update on the row', async () => {
+    useHighlightSession.getState().reparseDemos([{ id: 'gone', filename: 'g.dem' }]);
+    await flush();
+    calls.shift()!.reject(new Error('The original demo file is not stored'));
+    await flush();
+    const row = useHighlightSession.getState().queue[0];
+    expect(row.status).toBe('error');
+    expect(row.error).toBe('The original demo file is not stored');
   });
 });

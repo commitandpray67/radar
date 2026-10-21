@@ -11,6 +11,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
+from analytics.highlights import round_assigner
 from analytics.scoreboard import compute_scoreboard
 from db.database import fetch_round_sides, get_connection
 
@@ -29,8 +30,8 @@ async def get_scoreboard(demo_id: str):
         tick_rate = demo_row["tick_rate"] or 64.0
 
         cur = await conn.execute(
-            "SELECT round_number, is_knife_round, winner_team FROM rounds "
-            "WHERE demo_id = ? ORDER BY round_number",
+            "SELECT round_number, is_knife_round, winner_team, start_tick, end_tick "
+            "FROM rounds WHERE demo_id = ? ORDER BY round_number",
             (demo_id,),
         )
         rounds = [dict(r) for r in await cur.fetchall()]
@@ -47,7 +48,10 @@ async def get_scoreboard(demo_id: str):
             "ORDER BY tick",
             (demo_id,),
         )
-        deaths = [dict(r) for r in await cur.fetchall()]
+        # Exit frags (kills just after round_end, stored as round 0) count for
+        # the round that ended — as CS2's own scoreboard and the highlights do.
+        assign = round_assigner(rounds, tick_rate)
+        deaths = [{**d, "round_number": assign(d)} for d in map(dict, await cur.fetchall())]
 
         sides = await fetch_round_sides(conn, demo_id)
 

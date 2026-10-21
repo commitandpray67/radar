@@ -4,18 +4,22 @@
  * Kept outside the component so they survive it unmounting: switching loader
  * tabs, opening a highlight, or coming back via "Load demo" never loses the
  * filters or the batch. Uploads keep going in the background, at most
- * PARSE_CONCURRENCY at a time, across every drop.
+ * PARSE_CONCURRENCY at a time, across every drop. The same queue also
+ * re-parses cached demos from their stored file (to update demos parsed by an
+ * older parser version).
  */
 
 import { create } from 'zustand';
-import { uploadAndParse } from '../../utils/demoLoading';
+import { reparseAndWait, uploadAndParse } from '../../utils/demoLoading';
 import { apiErrorMessage } from '../../utils/highlights';
 import type { ParseJobStatus } from '../../types';
 
 export interface QueuedDemo {
   uid: string;
-  file: File;
-  fileKey: string;     // name|size|mtime — dedupes re-dropped files
+  name: string;        // shown in the list
+  file?: File;         // an upload…
+  reparseId?: string;  // …or a cached demo to re-parse from its stored file
+  fileKey: string;     // name|size|mtime (or reparse|id) — dedupes re-adds
   demo_id: string;
   status: 'queued' | 'uploading' | 'parsing' | 'ready' | 'error';
   progress: number;    // 0..1 of the current step (upload, then parse)
@@ -44,6 +48,8 @@ interface HighlightSession {
   setMinWeaponKills: (n: number) => void;
   setPicked: (picked: Set<string>) => void;
   addFiles: (files: File[], accept: (name: string) => boolean) => void;
+  /** Queue cached demos for a re-parse from their stored file. */
+  reparseDemos: (demos: { id: string; filename: string }[]) => void;
   removeRow: (uid: string) => void;
   /** Forget finished rows and library picks (uploads in flight carry on). */
   clearBatch: () => void;
@@ -51,6 +57,7 @@ interface HighlightSession {
 }
 
 const fileKey = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
+export const reparseKey = (demoId: string) => `reparse|${demoId}`;
 const isLive = (d: QueuedDemo) => d.status !== 'ready' && d.status !== 'error';
 
 /** demo_ids a search would cover: parsed uploads plus library picks. */
@@ -70,17 +77,28 @@ export const useHighlightSession = create<HighlightSession>()((set, get) => {
     set((s) => ({ queue: s.queue.map((d) => (d.uid === uid ? { ...d, ...p } : d)) }));
 
   const parseOne = async (item: QueuedDemo) => {
-    patch(item.uid, { status: 'uploading', progress: 0 });
+    const onParseStatus = (st: ParseJobStatus) =>
+      patch(item.uid, { status: 'parsing', progress: st.progress });
+    patch(item.uid, { status: item.file ? 'uploading' : 'parsing', progress: 0 });
     try {
-      const { demoId } = await uploadAndParse(item.file, {
-        onUploadProgress: (pct) => patch(item.uid, { progress: pct }),
-        onParseStatus: (st: ParseJobStatus) =>
-          patch(item.uid, { status: 'parsing', progress: st.progress }),
-      });
+      const { demoId } = item.file
+        ? await uploadAndParse(item.file, {
+          onUploadProgress: (pct) => patch(item.uid, { progress: pct }),
+          onParseStatus,
+        })
+        : await reparseAndWait(item.reparseId!, { onParseStatus });
       patch(item.uid, { status: 'ready', progress: 1, demo_id: demoId });
     } catch (err) {
-      patch(item.uid, { status: 'error', error: apiErrorMessage(err, 'Upload failed') });
+      patch(item.uid, {
+        status: 'error',
+        error: apiErrorMessage(err, item.file ? 'Upload failed' : 'Update failed'),
+      });
     }
+  };
+
+  const enqueue = (items: QueuedDemo[]) => {
+    pending.push(...items);
+    pump();
   };
 
   const pump = () => {
@@ -130,6 +148,7 @@ export const useHighlightSession = create<HighlightSession>()((set, get) => {
       const dupes = files.length - bad.length - fresh.length;
       const items: QueuedDemo[] = fresh.map((file) => ({
         uid: `q${++seq}`,
+        name: file.name,
         file,
         fileKey: fileKey(file),
         demo_id: '',
@@ -143,8 +162,26 @@ export const useHighlightSession = create<HighlightSession>()((set, get) => {
           dupes ? `Skipped ${dupes} file(s) already in the list.` : '',
         ].filter(Boolean).join(' '),
       });
-      pending.push(...items);
-      pump();
+      enqueue(items);
+    },
+
+    reparseDemos: (demos) => {
+      const { queue } = get();
+      const taken = new Set(queue.filter((d) => d.status !== 'error').map((d) => d.fileKey));
+      const items: QueuedDemo[] = demos
+        .filter((d) => !taken.has(reparseKey(d.id)))
+        .map((d) => ({
+          uid: `q${++seq}`,
+          name: d.filename,
+          reparseId: d.id,
+          fileKey: reparseKey(d.id),
+          demo_id: '',
+          status: 'queued',
+          progress: 0,
+        }));
+      if (items.length === 0) return;
+      set({ queue: [...queue, ...items] });
+      enqueue(items);
     },
 
     removeRow: (uid) => set((s) => ({ queue: s.queue.filter((d) => d.uid !== uid || isLive(d)) })),

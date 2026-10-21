@@ -359,3 +359,13 @@
   border-color: #2a6abf;
   color: #5b9bd5;
 }
+
+.outdatedTag {
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #4a3a1a;
+  color: #e0b84a;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}

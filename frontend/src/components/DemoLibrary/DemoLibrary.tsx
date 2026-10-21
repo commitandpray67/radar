@@ -1,10 +1,14 @@
 /**
  * DemoLibrary — lists previously parsed demos stored in the backend cache.
- * Supports loading, single delete, and bulk delete via checkboxes.
+ * Supports loading, single delete, and bulk delete via checkboxes. Demos parsed
+ * by an older parser version are tagged "outdated" and can be updated in place
+ * (re-parsed from the file the server kept).
  */
 
 import React, { useEffect, useState } from 'react';
 import { listDemos, deleteDemo } from '../../utils/api';
+import { reparseAndWait } from '../../utils/demoLoading';
+import { apiErrorMessage } from '../../utils/highlights';
 import type { DemoMeta } from '../../types';
 import styles from './DemoLibrary.module.css';
 
@@ -24,6 +28,8 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
   const [loading, setLoading]   = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** demo id → re-parse progress (0..1), or an error message if it failed. */
+  const [updating, setUpdating] = useState<Record<string, number | string>>({});
 
   useEffect(() => {
     listDemos()
@@ -79,6 +85,20 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
     }
   };
 
+  const handleUpdate = async (d: DemoMeta, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setUpdating((u) => ({ ...u, [d.id]: 0 }));
+    try {
+      await reparseAndWait(d.id, {
+        onParseStatus: (st) => setUpdating((u) => ({ ...u, [d.id]: st.progress })),
+      });
+      setDemos((prev) => prev.map((x) => (x.id === d.id ? { ...x, outdated: false } : x)));
+      setUpdating((u) => { const n = { ...u }; delete n[d.id]; return n; });
+    } catch (err) {
+      setUpdating((u) => ({ ...u, [d.id]: apiErrorMessage(err, 'Update failed') }));
+    }
+  };
+
   if (loading) return <p className={styles.hint}>Loading library…</p>;
   if (demos.length === 0) return <p className={styles.hint}>No cached demos yet.</p>;
 
@@ -103,12 +123,16 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
           </button>
         )}
       </div>
-      {demos.map((d) => (
+      {demos.map((d) => {
+        const upd = updating[d.id];
+        const busy = typeof upd === 'number';
+        return (
         <div
           key={d.id}
           className={`${styles.row} ${selected.has(d.id) ? styles.rowSelected : ''}`}
-          onClick={() => onLoad(d.id)}
-          title={`Click to load ${d.filename}`}
+          // Loading mid-update would show the old data — wait for it.
+          onClick={() => { if (!busy) onLoad(d.id); }}
+          title={busy ? 'Updating…' : `Click to load ${d.filename}`}
         >
           <input
             type="checkbox"
@@ -122,7 +146,27 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
             <span className={styles.meta}>
               {d.map_name} · {formatBytes(d.file_size)} · {d.tick_rate.toFixed(0)} tick
             </span>
+            {typeof upd === 'string' && <span className={styles.updateError}>{upd}</span>}
           </div>
+          {d.outdated && (
+            d.reparsable ? (
+              <button
+                className={styles.updateBtn}
+                onClick={(e) => handleUpdate(d, e)}
+                disabled={busy}
+                title="Parsed by an older version of the app — re-parse it to pick up recent fixes"
+              >
+                {busy ? `Updating ${Math.round((upd as number) * 100)}%` : 'Update'}
+              </button>
+            ) : (
+              <span
+                className={styles.outdatedTag}
+                title="Parsed by an older version of the app — upload the file again to update it"
+              >
+                outdated
+              </span>
+            )
+          )}
           <button
             className={styles.deleteBtn}
             onClick={(e) => handleDelete(d.id, e)}
@@ -132,7 +176,8 @@ const DemoLibrary: React.FC<Props> = ({ onLoad }) => {
             {deleting ? '…' : '✕'}
           </button>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

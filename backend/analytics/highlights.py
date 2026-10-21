@@ -56,7 +56,7 @@ def normalize_weapon(weapon: str | None) -> str:
     return WEAPON_ALIASES.get(w, w)
 
 
-def _round_assigner(rounds: list[dict], tick_rate: float):
+def round_assigner(rounds: list[dict], tick_rate: float):
     """Return ``death -> effective round_number``.
 
     The parser stores kills made after ``round_end`` (exit frags on saving or
@@ -106,7 +106,7 @@ def candidate_rounds(
     are only removed later), used to fetch round sides for just those rounds.
     """
     valid = _valid_rounds(rounds)
-    assign = _round_assigner(rounds, tick_rate)
+    assign = round_assigner(rounds, tick_rate)
     counts: dict[int, int] = {}
     for d in deaths:
         if d.get("attacker_id") in player_ids and d.get("victim_id") != d.get("attacker_id"):
@@ -155,7 +155,7 @@ def find_highlights(
         )
     }
     tick_rate = tick_rate or 64.0
-    assign = _round_assigner(rounds, tick_rate)
+    assign = round_assigner(rounds, tick_rate)
 
     by_round: dict[int, list[dict]] = {}
     for d in deaths:

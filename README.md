@@ -256,8 +256,11 @@ Parsed demos are cached in SQLite (`backend/data/demos.db`).
 The cache also stores team sessions and team-organizer associations.
 
 When parser logic changes, `PARSER_VERSION` is bumped and old caches are
-automatically re-parsed on next upload. If something still looks outdated
-(e.g., trajectories/loadout), re-upload via the loader to force a re-parse.
+automatically re-parsed on next upload. Demos already in the library that an
+older version parsed are tagged **outdated**: click **Update** in the library
+(or "Update them" on the Highlights tab) to re-parse them from the original
+file the server kept — no re-upload needed. Demos whose file is no longer
+stored can only be updated by uploading them again.
 
 ---
 
@@ -266,7 +269,8 @@ automatically re-parsed on next upload. If something still looks outdated
 ### Demos
 - `POST /api/demos/upload`
 - `GET /api/parse-status/{job_id}` (SSE)
-- `GET /api/demos` — list cached
+- `GET /api/demos` — list cached (each with `outdated` / `reparsable`)
+- `POST /api/demos/{id}/reparse` — re-parse from the stored original file
 - `DELETE /api/demos/{id}`
 - `GET /api/demos/{id}/rounds`
 - `GET /api/demos/{id}/players`

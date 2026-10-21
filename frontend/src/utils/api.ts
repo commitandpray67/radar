@@ -53,6 +53,14 @@ export async function getDemo(demoId: string, signal?: AbortSignal): Promise<Dem
   return res.data;
 }
 
+/** Re-parse a cached demo from its stored original file (no re-upload). */
+export async function reparseDemo(
+  demoId: string,
+): Promise<{ job_id: string; demo_id: string; cached: boolean }> {
+  const res = await http.post(`/demos/${demoId}/reparse`);
+  return res.data;
+}
+
 export async function deleteDemo(demoId: string): Promise<void> {
   await http.delete(`/demos/${demoId}`);
 }

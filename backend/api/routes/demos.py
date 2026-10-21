@@ -421,14 +421,30 @@ async def parse_status_stream(job_id: str):
 # ---------------------------------------------------------------------------
 
 
+def _with_version_info(row: dict) -> dict:
+    """Add ``outdated`` (parsed by an older parser version — re-parse to pick up
+    later fixes) and ``reparsable`` (the original file is stored, so it can be
+    re-parsed without uploading it again)."""
+    from parser.demo_parser import PARSER_VERSION
+
+    try:
+        version = json.loads(row.pop("meta_json", None) or "{}").get("parser_version", 0)
+    except (ValueError, AttributeError):
+        version = 0
+    row["outdated"] = version != PARSER_VERSION
+    row["reparsable"] = _demo_file_path(row["id"]).exists()
+    return row
+
+
 @router.get("/demos")
 async def list_demos():
     async with get_connection() as conn:
         cur = await conn.execute(
-            "SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at, file_size FROM demos"
+            "SELECT id, filename, map_name, tick_rate, total_ticks, parsed_at, file_size, "
+            "meta_json FROM demos"
         )
         rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    return [_with_version_info(dict(r)) for r in rows]
 
 
 @router.get("/demos/{demo_id}")
@@ -438,7 +454,32 @@ async def get_demo(demo_id: str):
         row = await cur.fetchone()
     if not row:
         raise HTTPException(404, "Demo not found")
-    return dict(row)
+    return _with_version_info(dict(row))
+
+
+@router.post("/demos/{demo_id}/reparse")
+async def reparse_demo(demo_id: str):
+    """Re-parse a cached demo from its stored original file (no re-upload).
+
+    Used to bring demos parsed by an older parser version up to date. Returns
+    a parse job like /demos/upload; watch it via /parse-status/{job_id}.
+    """
+    async with get_connection() as conn:
+        cur = await conn.execute("SELECT filename FROM demos WHERE id = ?", (demo_id,))
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Demo not found")
+    stored = _demo_file_path(demo_id)
+    if not stored.exists():
+        raise HTTPException(
+            409, "The original demo file is not stored on the server — upload it again."
+        )
+    # The parse task deletes its input when done, so parse a temporary copy.
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = _UPLOAD_DIR / f"{uuid.uuid4().hex}_reparse.dem"
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, shutil.copy2, stored, tmp_path)
+    return await start_parse_job(tmp_path, row["filename"], force=True)
 
 
 @router.delete("/demos/{demo_id}")

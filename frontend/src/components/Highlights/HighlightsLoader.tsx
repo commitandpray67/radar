@@ -27,7 +27,12 @@ import { useAppStore } from '../../store/demoStore';
 import type { DemoMeta } from '../../types';
 import HighlightResults from './HighlightResults';
 import WeaponPicker from './WeaponPicker';
-import { PARSE_CONCURRENCY, sessionDemoIds, useHighlightSession } from './highlightSession';
+import {
+  PARSE_CONCURRENCY,
+  reparseKey,
+  sessionDemoIds,
+  useHighlightSession,
+} from './highlightSession';
 import loaderStyles from '../DemoLoader/DemoLoader.module.css';
 import teamStyles from '../DemoLoader/TeamLoader.module.css';
 import styles from './Highlights.module.css';
@@ -61,7 +66,7 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
   const result = useAppStore((s) => s.highlightSearch);
   const setResult = useAppStore((s) => s.setHighlightSearch);
 
-  useEffect(() => {
+  const refreshLibrary = useCallback(() => {
     listDemos()
       .then((d) => {
         setLibraryDemos(d.sort((a, b) => b.parsed_at.localeCompare(a.parsed_at)));
@@ -73,16 +78,34 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
         }
       })
       .catch(() => setLibraryDemos([]));
+  }, []);
+
+  useEffect(() => {
+    refreshLibrary();
     getHighlightPlayerNames()
       .then((n) => setKnownNames(n.map((x) => x.name)))
       .catch(() => {});
-  }, []);
+  }, [refreshLibrary]);
+
+  // Re-read the library once demos finish re-parsing, so their "outdated"
+  // flag clears.
+  const updatedCount = queue.filter((d) => d.reparseId && d.status === 'ready').length;
+  useEffect(() => {
+    if (updatedCount > 0) refreshLibrary();
+  }, [updatedCount, refreshLibrary]);
 
   const addFiles = (files: FileList | File[] | null) => {
     if (files && files.length) session.addFiles(Array.from(files), isAcceptedDemoFile);
   };
 
   const demoIds = sessionDemoIds(session);
+  // Selected library demos parsed by an older parser version (and not already
+  // being / been re-parsed in this batch): their results may miss later fixes.
+  const queuedKeys = new Set(queue.filter((d) => d.status !== 'error').map((d) => d.fileKey));
+  const outdatedPicked = libraryDemos.filter(
+    (d) => d.outdated && picked.has(d.id) && !queuedKeys.has(reparseKey(d.id)),
+  );
+  const updatable = outdatedPicked.filter((d) => d.reparsable);
   const busy = queue.some((d) => d.status === 'queued' || d.status === 'uploading' || d.status === 'parsing');
   const readyCount = queue.filter((d) => d.status === 'ready').length;
   const canSearch = !busy && !searching && demoIds.length > 0 && player.trim() !== '';
@@ -231,7 +254,9 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
           <div className={teamStyles.demoList}>
             {queue.map((d) => (
               <div key={d.uid} className={teamStyles.demoRow}>
-                <span className={teamStyles.demoName}>{d.file.name}</span>
+                <span className={teamStyles.demoName}>
+                  {d.reparseId ? `Update: ${d.name}` : d.name}
+                </span>
                 <span className={teamStyles.demoStatus} title={d.error}>
                   {d.status === 'queued' && 'Queued'}
                   {d.status === 'uploading' && `Uploading ${Math.round(d.progress * 100)}%`}
@@ -285,11 +310,48 @@ const HighlightsLoader: React.FC<Props> = ({ onComplete }) => {
                 onChange={() => togglePicked(d.id)}
               />
               <span className={teamStyles.libName}>{d.filename}</span>
+              {d.outdated && (
+                <span
+                  className={styles.outdatedTag}
+                  title="Parsed by an older version of the app — update it to pick up recent fixes"
+                >
+                  outdated
+                </span>
+              )}
               <span className={teamStyles.libMeta}>{d.map_name}</span>
             </label>
           ))}
         </div>
       )}
+
+      {outdatedPicked.length > 0 && (() => {
+        const stuck = outdatedPicked.length - updatable.length;
+        return (
+          <p className={styles.note}>
+            {outdatedPicked.length === 1 ? 'A selected demo was' : `${outdatedPicked.length} selected demos were`}
+            {' '}parsed by an older version of the app and may miss recent fixes (e.g. knife rounds).
+            {updatable.length > 0 && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  className={styles.linkBtn}
+                  onClick={() => session.reparseDemos(
+                    updatable.map((d) => ({ id: d.id, filename: d.filename })),
+                  )}
+                >
+                  {stuck === 0
+                    ? `Update ${updatable.length === 1 ? 'it' : 'them'}`
+                    : `Update ${updatable.length} of them`}
+                </button>
+              </>
+            )}
+            {stuck > 0 && (updatable.length > 0
+              ? ` (${stuck} more can only be updated by uploading the file again.)`
+              : ` ${stuck === 1 ? 'It' : 'They'} can only be updated by uploading the file again.`)}
+          </p>
+        );
+      })()}
 
       {demoIds.length > 0 && (
         <p className={styles.queueSummary}>
