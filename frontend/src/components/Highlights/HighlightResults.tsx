@@ -8,7 +8,14 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/demoStore';
 import type { Highlight, HighlightDemoResult, HighlightSearchResult } from '../../types';
-import { countByTier, killLabel, openHighlight, weaponLabel } from '../../utils/highlights';
+import {
+  countByTier,
+  killBreakdown,
+  killLabel,
+  openHighlight,
+  weaponLabel,
+  weaponsText,
+} from '../../utils/highlights';
 import { TEAM_COLORS } from '../../types';
 import styles from './Highlights.module.css';
 
@@ -19,6 +26,9 @@ interface Props {
   compact?: boolean;
 }
 
+/** Kills made after round_end: they count, but the round replay stops before them. */
+const exitFrags = (h: Highlight) => h.kill_list.filter((k) => k.after_round_end).length;
+
 const HighlightResults: React.FC<Props> = ({ result, onOpened, compact = false }) => {
   const activeDemoId = useAppStore((s) => s.demo?.id);
   const activeRound = useAppStore((s) => s.activeRound);
@@ -26,24 +36,24 @@ const HighlightResults: React.FC<Props> = ({ result, onOpened, compact = false }
   const [error, setError] = useState('');
 
   const tiers = countByTier(result);
-  const weaponText = result.weapons.length
-    ? result.weapons.map(weaponLabel).join(' / ')
+  const filterText = result.weapons.length
+    ? `at least ${result.min_weapon_kills} with ${weaponsText(result.weapons)}`
     : 'any weapon';
   const withPlayer = result.demos.filter((d) => (d.matched_players ?? []).length > 0);
   const missing = result.demos.filter((d) => !d.error && (d.matched_players ?? []).length === 0);
   const failed = result.demos.filter((d) => d.error);
 
   const open = async (d: HighlightDemoResult, h: Highlight) => {
-    const key = `${d.demo_id}:${h.round_number}`;
+    const key = `${d.demo_id}:${h.round_number}:${h.player_id}`;
     setOpeningKey(key);
     setError('');
     try {
-      await openHighlight(
+      const opened = await openHighlight(
         d.demo_id,
         h,
         (d.matched_players ?? []).map((p) => p.player_id),
       );
-      onOpened?.();
+      if (opened) onOpened?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to open highlight');
     } finally {
@@ -57,7 +67,7 @@ const HighlightResults: React.FC<Props> = ({ result, onOpened, compact = false }
         <span>
           <strong>{result.total}</strong> highlight{result.total !== 1 ? 's' : ''} for{' '}
           <strong>{result.player}</strong> — {killLabel(result.min_kills)}
-          {result.min_kills < 5 ? '+' : ''} with {weaponText}
+          {result.min_kills < 5 ? '+' : ''}, {filterText}
         </span>
         {result.total > 0 && (
           <span className={styles.tierCounts}>
@@ -80,7 +90,7 @@ const HighlightResults: React.FC<Props> = ({ result, onOpened, compact = false }
             <span className={styles.demoMap}>{d.map_name}</span>
           </div>
           {d.highlights.map((h) => {
-            const key = `${d.demo_id}:${h.round_number}`;
+            const key = `${d.demo_id}:${h.round_number}:${h.player_id}`;
             const isActive = d.demo_id === activeDemoId && h.round_number === activeRound;
             return (
               <button
@@ -89,13 +99,13 @@ const HighlightResults: React.FC<Props> = ({ result, onOpened, compact = false }
                 onClick={() => open(d, h)}
                 disabled={openingKey !== null}
                 title={h.kill_list
-                  .map((k) => `${k.victim_name || k.victim_id} (${weaponLabel(k.weapon)}${k.headshot ? ', HS' : ''})`)
+                  .map((k) => `${result.weapons.length && k.matches ? '★ ' : ''}${k.victim_name || k.victim_id} (${weaponLabel(k.weapon)}${k.headshot ? ', HS' : ''}${k.after_round_end ? ', after round end' : ''})`)
                   .join('\n')}
               >
                 <span className={`${styles.tier} ${h.kills >= 5 ? styles.tierAce : h.kills === 4 ? styles.tier4 : ''}`}>
                   {killLabel(h.kills)}
                 </span>
-                <span className={styles.hlRound}>R{h.round_number}</span>
+                <span className={styles.hlRound}>R{h.display_round ?? h.round_number}</span>
                 {h.side && (
                   <span
                     className={styles.hlSide}
@@ -105,8 +115,10 @@ const HighlightResults: React.FC<Props> = ({ result, onOpened, compact = false }
                   </span>
                 )}
                 <span className={styles.hlMeta}>
-                  {h.kill_list.filter((k) => k.headshot).length} HS · {h.duration_s.toFixed(1)}s
-                  {h.round_kills > h.kills ? ` · ${h.round_kills}K total` : ''}
+                  {(d.matched_players ?? []).length > 1 && `${h.player_name} · `}
+                  {killBreakdown(h)} · {h.kill_list.filter((k) => k.headshot).length} HS
+                  {' · '}{h.duration_s.toFixed(1)}s
+                  {exitFrags(h) > 0 && ` · ${exitFrags(h)} after round end`}
                 </span>
                 {h.round_won !== null && (
                   <span className={h.round_won ? styles.won : styles.lost}>

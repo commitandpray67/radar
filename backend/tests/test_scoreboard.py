@@ -34,9 +34,9 @@ def _by_id(rows):
 
 def test_kills_deaths_headshots_and_opening():
     deaths = [
-        _death(100, 1, 1, 10, hs=True),   # round 1 first blood: P1 kills P10 (HS)
-        _death(200, 1, 2, 11),            # P2 kills P11
-        _death(150, 2, 10, 1),            # round 2 first blood: P10 kills P1
+        _death(100, 1, 1, 10, hs=True),  # round 1 first blood: P1 kills P10 (HS)
+        _death(200, 1, 2, 11),  # P2 kills P11
+        _death(150, 2, 10, 1),  # round 2 first blood: P10 kills P1
     ]
     rows = _by_id(compute_scoreboard(ROUNDS, deaths, SIDES, _players(1, 2, 10, 11), 64.0))
     assert rows[1]["kills"] == 1 and rows[1]["hs_kills"] == 1 and rows[1]["deaths"] == 1
@@ -89,12 +89,17 @@ def test_multikills_bucketed():
 def test_kast_kill_survive_trade():
     # Round 1: P1 kills P10 (kill→KAST), P2 survives (survive→KAST), P11 dies untraded.
     deaths = [_death(100, 1, 1, 10), _death(200, 1, 10, 11)]
-    rows = _by_id(compute_scoreboard(
-        [{"round_number": 1, "is_knife_round": False, "winner_team": "CT"}],
-        deaths, {1: {1: "CT", 2: "CT", 10: "T", 11: "T"}}, _players(1, 2, 10, 11), 64.0,
-    ))
-    assert rows[1]["kast"] == 1.0   # got a kill
-    assert rows[2]["kast"] == 1.0   # survived
+    rows = _by_id(
+        compute_scoreboard(
+            [{"round_number": 1, "is_knife_round": False, "winner_team": "CT"}],
+            deaths,
+            {1: {1: "CT", 2: "CT", 10: "T", 11: "T"}},
+            _players(1, 2, 10, 11),
+            64.0,
+        )
+    )
+    assert rows[1]["kast"] == 1.0  # got a kill
+    assert rows[2]["kast"] == 1.0  # survived
     assert rows[11]["kast"] == 0.0  # died, untraded, no kill
 
 

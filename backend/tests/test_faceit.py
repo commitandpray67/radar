@@ -411,11 +411,7 @@ async def test_common_matches_endpoint(monkeypatch) -> None:
             return {"items": []}
         if "/stats" in path:
             # Return a minimal stats payload with a map name.
-            return {
-                "rounds": [
-                    _round("de_mirage", "t1", {"t1": ["A", "B"], "t2": ["C", "D"]})
-                ]
-            }
+            return {"rounds": [_round("de_mirage", "t1", {"t1": ["A", "B"], "t2": ["C", "D"]})]}
         return None
 
     monkeypatch.setattr(faceit, "_faceit_get", fake_get)

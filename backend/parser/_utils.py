@@ -7,6 +7,31 @@ import math
 from collections.abc import Callable
 
 
+def is_knife_weapon(weapon) -> bool:
+    """True for every knife's player_death token ("knife", "knife_t", "knife_karambit", …)."""
+    w = str(weapon or "").strip().lower().removeprefix("weapon_")
+    # Every knife token starts with "knife" except the default Bayonet.
+    return w.startswith("knife") or w == "bayonet"
+
+
+def leading_knife_rounds(round_numbers, weapons_by_round: dict[int, list]) -> set[int]:
+    """Round numbers of the knife rounds, from each round's kill weapons.
+
+    Only the leading all-knife rounds count (the pre-match side pick): rounds
+    with no kills are skipped, and the first round with any non-knife kill ends
+    the run — so a mid-match all-knife round (a knife ace, say) is ordinary.
+    """
+    knife: set[int] = set()
+    for rn in sorted(round_numbers):
+        weapons = weapons_by_round.get(rn) or []
+        if not weapons:
+            continue
+        if not all(is_knife_weapon(w) for w in weapons):
+            break
+        knife.add(rn)
+    return knife
+
+
 def _rows(df) -> list[dict]:
     """Return rows as a list of dicts.
 

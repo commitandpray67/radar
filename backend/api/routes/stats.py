@@ -22,9 +22,7 @@ router = APIRouter()
 async def get_scoreboard(demo_id: str):
     """Aggregate a per-player scoreboard for a parsed demo."""
     async with get_connection() as conn:
-        cur = await conn.execute(
-            "SELECT tick_rate FROM demos WHERE id = ?", (demo_id,)
-        )
+        cur = await conn.execute("SELECT tick_rate FROM demos WHERE id = ?", (demo_id,))
         demo_row = await cur.fetchone()
         if not demo_row:
             raise HTTPException(404, "Demo not found")

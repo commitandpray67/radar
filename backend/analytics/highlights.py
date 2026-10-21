@@ -5,12 +5,22 @@ Computed purely from stored player_death events plus the authoritative
 per-round sides (same inputs as the scoreboard), so no re-parse is needed.
 
 A highlight is a round in which one of the target player's SteamIDs got at
-least ``min_kills`` kills — counting only kills made with one of ``weapons``
-when a weapon filter is given (e.g. a "deagle 3k" = 3+ deagle kills in one
-round).  Team kills and self-kills never count.
+least ``min_kills`` kills (with any guns).  When a weapon filter is given, at
+least ``min_weapon_kills`` of those kills must also have been made with one of
+``weapons`` — so with deagle, 3K+ and the default of 1, a round of 2 deagle +
+1 AK kills counts as a deagle 3K.  Team kills and self-kills never count.
 """
 
 from __future__ import annotations
+
+import bisect
+
+from parser._utils import is_knife_weapon
+
+# Exit frags count only within this many seconds of round_end: CS2's round
+# restart delay is ~7 s, so this keeps halftime / tech-pause / post-match deaths
+# from being credited to the round before them.
+EXIT_FRAG_WINDOW_S = 10.0
 
 # Friendly aliases → the bare weapon tokens demoparser2 reports on player_death.
 WEAPON_ALIASES: dict[str, str] = {
@@ -38,10 +48,72 @@ def normalize_weapon(weapon: str | None) -> str:
     w = (weapon or "").strip().lower()
     if w.startswith("weapon_"):
         w = w[len("weapon_") :]
+    # A detached silencer ("m4a1_silencer_off", "usp_silencer_off") is the same gun.
+    w = w.removesuffix("_off")
     # Every knife skin ("knife_karambit", "bayonet", "knife_t") counts as knife.
-    if w.startswith("knife") or w == "bayonet":
+    if is_knife_weapon(w):
         return "knife"
     return WEAPON_ALIASES.get(w, w)
+
+
+def _round_assigner(rounds: list[dict], tick_rate: float):
+    """Return ``death -> effective round_number``.
+
+    The parser stores kills made after ``round_end`` (exit frags on saving or
+    hiding players) as round 0.  CS2 still counts them for the round that just
+    ended, so a kill in the gap between a round's end and the next round's
+    start — and within EXIT_FRAG_WINDOW_S of that end — is credited to the
+    round that ended.  Kills before the first round (warmup) stay unassigned.
+    """
+    window = EXIT_FRAG_WINDOW_S * (tick_rate or 64.0)
+    timed = sorted(
+        (r for r in rounds if r.get("start_tick") is not None and r.get("end_tick") is not None),
+        key=lambda r: r["start_tick"],
+    )
+    starts = [r["start_tick"] for r in timed]
+
+    def assign(d: dict) -> int:
+        rn = d.get("round_number") or 0
+        if rn or not timed:
+            return rn
+        tick = d.get("tick") or 0
+        idx = bisect.bisect_right(starts, tick) - 1
+        if idx >= 0 and 0 < tick - timed[idx]["end_tick"] <= window:
+            return timed[idx]["round_number"]
+        return 0
+
+    return assign
+
+
+def _valid_rounds(rounds: list[dict]) -> dict[int, dict]:
+    return {
+        r["round_number"]: r
+        for r in rounds
+        if not r.get("is_knife_round") and (r.get("round_number") or 0) > 0
+    }
+
+
+def candidate_rounds(
+    rounds: list[dict],
+    deaths: list[dict],
+    player_ids: set[int],
+    min_kills: int,
+    tick_rate: float,
+) -> set[int]:
+    """Rounds where the player has at least ``min_kills`` non-suicide kills.
+
+    A cheap superset of the rounds ``find_highlights`` can return (team kills
+    are only removed later), used to fetch round sides for just those rounds.
+    """
+    valid = _valid_rounds(rounds)
+    assign = _round_assigner(rounds, tick_rate)
+    counts: dict[int, int] = {}
+    for d in deaths:
+        if d.get("attacker_id") in player_ids and d.get("victim_id") != d.get("attacker_id"):
+            rn = assign(d)
+            if rn in valid:
+                counts[rn] = counts.get(rn, 0) + 1
+    return {rn for rn, n in counts.items() if n >= min_kills}
 
 
 def find_highlights(
@@ -54,35 +126,49 @@ def find_highlights(
     *,
     weapons: set[str] | None = None,
     min_kills: int = 3,
+    min_weapon_kills: int = 1,
 ) -> list[dict]:
     """Return the target player's multi-kill rounds, ordered by round number.
 
-    ``rounds``     : dicts with round_number, is_knife_round, winner_team
-    ``deaths``     : player_death rows with tick, round_number, attacker_id,
-                     victim_id, weapon, headshot
-    ``sides``      : round_number -> player_id -> 'CT'|'T'
-    ``player_ids`` : the target player's SteamID64(s) in this demo
-    ``names``      : player_id -> display name (for the victim list)
-    ``weapons``    : normalised weapon tokens to count, or None/empty for any
+    ``rounds``           : dicts with round_number, is_knife_round, winner_team
+                           and (optionally) start_tick / end_tick
+    ``deaths``           : player_death rows with tick, round_number, attacker_id,
+                           victim_id, weapon, headshot
+    ``sides``            : round_number -> player_id -> 'CT'|'T'
+    ``player_ids``       : the target player's SteamID64(s) in this demo
+    ``names``            : player_id -> display name (for the victim list)
+    ``weapons``          : weapon tokens (any spelling normalize_weapon accepts),
+                           or None/empty for any weapon
+    ``min_kills``        : minimum kills in the round, any weapon (the tier)
+    ``min_weapon_kills`` : of those, how many must be with ``weapons``
     """
     wanted = {normalize_weapon(w) for w in weapons} if weapons else None
-    round_by_num = {
-        r["round_number"]: r
-        for r in rounds
-        if not r.get("is_knife_round") and (r.get("round_number") or 0) > 0
+    round_by_num = _valid_rounds(rounds)
+    # The app numbers rounds by position among non-knife rounds ("Round N").
+    display_round = {
+        r["round_number"]: i + 1
+        for i, r in enumerate(
+            sorted(
+                (r for r in rounds if not r.get("is_knife_round")),
+                key=lambda r: r["round_number"],
+            )
+        )
     }
     tick_rate = tick_rate or 64.0
+    assign = _round_assigner(rounds, tick_rate)
 
     by_round: dict[int, list[dict]] = {}
     for d in deaths:
-        rn = d.get("round_number") or 0
-        if rn in round_by_num and d.get("attacker_id") in player_ids:
+        if d.get("attacker_id") not in player_ids:
+            continue
+        rn = assign(d)
+        if rn in round_by_num:
             by_round.setdefault(rn, []).append(d)
 
     out: list[dict] = []
     for rn in sorted(by_round):
         rsides = sides.get(rn, {})
-        all_kills: list[dict] = []
+        kills: list[dict] = []
         for d in sorted(by_round[rn], key=lambda d: d.get("tick") or 0):
             atk, vic = d.get("attacker_id") or 0, d.get("victim_id") or 0
             if atk == vic:
@@ -91,23 +177,27 @@ def find_highlights(
             # Skip team kills when we can tell (both sides known and equal).
             if a_side and v_side and a_side == v_side:
                 continue
-            all_kills.append(d)
+            kills.append(d)
 
-        counted = [
-            d for d in all_kills if wanted is None or normalize_weapon(d.get("weapon")) in wanted
-        ]
-        if len(counted) < min_kills:
+        def _matches(d: dict) -> bool:
+            return wanted is None or normalize_weapon(d.get("weapon")) in wanted
+
+        weapon_kills = sum(1 for d in kills if _matches(d))
+        if len(kills) < min_kills:
+            continue
+        if wanted is not None and weapon_kills < min_weapon_kills:
             continue
 
         side = next((rsides[p] for p in player_ids if p in rsides), None)
         winner = round_by_num[rn].get("winner_team") or None
-        first_tick = counted[0].get("tick") or 0
-        last_tick = counted[-1].get("tick") or 0
+        first_tick = kills[0].get("tick") or 0
+        last_tick = kills[-1].get("tick") or 0
         out.append(
             {
                 "round_number": rn,
-                "kills": len(counted),
-                "round_kills": len(all_kills),
+                "display_round": display_round.get(rn, rn),
+                "kills": len(kills),
+                "weapon_kills": weapon_kills,
                 "side": side,
                 "round_won": (winner == side) if (winner and side) else None,
                 "first_kill_tick": first_tick,
@@ -120,8 +210,12 @@ def find_highlights(
                         "victim_name": names.get(d.get("victim_id") or 0, ""),
                         "weapon": normalize_weapon(d.get("weapon")),
                         "headshot": bool(d.get("headshot")),
+                        "matches": _matches(d),
+                        # An exit frag: made after round_end, so the round's
+                        # replay (which stops at round_end) does not show it.
+                        "after_round_end": not (d.get("round_number") or 0),
                     }
-                    for d in counted
+                    for d in kills
                 ],
             }
         )

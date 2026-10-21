@@ -55,16 +55,18 @@ export async function loadDemoIntoStore(
   const isCurrent = () => myToken === _loadToken;
 
   try {
-    const [rounds, players, events, grenades, playerStateEvts] = await Promise.all([
+    const [rounds, players, events, grenades, playerStateEvts, freshDemo] = await Promise.all([
       getRounds(demoId, signal),
       getPlayers(demoId, signal),
       getEvents(demoId, {}, signal),
       getGrenades(demoId, {}, signal),
       getPlayerStateEvents(demoId, {}, signal),
+      getDemo(demoId, signal),
     ]);
 
     // A newer load superseded us while these requests were in flight — bail
-    // before touching the store so we never overwrite fresher data.
+    // before touching the store so we never overwrite fresher data. All the
+    // writes below are synchronous, so the store never mixes two demos.
     if (!isCurrent()) return;
 
     const store = useAppStore.getState();
@@ -73,9 +75,6 @@ export async function loadDemoIntoStore(
     store.setEvents(events);
     store.setGrenades(grenades);
     store.setPlayerStateEvents(playerStateEvts);
-
-    const freshDemo = await getDemo(demoId, signal);
-    if (!isCurrent()) return;
     store.setDemo(freshDemo);
 
     const mapMeta = opts.maps.find((m) => m.name === freshDemo.map_name) ?? null;
@@ -91,6 +90,11 @@ export async function loadDemoIntoStore(
   } finally {
     if (_activeController === controller) _activeController = null;
   }
+}
+
+/** True while a loadDemoIntoStore call is still fetching. */
+export function isDemoLoadPending(): boolean {
+  return _activeController !== null;
 }
 
 /**

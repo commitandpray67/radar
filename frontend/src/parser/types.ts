@@ -19,8 +19,8 @@ import type {
 } from '../types';
 
 /** Bump when parse logic/schema changes — forces cached demos to re-parse.
- *  Mirrors `PARSER_VERSION` in `backend/parser/demo_parser.py` (v29). */
-export const PARSER_VERSION = 29;
+ *  Mirrors `PARSER_VERSION` in `backend/parser/demo_parser.py` (v30). */
+export const PARSER_VERSION = 30;
 
 /** Ticks sampled per round for positions (64-tick × rate 8 ≈ 8 samples/sec). */
 export const POSITION_SAMPLE_RATE = 8;

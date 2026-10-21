@@ -212,8 +212,8 @@ def test_tracks_resting_and_flying_grenades_stay_separate() -> None:
     rows = []
     for i in range(30):
         tick = 1000 + i * 2
-        rows.append(_row(tick, 0, 0))                 # resting smoke
-        rows.append(_row(tick, 100 + i * 15, 50))     # flying smoke, passes nearby
+        rows.append(_row(tick, 0, 0))  # resting smoke
+        rows.append(_row(tick, 100 + i * 15, 50))  # flying smoke, passes nearby
     rows.sort(key=lambda r: r["tick"])
 
     tracks = _build_tracks(rows)
@@ -244,7 +244,7 @@ def test_tracks_known_throwers_never_mix() -> None:
     rows = []
     for i in range(20):
         tick = 100 + i
-        rows.append(_row(tick, i * 20, 0, thrower=111))        # left → right
+        rows.append(_row(tick, i * 20, 0, thrower=111))  # left → right
         rows.append(_row(tick, 380 - i * 20, 40, thrower=222))  # right → left
     rows.sort(key=lambda r: r["tick"])
 
@@ -261,3 +261,51 @@ def test_tracks_single_grenade_unaffected() -> None:
     tracks = _build_tracks(rows)
     assert len(tracks) == 1
     assert len(tracks[0]) == 40
+
+
+# ---------------------------------------------------------------------------
+# Knife-round detection
+# ---------------------------------------------------------------------------
+
+from parser._rounds import _extract_rounds  # noqa: E402
+
+_R = 64 * 60  # one-minute rounds (above the short-round filter)
+
+
+class _RoundsParser:
+    """Minimal parser stub: N rounds plus the given player_death rows."""
+
+    def __init__(self, n_rounds, deaths):
+        self._n = n_rounds
+        self._deaths = deaths
+
+    def parse_event(self, name, other=None, player=None):
+        if name == "round_start":
+            return [{"tick": i * _R} for i in range(self._n)]
+        if name == "round_end":
+            return [{"tick": i * _R + _R - 10, "winner": "CT", "reason": 9} for i in range(self._n)]
+        if name == "player_death":
+            return self._deaths
+        return []
+
+
+def _knife_flags(n_rounds, deaths):
+    return [r.is_knife_round for r in _extract_rounds(_RoundsParser(n_rounds, deaths))]
+
+
+def test_bayonet_kills_count_toward_a_knife_round():
+    deaths = [
+        {"tick": 100, "weapon": "knife_karambit"},
+        {"tick": 200, "weapon": "bayonet"},
+        {"tick": _R + 100, "weapon": "ak47"},
+    ]
+    assert _knife_flags(2, deaths) == [True, False]
+
+
+def test_only_leading_all_knife_rounds_are_knife_rounds():
+    deaths = [
+        {"tick": 100, "weapon": "knife"},  # round 1: pre-match knife round
+        {"tick": _R + 100, "weapon": "ak47"},  # round 2: real round
+        *({"tick": 2 * _R + 100 + i, "weapon": "knife_t"} for i in range(5)),  # knife ace
+    ]
+    assert _knife_flags(3, deaths) == [True, False, False]

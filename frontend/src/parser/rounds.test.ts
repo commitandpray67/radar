@@ -89,6 +89,41 @@ describe('extractRounds — knife detection', () => {
     expect(rounds[0].is_knife_round).toBe(true);
     expect(rounds[1].is_knife_round).toBe(false);
   });
+
+  it('counts Bayonet kills as knife kills', () => {
+    const src = makeSource({
+      round_start: [{ tick: 0 }, { tick: R }],
+      round_end: [
+        { tick: R - 10, winner: 'CT', reason: '9' },
+        { tick: 2 * R, winner: 'T', reason: '9' },
+      ],
+      round_freeze_end: [],
+      player_death: [
+        { tick: 300, weapon: 'knife_karambit' },
+        { tick: 400, weapon: 'bayonet' },
+        { tick: R + 300, weapon: 'ak47' },
+      ],
+    });
+    expect(extractRounds(src).map((r) => r.is_knife_round)).toEqual([true, false]);
+  });
+
+  it('only flags the leading all-knife rounds, not a mid-match knife ace', () => {
+    const src = makeSource({
+      round_start: [{ tick: 0 }, { tick: R }, { tick: 2 * R }],
+      round_end: [
+        { tick: R - 10, winner: 'CT', reason: '9' },
+        { tick: 2 * R - 10, winner: 'T', reason: '9' },
+        { tick: 3 * R - 10, winner: 'T', reason: '9' },
+      ],
+      round_freeze_end: [],
+      player_death: [
+        { tick: 300, weapon: 'knife' },
+        { tick: R + 300, weapon: 'ak47' },
+        ...[0, 1, 2, 3, 4].map((i) => ({ tick: 2 * R + 300 + i, weapon: 'knife_t' })),
+      ],
+    });
+    expect(extractRounds(src).map((r) => r.is_knife_round)).toEqual([true, false, false]);
+  });
 });
 
 describe('extractRounds — halftime score swap', () => {

@@ -20,18 +20,35 @@ from db.database import (
 
 def _pos(rn, pid, team_num, tick=0):
     return SimpleNamespace(
-        tick=tick, round_number=rn, player_id=pid,
-        x=0.0, y=0.0, z=0.0, team_num=team_num, is_alive=1, yaw=0.0,
+        tick=tick,
+        round_number=rn,
+        player_id=pid,
+        x=0.0,
+        y=0.0,
+        z=0.0,
+        team_num=team_num,
+        is_alive=1,
+        yaw=0.0,
     )
 
 
 def _parsed():
     mi = SimpleNamespace(map_name="de_dust2", tick_rate=64.0, total_ticks=1000)
     rnd = SimpleNamespace(
-        round_number=1, start_tick=0, end_tick=100, freeze_end_tick=10,
-        winner_team="CT", win_reason="elimination", ct_score=1, t_score=0,
-        bomb_planted_tick=None, bomb_defused_tick=None, bomb_exploded_tick=None,
-        is_knife_round=False, ct_equip_value=4000, t_equip_value=800,
+        round_number=1,
+        start_tick=0,
+        end_tick=100,
+        freeze_end_tick=10,
+        winner_team="CT",
+        win_reason="elimination",
+        ct_score=1,
+        t_score=0,
+        bomb_planted_tick=None,
+        bomb_defused_tick=None,
+        bomb_exploded_tick=None,
+        is_knife_round=False,
+        ct_equip_value=4000,
+        t_equip_value=800,
     )
     return SimpleNamespace(
         match_info=mi,

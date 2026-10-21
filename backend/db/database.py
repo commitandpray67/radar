@@ -272,25 +272,33 @@ def build_positions_query(
     return query, params
 
 
-async def fetch_round_sides(conn, demo_id: str) -> dict[int, dict[int, str]]:
+async def fetch_round_sides(
+    conn, demo_id: str, rounds: set[int] | None = None
+) -> dict[int, dict[int, str]]:
     """Authoritative CT/T side of each player per round, from actual team_num.
 
     Returns ``{round_number: {player_id: "CT"|"T"}}`` (player_id as int).
     team_num is constant for a player within a round, so grouping + MAX
-    collapses each (round, player) to one side cheaply.
+    collapses each (round, player) to one side cheaply.  Pass ``rounds`` to
+    restrict the scan to those rounds (uses the (demo_id, round_number) index).
     """
+    round_filter = ""
+    params: list = [demo_id]
+    if rounds is not None:
+        if not rounds:
+            return {}
+        round_filter = f" AND round_number IN ({','.join('?' * len(rounds))})"
+        params.extend(sorted(rounds))
     cur = await conn.execute(
-        """SELECT round_number, player_id, MAX(team_num) AS team_num
+        f"""SELECT round_number, player_id, MAX(team_num) AS team_num
            FROM player_positions
-           WHERE demo_id = ? AND team_num IN (2, 3)
+           WHERE demo_id = ? AND team_num IN (2, 3){round_filter}
            GROUP BY round_number, player_id""",
-        (demo_id,),
+        params,
     )
     out: dict[int, dict[int, str]] = {}
     for r in await cur.fetchall():
-        out.setdefault(r["round_number"], {})[r["player_id"]] = (
-            "CT" if r["team_num"] == 3 else "T"
-        )
+        out.setdefault(r["round_number"], {})[r["player_id"]] = "CT" if r["team_num"] == 3 else "T"
     return out
 
 

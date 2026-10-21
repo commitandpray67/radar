@@ -171,13 +171,16 @@ export function extractRounds(source: DemoSource, tickRate = 64.0): ParsedRound[
   }
   const isKnife = (weapon: unknown): boolean => {
     const w = String(weapon ?? '').toLowerCase().replace(/^weapon_/, '');
-    return w.startsWith('knife') || w === 'knifegg';
+    // Every knife token starts with "knife" except the default Bayonet.
+    return w.startsWith('knife') || w === 'bayonet';
   };
-  for (const r of rounds) {
+  // Only the leading all-knife rounds are knife rounds (the pre-match side
+  // pick); a mid-match all-knife round (e.g. a knife ace) is an ordinary round.
+  for (const r of [...rounds].sort((a, b) => a.round_number - b.round_number)) {
     const kills = deathsByRound.get(r.round_number) ?? [];
-    if (kills.length > 0 && kills.every((d) => isKnife(d.weapon))) {
-      r.is_knife_round = true;
-    }
+    if (kills.length === 0) continue;
+    if (!kills.every((d) => isKnife(d.weapon))) break;
+    r.is_knife_round = true;
   }
 
   // ---- Cumulative scores (halftime side-swap aware) ----------------------
